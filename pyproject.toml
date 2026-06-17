@@ -1,0 +1,79 @@
+[project]
+name = "parq"
+version = "0.1.0"
+description = "Parquet TUI inspector"
+readme = "README.md"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Senyu Xie", email = "senyuxie@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.5.3",
+    "pyarrow>=24.0.0",
+    "textual>=8.2.7",
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+parq = "parq.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.21,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pyarrow-stubs>=20.0.0.20251215",
+    "pyright>=1.1.410",
+    "pytest>=9.1.0",
+    "ruff>=0.15.17",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[tool.pyright]
+typeCheckingMode = "strict"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.format]
+docstring-code-format = true
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "C4",
+    "D",
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "G",
+    "I",
+    "LOG",
+    "N",
+    "PERF",
+    "PT",
+    "PTH",
+    "RET",
+    "RUF",
+    "S",
+    "SIM",
+    "TID",
+    "UP",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "D"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
