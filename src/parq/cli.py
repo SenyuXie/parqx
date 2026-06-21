@@ -4,7 +4,10 @@ from importlib import metadata
 from pathlib import Path
 from typing import Annotated
 
+import pyarrow.parquet as pq
 import typer
+
+from parq.tui.app import ParqApp
 
 app = typer.Typer(help="Parq: A Parquet TUI inspector.")
 
@@ -39,3 +42,5 @@ def main(
     ] = None,
 ) -> None:
     """Parq: A Parquet TUI inspector."""
+    table = pq.read_table(path)  # type: ignore
+    ParqApp(table).run()
