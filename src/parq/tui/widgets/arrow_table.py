@@ -11,16 +11,19 @@ from rich.console import RenderableType
 from rich.filesize import decimal
 from rich.padding import Padding
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.coordinate import Coordinate
 from textual.geometry import Region, Size
+from textual.message import Message
 from textual.reactive import Reactive
 from textual.render import measure
 from textual.renderables.styled import Styled
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
+from textual.widget import PseudoClasses
 
 CursorType = Literal["cell", "row", "column", "none"]
 
@@ -187,8 +190,6 @@ class ArrowTable(ScrollView, can_focus=True):
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "arrowtable--cursor",
         "arrowtable--hover",
-        "arrowtable--fixed",
-        "arrowtable--fixed-cursor",
         "arrowtable--header",
         "arrowtable--header-cursor",
         "arrowtable--header-hover",
@@ -200,11 +201,9 @@ class ArrowTable(ScrollView, can_focus=True):
     | :---                        | :---                                                        |
     | `arrowtable--cursor`        | Target the cursor.                                          |
     | `arrowtable--hover`         | Target the cells under the hover cursor.                    |
-    | `arrowtable--fixed`         | Target fixed columns and fixed rows.                        |
-    | `arrowtable--fixed-cursor`  | Target highlighted and fixed columns or header.             |
     | `arrowtable--header`        | Target the header of the data table.                        |
     | `arrowtable--header-cursor` | Target cells highlighted by the cursor.                     |
-    | `arrowtable--header-hover`  | Target hovered header or row label cells.                   |
+    | `arrowtable--header-hover`  | Target hovered header or row index cells.                   |
     | `arrowtable--even-row`      | Target even rows (row indices start at 0) if zebra_stripes. |
     | `arrowtable--odd-row`       | Target odd rows (row indices start at 0) if zebra_stripes.  |
     """
@@ -215,9 +214,6 @@ class ArrowTable(ScrollView, can_focus=True):
         color: $foreground;
         height: auto;
         max-height: 100%;
-        &.arrowtable--fixed-cursor {
-            background: $block-cursor-blurred-background;
-        }
 
         &:focus {
             background-tint: $foreground 5%;
@@ -229,11 +225,6 @@ class ArrowTable(ScrollView, can_focus=True):
 
             & > .arrowtable--header {
                 background-tint: $foreground 5%;
-            }
-
-            & > .arrowtable--fixed-cursor {
-                color: $block-cursor-foreground;
-                background: $block-cursor-background;
             }
         }
 
@@ -248,14 +239,10 @@ class ArrowTable(ScrollView, can_focus=True):
             background: $panel;
             color: $foreground;
         }
+
         &:ansi > .arrowtable--header {
             background: ansi_bright_blue;
             color: ansi_default;
-        }
-
-        & > .arrowtable--fixed {
-            background: $secondary-muted;
-            color: $foreground;
         }
 
         & > .arrowtable--odd-row {
@@ -270,11 +257,6 @@ class ArrowTable(ScrollView, can_focus=True):
             background: $block-cursor-blurred-background;
             color: $block-cursor-blurred-foreground;
             text-style: $block-cursor-blurred-text-style;
-        }
-
-        & > .arrowtable--fixed-cursor {
-            background: $block-cursor-blurred-background;
-            color: $foreground;
         }
 
         & > .arrowtable--header-cursor {
@@ -294,8 +276,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
     show_header = Reactive(True)
     """Show/hide the header row (the row of column labels)."""
-    show_row_labels = Reactive(True)
-    """Show/hide the column containing zero-based row numbers."""
+    show_row_index = Reactive(True)
+    """Show/hide the row index column containing zero-based row numbers."""
     zebra_stripes = Reactive(False)
     """Apply alternating styles, arrowtable--even-row and arrowtable--odd-row, to create a zebra effect."""
     header_height = Reactive(1)
@@ -316,11 +298,71 @@ class ArrowTable(ScrollView, can_focus=True):
     )
     """The coordinate of the `ArrowTable` that is being hovered."""
 
+    class CellHighlighted(Message):
+        """Posted when the cursor moves to highlight a new cell.
+
+        This is only relevant when the `cursor_type` is `"cell"`.
+        It's also posted when the cell cursor is
+        re-enabled (by setting `show_cursor=True`), and when the cursor type is
+        changed to `"cell"`. Can be handled using `on_arrow_table_cell_highlighted` in
+        a subclass of `ArrowTable` or in a parent widget in the DOM.
+        """
+
+    class CellSelected(Message):
+        """Posted by the `ArrowTable` widget when a cell is selected.
+
+        This is only relevant when the `cursor_type` is `"cell"`. Can be handled using
+        `on_arrow_table_cell_selected` in a subclass of `ArrowTable` or in a parent
+        widget in the DOM.
+        """
+
+    class RowHighlighted(Message):
+        """Posted when a row is highlighted.
+
+        This message is only posted when the
+        `cursor_type` is set to `"row"`. Can be handled using
+        `on_arrow_table_row_highlighted` in a subclass of `ArrowTable` or in a parent
+        widget in the DOM.
+        """
+
+    class RowSelected(Message):
+        """Posted when a row is selected.
+
+        This message is only posted when the
+        `cursor_type` is set to `"row"`. Can be handled using
+        `on_arrow_table_row_selected` in a subclass of `ArrowTable` or in a parent
+        widget in the DOM.
+        """
+
+    class ColumnHighlighted(Message):
+        """Posted when a column is highlighted.
+
+        This message is only posted when the
+        `cursor_type` is set to `"column"`. Can be handled using
+        `on_arrow_table_column_highlighted` in a subclass of `ArrowTable` or in a parent
+        widget in the DOM.
+        """
+
+    class ColumnSelected(Message):
+        """Posted when a column is selected.
+
+        This message is only posted when the
+        `cursor_type` is set to `"column"`. Can be handled using
+        `on_arrow_table_column_selected` in a subclass of `ArrowTable` or in a parent
+        widget in the DOM.
+        """
+
+    class HeaderSelected(Message):
+        """Posted when a column header/label is clicked."""
+
+    class RowIndexSelected(Message):
+        """Posted when a row index cell is clicked."""
+
     def __init__(
         self,
         table: pa.Table,
         show_header: bool = True,
-        show_row_labels: bool = True,
+        show_row_index: bool = True,
         zebra_stripes: bool = False,
         header_height: int = 1,
         show_cursor: bool = True,
@@ -333,12 +375,12 @@ class ArrowTable(ScrollView, can_focus=True):
         classes: str | None = None,
         disabled: bool = False,
     ) -> None:
-        """Initialize a widget to display arrow-backed tabular data.
+        """Initialize a widget to display Arrow-backed tabular data.
 
         Args:
             table: Arrow table used as the backing data source.
             show_header: Whether the table header should be visible or not.
-            show_row_labels: Whether zero-based row numbers should be shown or not.
+            show_row_index: Whether zero-based row numbers should be shown or not.
             zebra_stripes: Enables or disables a zebra effect applied to the background
                 color of the rows of the table, where alternate colors are styled
                 differently to improve the readability of the table.
@@ -369,18 +411,25 @@ class ArrowTable(ScrollView, can_focus=True):
         self._column_widths: tuple[int, ...] = ()
         """Rendered column widths, including horizontal padding."""
         self._column_offsets: tuple[int, ...] = ()
-        """Starting x offsets (including row labels) for rendered Arrow columns."""
+        """Starting x offsets (including the row index) for rendered Arrow columns."""
+
+        self._pseudo_class_state = PseudoClasses(False, False, False)
+        """The pseudo-class state is used as part of cache keys to ensure that, for example,
+        when we lose focus on the ArrowTable, rules which apply to :focus are invalidated
+        and we prevent lingering styles."""
 
         self._require_update_dimensions = True
         """Set to re-calculate dimensions on idle."""
 
-        self._row_label_column_width = 0
-        """Rendered row label column width, including horizontal padding."""
+        self._show_hover_cursor = False
+        """Used to hide the mouse hover cursor when the user uses the keyboard."""
+        self._index_column_width = 0
+        """Rendered row index column width, including horizontal padding."""
 
         self.show_header = show_header
         """Show/hide the header row (the row of column labels)."""
-        self.show_row_labels = show_row_labels
-        """Show/hide the column containing zero-based row numbers."""
+        self.show_row_index = show_row_index
+        """Show/hide the row index column containing zero-based row numbers."""
         self.header_height = header_height
         """The height of the header row (the row of column labels)."""
         self.zebra_stripes = zebra_stripes
@@ -420,12 +469,12 @@ class ArrowTable(ScrollView, can_focus=True):
 
     @property
     def row_count(self) -> int:
-        """The total number of rows in the ArrowTable."""
+        """The total number of rows currently present in the ArrowTable."""
         return cast(int, self._table.num_rows)
 
     @property
     def column_count(self) -> int:
-        """The total number of columns in the ArrowTable."""
+        """The total number of columns currently present in the ArrowTable."""
         return cast(int, self._table.num_columns)
 
     def get_cell_at(self, coordinate: Coordinate) -> pa.Scalar:
@@ -456,6 +505,7 @@ class ArrowTable(ScrollView, can_focus=True):
         ]
 
         if not widths:
+            # Fallback to header/min width when the sampled column has no values.
             return 0
 
         index = ceil(len(widths) * _COLUMN_WIDTH_PERCENTILE) - 1
@@ -472,12 +522,12 @@ class ArrowTable(ScrollView, can_focus=True):
             )
         )
 
-    def _measure_row_label_column_width(self) -> int:
-        if not self.show_row_labels:
+    def _measure_index_column_width(self) -> int:
+        if not self.show_row_index:
             return 0
 
-        max_row_label = max(self.row_count - 1, 0)
-        return len(str(max_row_label)) + 2 * self.cell_padding
+        max_row_index = max(self.row_count - 1, 0)
+        return len(str(max_row_index)) + 2 * self.cell_padding
 
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
@@ -485,13 +535,13 @@ class ArrowTable(ScrollView, can_focus=True):
         self._column_widths = tuple(
             column.get_render_width(self.cell_padding) for column in self._columns
         )
-        self._row_label_column_width = self._measure_row_label_column_width()
+        self._index_column_width = self._measure_index_column_width()
         self._column_offsets = tuple(
-            self._row_label_column_width + offset
+            self._index_column_width + offset
             for offset in accumulate(self._column_widths, initial=0)
         )[:-1]
 
-        total_width = sum(self._column_widths) + self._row_label_column_width
+        total_width = sum(self._column_widths) + self._index_column_width
         header_height = self.header_height if self.show_header else 0
         self.virtual_size = Size(total_width, self.row_count + header_height)
 
@@ -502,10 +552,31 @@ class ArrowTable(ScrollView, can_focus=True):
         if self._require_update_dimensions:
             self._require_update_dimensions = False
             self._update_dimensions()
-            self.refresh(layout=True)
 
-    def _render_renderable_cell(
-        self, renderable: RenderableType, width: int
+    def _get_header_style(self, base_style: Style) -> Style:
+        """Get the Style that should be applied to the header row."""
+        return base_style + self.get_component_styles("arrowtable--header").rich_style
+
+    def _get_row_style(self, row_index: int, base_style: Style) -> Style:
+        """Get the Style that should be applied to the row at the given index.
+
+        Args:
+            row_index: The index of the row to style.
+            base_style: The base style to use by default.
+
+        Returns:
+            The appropriate style.
+        """
+        if not self.zebra_stripes:
+            return base_style
+
+        component_class = (
+            "arrowtable--even-row" if row_index % 2 == 0 else "arrowtable--odd-row"
+        )
+        return base_style + self.get_component_styles(component_class).rich_style
+
+    def _render_cell_renderable(
+        self, renderable: RenderableType, base_style: Style, width: int
     ) -> list[Segment]:
         """Render a Rich renderable into a single fixed-width table cell."""
         options = self.app.console_options.update_dimensions(width, 1)  # pyright: ignore
@@ -514,65 +585,86 @@ class ArrowTable(ScrollView, can_focus=True):
         lines = self.app.console.render_lines(  # pyright: ignore
             Styled(
                 Padding(renderable, (0, self.cell_padding)),
-                pre_style=self.rich_style,
+                pre_style=base_style,
                 post_style="",
             ),
             options,
         )
 
-        return lines[0] if lines else [Segment(" " * width, self.rich_style)]
+        return lines[0] if lines else [Segment(" " * width, base_style)]
 
-    def _render_cell(self, scalar: pa.Scalar, width: int) -> list[Segment]:
+    def _render_cell(
+        self, scalar: pa.Scalar, base_style: Style, width: int
+    ) -> list[Segment]:
         """Render one Arrow scalar into fixed-width cell segments."""
-        return self._render_renderable_cell(format_cell(scalar), width)
+        return self._render_cell_renderable(format_cell(scalar), base_style, width)
 
-    def _render_text_cell(self, text: str, width: int) -> list[Segment]:
+    def _render_text_cell(
+        self, text: str, base_style: Style, width: int
+    ) -> list[Segment]:
         """Render plain text into fixed-width cell segments."""
-        return self._render_renderable_cell(Text(text), width)
+        return self._render_cell_renderable(Text(text), base_style, width)
 
-    def _render_header_line(self) -> Strip:
+    def _render_header_line(self, base_style: Style) -> Strip:
         """Render the table header line."""
         segments: list[Segment] = []
+        header_style = self._get_header_style(base_style)
 
-        if self.show_row_labels:
-            segments.extend(self._render_text_cell("", self._row_label_column_width))
+        if self.show_row_index:
+            segments.extend(
+                self._render_text_cell("", header_style, self._index_column_width)
+            )
 
         for column, width in zip(self._columns, self._column_widths, strict=True):
-            segments.extend(self._render_text_cell(column.name, width))
+            segments.extend(self._render_text_cell(column.name, header_style, width))
 
         return Strip(segments)
 
-    def _render_row_line(self, row_index: int) -> Strip:
+    def _render_row_line(self, row_index: int, base_style: Style) -> Strip:
         """Render one data row."""
         segments: list[Segment] = []
+        row_style = self._get_row_style(row_index, base_style)
 
-        if self.show_row_labels:
+        if self.show_row_index:
             segments.extend(
-                self._render_text_cell(str(row_index), self._row_label_column_width)
+                self._render_text_cell(
+                    str(row_index), row_style, self._index_column_width
+                )
             )
 
         for column_index, width in enumerate(self._column_widths):
             scalar = self.get_cell_at(Coordinate(row_index, column_index))
-            segments.extend(self._render_cell(scalar, width))
+            segments.extend(self._render_cell(scalar, row_style, width))
 
         return Strip(segments)
 
-    def _render_line(self, y: int, x1: int, x2: int) -> Strip:
-        """Render a cropped table line."""
+    def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
+        """Render a (possibly cropped) line into a Strip.
+
+        Strip is an immutable list of segments representing a horizontal line.
+
+        Args:
+            y: Y coordinate of line relative to ArrowTable top.
+            x1: X start crop.
+            x2: X end crop (exclusive).
+            base_style: Style to apply to line.
+
+        Returns:
+            The Strip which represents this cropped line.
+        """
         width = self.size.width
-        base_style = self.rich_style
 
         if not self._columns:
             return Strip.blank(width, base_style)
 
         if self.show_header and y < self.header_height:
-            strip = self._render_header_line()
+            strip = self._render_header_line(base_style)
         else:
             row_index = y - (self.header_height if self.show_header else 0)
             if row_index < 0 or row_index >= self.row_count:
                 return Strip.blank(width, base_style)
 
-            strip = self._render_row_line(row_index)
+            strip = self._render_row_line(row_index, base_style)
 
         return strip.crop(x1, x2).adjust_cell_length(width, base_style).simplify()
 
@@ -598,9 +690,13 @@ class ArrowTable(ScrollView, can_focus=True):
             A rendered line.
         """
         width, _ = self.size
+        # `y` is the line within the widget's currently visible content area.
+        # `scroll_y` is the vertical offset into the scrollable table body.
         scroll_x, scroll_y = self.scroll_offset
 
         header_height = self.header_height if self.show_header else 0
+        # `table_y` maps the visible line to the table's virtual space, keeping
+        # the header pinned while data rows scroll.
         table_y = y if y < header_height else y + scroll_y
 
-        return self._render_line(table_y, scroll_x, scroll_x + width)
+        return self._render_line(table_y, scroll_x, scroll_x + width, self.rich_style)

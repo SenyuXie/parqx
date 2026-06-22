@@ -15,7 +15,7 @@ app = typer.Typer(help="Parq: A Parquet TUI inspector.")
 def version_callback(value: bool) -> None:
     """Parq version callback."""
     if value:
-        typer.echo(f"parq {metadata.version('parq')}")
+        print(f"parq {metadata.version('parq')}")
         raise typer.Exit()
 
 
@@ -42,5 +42,6 @@ def main(
     ] = None,
 ) -> None:
     """Parq: A Parquet TUI inspector."""
+    _ = version
     table = pq.read_table(path)  # type: ignore
     ParqApp(table).run()
