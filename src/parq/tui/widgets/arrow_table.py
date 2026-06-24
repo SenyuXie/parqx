@@ -46,6 +46,7 @@ class RowCacheKey(NamedTuple):
     cursor_type: CursorType
     show_cursor: bool
     show_hover_cursor: bool
+    update_count: int
     pseudo_class_state: PseudoClasses
 
 
@@ -60,6 +61,7 @@ class CellCacheKey(NamedTuple):
     hover: bool
     """Whether this cell is affected by hover cursor highlighting."""
     show_hover_cursor: bool
+    update_count: int
     pseudo_class_state: PseudoClasses
 
 
@@ -76,6 +78,7 @@ class LineCacheKey(NamedTuple):
     base_style: Style
     cursor_type: CursorType
     show_hover_cursor: bool
+    update_count: int
     pseudo_class_state: PseudoClasses
 
 
@@ -550,6 +553,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
         self._show_hover_cursor = False
         """Used to hide the mouse hover cursor when the user uses the keyboard."""
+        self._update_count = 0
+        """Number of updates so far. Used for cache invalidation."""
         self._header_row_index = -1
         """The header is a special row - not part of the data."""
         self._index_column_index = -1
@@ -719,6 +724,13 @@ class ArrowTable(ScrollView, can_focus=True):
 
         return self._table.column(column)[row]
 
+    def _on_resize(self, _: events.Resize) -> None:
+        self._update_count += 1
+        logger.debug(
+            "App or widget has been resized. ArrowTable._update_count: %d",
+            self._update_count,
+        )
+
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
         total_width = sum(self._column_widths) + self._index_column_width
@@ -772,14 +784,15 @@ class ArrowTable(ScrollView, can_focus=True):
         Returns:
             A RowRenderables containing the optional label and the rendered cells.
         """
-        if row_index in self._row_renderable_cache:
-            return self._row_renderable_cache[row_index]
+        cache_key = row_index
+        if cache_key in self._row_renderable_cache:
+            return self._row_renderable_cache[cache_key]
 
         if row_index == self._header_row_index:
             renderables = RowRenderables(
                 None, [Text(column.name) for column in self.columns]
             )
-            self._row_renderable_cache[row_index] = renderables
+            self._row_renderable_cache[cache_key] = renderables
             return renderables
 
         if not self.is_valid_row_index(row_index):
@@ -792,7 +805,7 @@ class ArrowTable(ScrollView, can_focus=True):
                 for column_index in range(self.column_count)
             ],
         )
-        self._row_renderable_cache[row_index] = renderables
+        self._row_renderable_cache[cache_key] = renderables
         return renderables
 
     def _render_cell(
@@ -827,6 +840,7 @@ class ArrowTable(ScrollView, can_focus=True):
             cursor,
             hover,
             self._show_hover_cursor,
+            self._update_count,
             self._pseudo_class_state,
         )
 
@@ -958,6 +972,7 @@ class ArrowTable(ScrollView, can_focus=True):
             cursor_type,
             show_cursor,
             self._show_hover_cursor,
+            self._update_count,
             self._pseudo_class_state,
         )
 
@@ -1045,6 +1060,7 @@ class ArrowTable(ScrollView, can_focus=True):
             base_style,
             self.cursor_type,
             self._show_hover_cursor,
+            self._update_count,
             self._pseudo_class_state,
         )
         if cache_key in self._line_cache:
