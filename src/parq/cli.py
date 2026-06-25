@@ -7,6 +7,7 @@ from typing import Annotated
 import pyarrow.parquet as pq
 import typer
 
+from parq.logger import setup_logging
 from parq.tui.app import ParqApp
 
 app = typer.Typer(help="Parq: A Parquet TUI inspector.")
@@ -31,6 +32,15 @@ def main(
             help="Parquet file to inspect.",
         ),
     ],
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "--verbose",
+            "-v",
+            count=True,
+            help="Enable verbose logging (or `-vv` for more verbose output).",
+        ),
+    ] = 0,
     version: Annotated[
         bool | None,
         typer.Option(
@@ -43,5 +53,8 @@ def main(
 ) -> None:
     """Parq: A Parquet TUI inspector."""
     _ = version
+
+    setup_logging(verbose)
+
     table = pq.read_table(path)  # type: ignore
     ParqApp(table).run()

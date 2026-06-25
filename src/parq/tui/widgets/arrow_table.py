@@ -179,7 +179,7 @@ def _sample_row_indices(
 ) -> tuple[int, ...]:
     """Return row indices sampled from head, tail, evenly spaced, and random rows.
 
-    Assumes `target_count >> head_count + tail_count + random_count`
+    Assumes `target_count` >> `head_count + tail_count + random_count`
     so the evenly spaced middle sample keeps most of the budget.
 
     Args:
@@ -539,7 +539,7 @@ class ArrowTable(ScrollView, can_focus=True):
         )
         """Cache for individual cells."""
         self._row_renderable_cache: LRUCache[int, RowRenderables] = LRUCache(1000)
-        """Caches row renderables - key is row_index."""
+        """Caches row renderables - key is just row_index."""
         self._line_cache: LRUCache[LineCacheKey, Strip] = LRUCache(1000)
         """Cache for lines within rows."""
 
@@ -723,6 +723,12 @@ class ArrowTable(ScrollView, can_focus=True):
             raise IndexError(coordinate)
 
         return self._table.column(column)[row]
+
+    def _clear_render_caches(self) -> None:
+        self._cell_render_cache.clear()
+        self._row_render_cache.clear()
+        self._line_cache.clear()
+        self._styles_cache.clear()
 
     def _on_resize(self, _: events.Resize) -> None:
         self._update_count += 1
