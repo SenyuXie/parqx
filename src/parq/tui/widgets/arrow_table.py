@@ -952,6 +952,16 @@ class ArrowTable(ScrollView, can_focus=True):
         self._line_cache.clear()
         self._styles_cache.clear()
 
+    def notify_style_update(self) -> None:
+        """Clear cached render output after component styles change."""
+        super().notify_style_update()
+        self._row_render_cache.clear()
+        self._cell_render_cache.clear()
+        self._row_renderable_cache.clear()
+        self._line_cache.clear()
+        self._styles_cache.clear()
+        self.refresh()
+
     def _on_resize(self, _: events.Resize) -> None:
         self._update_count += 1
         logger.debug(
@@ -994,6 +1004,10 @@ class ArrowTable(ScrollView, can_focus=True):
         """Clear rendered rows when zebra striping changes."""
         self._clear_render_caches()
 
+    def validate_cell_padding(self, cell_padding: int) -> int:
+        """Clamp cell padding to a non-negative value."""
+        return max(cell_padding, 0)
+
     def watch_cell_padding(self, old_padding: int, new_padding: int) -> None:
         """Update table dimensions and rendering when cell padding changes."""
         # A single side of a single cell will have its width changed by (new - old),
@@ -1004,6 +1018,11 @@ class ArrowTable(ScrollView, can_focus=True):
         self.virtual_size = Size(width + width_change, height)
         self._scroll_cursor_into_view()
         self._clear_render_caches()
+
+    def watch_hover_coordinate(self, old: Coordinate, value: Coordinate) -> None:
+        """Refresh the old and new cells when hover position changes."""
+        self.refresh_coordinate(old)
+        self.refresh_coordinate(value)
 
     def watch_cursor_coordinate(
         self, old_coordinate: Coordinate, new_coordinate: Coordinate
@@ -1110,9 +1129,36 @@ class ArrowTable(ScrollView, can_focus=True):
         column = clamp(column, 0, len(self.columns) - 1)
         return Coordinate(row, column)
 
-    def watch_cursor_type(self, old: CursorType, new: CursorType) -> None:
-        """Reset hover highlighting when the cursor mode changes."""
+    def watch_cursor_type(self, old: str, new: str) -> None:
+        """Refresh cursor highlighting when the cursor mode changes."""
         self._set_hover_cursor(False)
+        if self.show_cursor:
+            self._highlight_cursor()
+
+        # Refresh cells that were previously impacted by the cursor
+        # but may no longer be.
+        if old == "cell":
+            self.refresh_coordinate(self.cursor_coordinate)
+        elif old == "row":
+            row_index, _ = self.cursor_coordinate
+            self.refresh_row(row_index)
+        elif old == "column":
+            _, column_index = self.cursor_coordinate
+            self.refresh_column(column_index)
+
+        self._scroll_cursor_into_view()
+
+    def _highlight_cursor(self) -> None:
+        """Apply highlighting and post the message for the active cursor target."""
+        row_index, column_index = self.cursor_coordinate
+        cursor_type = self.cursor_type
+        # Apply the highlighting to the newly relevant cells
+        if cursor_type == "cell":
+            self._highlight_coordinate(self.cursor_coordinate)
+        elif cursor_type == "row":
+            self._highlight_row(row_index)
+        elif cursor_type == "column":
+            self._highlight_column(column_index)
 
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
