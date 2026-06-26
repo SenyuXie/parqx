@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
 from dataclasses import dataclass
@@ -1721,6 +1722,22 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.get_component_styles(component_row_style).rich_style
 
         return base_style
+
+    def _on_mouse_move(self, event: events.MouseMove) -> None:
+        """Update the hover cursor from row and column metadata under the mouse."""
+        self._set_hover_cursor(True)
+        meta = event.style.meta
+        if not meta:
+            self._set_hover_cursor(False)
+            return
+
+        if self.cursor_type != "row" and meta.get("out_of_bounds", False):
+            self._set_hover_cursor(False)
+            return
+
+        if self.show_cursor and self.cursor_type != "none":
+            with contextlib.suppress(KeyError):
+                self.hover_coordinate = Coordinate(meta["row"], meta["column"])
 
     def _on_leave(self, event: events.Leave) -> None:
         _ = event
