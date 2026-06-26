@@ -1,5 +1,6 @@
 """The Parq CLI entrypoint."""
 
+import logging
 from importlib import metadata
 from pathlib import Path
 from typing import Annotated
@@ -9,6 +10,8 @@ import typer
 
 from parq.logger import setup_logging
 from parq.tui.app import ParqApp
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="Parq: A Parquet TUI inspector.")
 
