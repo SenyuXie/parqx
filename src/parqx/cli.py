@@ -1,4 +1,4 @@
-"""The Parq CLI entrypoint."""
+"""The Parqx CLI entrypoint."""
 
 import logging
 from importlib import metadata
@@ -8,18 +8,18 @@ from typing import Annotated
 import pyarrow.parquet as pq
 import typer
 
-from parq.logger import setup_logging
-from parq.tui.app import ParqApp
+from parqx.logger import setup_logging
+from parqx.tui.app import ParqxApp
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(help="Parq: A Parquet TUI inspector.")
+app = typer.Typer(help="Parqx: A Parquet TUI inspector.")
 
 
 def version_callback(value: bool) -> None:
-    """Parq version callback."""
+    """Parqx version callback."""
     if value:
-        print(f"parq {metadata.version('parq')}")
+        print(f"parqx {metadata.version('parqx')}")
         raise typer.Exit()
 
 
@@ -54,10 +54,10 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Parq: A Parquet TUI inspector."""
+    """Parqx: A Parquet TUI inspector."""
     _ = version
 
     setup_logging(verbose)
 
     table = pq.read_table(path)  # type: ignore
-    ParqApp(table).run()
+    ParqxApp(table).run()

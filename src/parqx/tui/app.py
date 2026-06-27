@@ -1,15 +1,15 @@
-"""The Parq Textual App."""
+"""The Parqx Textual App."""
 
 from typing import Any
 
 import pyarrow as pa
 from textual.app import App, ComposeResult
 
-from parq.tui.widgets import ArrowTable
+from parqx.tui.widgets import ArrowTable
 
 
-class ParqApp(App[Any]):
-    """A Textual App for Parq."""
+class ParqxApp(App[Any]):
+    """A Textual App for Parqx."""
 
     def __init__(self, table: pa.Table) -> None:
         """Initialize the app with an Arrow table to inspect.

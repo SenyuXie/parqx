@@ -1,4 +1,4 @@
-"""The Parq logging configuration."""
+"""The Parqx logging configuration."""
 
 import logging
 from logging.handlers import RotatingFileHandler
@@ -7,8 +7,8 @@ from pathlib import Path
 from platformdirs import user_log_dir
 from textual.logging import TextualHandler
 
-_LOGGER_NAME = "parq"
-_LOG_FILE_NAME = "parq.log"
+_LOGGER_NAME = "parqx"
+_LOG_FILE_NAME = "parqx.log"
 _LOG_FILE_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
 _LOG_FILE_BACKUP_COUNT = 3
 _FILE_FORMAT = "%(asctime)s %(levelname)-8s %(name)s:%(lineno)d  %(message)s"
@@ -26,20 +26,20 @@ def _verbosity_to_level(verbose: int) -> int:
 
 def _log_file_path() -> Path:
     """Return the rotating log file path under the platform user log directory."""
-    log_dir = Path(user_log_dir("parq", appauthor=False, ensure_exists=True))
+    log_dir = Path(user_log_dir("parqx", appauthor=False, ensure_exists=True))
     return log_dir / _LOG_FILE_NAME
 
 
 def setup_logging(verbose: int = 0) -> None:
-    r"""Configure logging for the Parq application.
+    r"""Configure logging for the Parqx application.
 
     A TUI takes over the terminal, so log records must never reach `stdout` or
     `stderr` while the app is running. This function installs two handlers on
-    the `parq` logger:
+    the `parqx` logger:
 
     - A `RotatingFileHandler` writing detailed records to a log file under
-    the platform user log directory (e.g. `%LOCALAPPDATA%\\parq\\Logs\\parq.log`
-    on Windows, `~/.local/state/parq/log/parq.log` on Linux).
+    the platform user log directory (e.g. `%LOCALAPPDATA%\\parqx\\Logs\\parqx.log`
+    on Windows, `~/.local/state/parqx/log/parqx.log` on Linux).
     - A `TextualHandler` so `logger.*` calls are also visible in `textual console`
     during development.
 
