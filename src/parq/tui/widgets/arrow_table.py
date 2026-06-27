@@ -940,10 +940,8 @@ class ArrowTable(ScrollView, can_focus=True):
         """
         row, column = coordinate.row, coordinate.column
 
-        if not self.is_valid_row_index(row):
-            raise IndexError(coordinate)
-        if not self.is_valid_column_index(column):
-            raise IndexError(coordinate)
+        if not self.is_valid_coordinate(coordinate):
+            raise CellNotExistError(coordinate)
 
         return self._table.column(column)[row]
 
@@ -995,7 +993,10 @@ class ArrowTable(ScrollView, can_focus=True):
     def watch_show_row_index(self, show: bool) -> None:
         """Update table dimensions and rendering when row-index visibility changes."""
         width, height = self.virtual_size
-        column_width = self._index_column_width
+        # At this point, `self.show_row_index` is already the new value.
+        # If we are hiding the index column, `self._index_column_width` now returns 0,
+        # but we still need the old visible width to subtract from `virtual_size`.
+        column_width = self.index_column.get_render_width(self.cell_padding)
         width_change = column_width if show else -column_width
         self.virtual_size = Size(width + width_change, height)
         self._scroll_cursor_into_view()
@@ -1014,7 +1015,8 @@ class ArrowTable(ScrollView, can_focus=True):
         # A single side of a single cell will have its width changed by (new - old),
         # so the total width change is double that per column, times the number of
         # columns for the whole data table, including the index column.
-        width_change = 2 * (new_padding - old_padding) * (self.column_count + 1)
+        column_count = self.column_count + (1 if self.show_row_index else 0)
+        width_change = 2 * (new_padding - old_padding) * column_count
         width, height = self.virtual_size
         self.virtual_size = Size(width + width_change, height)
         self._scroll_cursor_into_view()
