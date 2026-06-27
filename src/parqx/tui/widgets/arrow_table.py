@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import random
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import chain
 from math import ceil
@@ -50,6 +51,8 @@ class RowCacheKey(NamedTuple):
     show_hover_cursor: bool
     update_count: int
     pseudo_class_state: PseudoClasses
+    col1: int
+    col2: int
 
 
 class CellCacheKey(NamedTuple):
@@ -746,6 +749,9 @@ class ArrowTable(ScrollView, can_focus=True):
         """Arrow table used as the backing data source."""
         self._columns: tuple[ArrowColumn, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
+        self._column_offsets: tuple[int, ...] | None = None
+        """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
+        length = column_count + 1; offsets[0] == 0; offsets[-1] == total scrollable width."""
 
         self._row_render_cache: LRUCache[
             RowCacheKey, tuple[list[list[Segment]], list[list[Segment]]]
@@ -905,6 +911,32 @@ class ArrowTable(ScrollView, can_focus=True):
             column.get_render_width(self.cell_padding) for column in self.columns
         )
 
+    def _get_column_offsets(self) -> tuple[int, ...]:
+        if self._column_offsets is None:
+            widths = self._column_widths
+            offsets = [0]
+            acc = 0
+            for w in widths:
+                acc += w
+                offsets.append(acc)
+            self._column_offsets = tuple(offsets)
+        return self._column_offsets
+
+    def _visible_column_range(self, x1: int, viewport_width: int) -> tuple[int, int]:
+        """Return [col_first, col_last_exclusive) of data columns intersecting [x1, x1+viewport_width).
+
+        Coordinates are in the scrollable area's coordinate system (offsets[0]=0),
+        NOT including the row-index column.
+        """
+        if self.column_count == 0 or viewport_width <= 0:
+            return 0, 0
+        offsets = self._get_column_offsets()
+        col1 = max(0, min(self.column_count - 1, bisect_right(offsets, x1) - 1))
+        col2 = min(self.column_count, bisect_left(offsets, x1 + viewport_width))
+        if col2 <= col1:
+            col2 = min(self.column_count, col1 + 1)
+        return col1, col2
+
     @property
     def index_column(self) -> ArrowColumn:
         """Virtual column metadata for the row-index column."""
@@ -1020,6 +1052,7 @@ class ArrowTable(ScrollView, can_focus=True):
         width, height = self.virtual_size
         self.virtual_size = Size(width + width_change, height)
         self._scroll_cursor_into_view()
+        self._column_offsets = None
         self._clear_render_caches()
 
     def watch_hover_coordinate(self, old: Coordinate, value: Coordinate) -> None:
@@ -1165,7 +1198,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
-        total_width = sum(self._column_widths) + self._index_column_width
+        total_width = self._get_column_offsets()[-1] + self._index_column_width
         header_lines = 1 if self.show_header else 0
         self.virtual_size = Size(total_width, self.row_count + header_lines)
 
@@ -1178,13 +1211,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         # The x-coordinate of a cell is the sum of widths of the data cells to the left
         # plus the width of the render width of the longest row label.
-        x = (
-            sum(
-                column.get_render_width(self.cell_padding)
-                for column in self.columns[:column_index]
-            )
-            + self._index_column_width
-        )
+        x = self._get_column_offsets()[column_index] + self._index_column_width
         width = self.columns[column_index].get_render_width(self.cell_padding)
         height = 1  # The height of the row.
         y = row_index + (1 if self.show_header else 0)
@@ -1195,10 +1222,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_row_index(row_index):
             return Region(0, 0, 0, 0)
 
-        row_width = (
-            sum(column.get_render_width(self.cell_padding) for column in self.columns)
-            + self._index_column_width
-        )
+        row_width = self._get_column_offsets()[-1] + self._index_column_width
         y = row_index + (1 if self.show_header else 0)
         return Region(0, y, row_width, 1)  # The height of the row is 1.
 
@@ -1207,13 +1231,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_column_index(column_index):
             return Region(0, 0, 0, 0)
 
-        x = (
-            sum(
-                column.get_render_width(self.cell_padding)
-                for column in self.columns[:column_index]
-            )
-            + self._index_column_width
-        )
+        x = self._get_column_offsets()[column_index] + self._index_column_width
         width = self.columns[column_index].get_render_width(self.cell_padding)
         header_height = 1 if self.show_header else 0
         height = self._total_row_height + header_height
@@ -1506,6 +1524,8 @@ class ArrowTable(ScrollView, can_focus=True):
         base_style: Style,
         cursor_location: Coordinate,
         hover_location: Coordinate,
+        col1: int,
+        col2: int,
     ) -> tuple[list[list[Segment]], list[list[Segment]]]:
         """Render a single line from a row in the ArrowTable.
 
@@ -1514,6 +1534,10 @@ class ArrowTable(ScrollView, can_focus=True):
             base_style: Base style of row.
             cursor_location: The location of the cursor in the ArrowTable.
             hover_location: The location of the hover cursor in the ArrowTable.
+            col1: Index of the first data column to render (inclusive). Computed
+                from the horizontal scroll offset via `_visible_column_range`.
+            col2: Index just past the last data column to render (exclusive).
+                Columns outside `[col1, col2)` are skipped entirely.
 
         Returns:
             Lines for fixed cells, and Lines for scrollable cells.
@@ -1531,6 +1555,8 @@ class ArrowTable(ScrollView, can_focus=True):
             self._show_hover_cursor,
             self._update_count,
             self._pseudo_class_state,
+            col1,
+            col2,
         )
 
         if cache_key in self._row_render_cache:
@@ -1562,7 +1588,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
         scrollable_row: list[list[Segment]] = []
 
-        for column_index, column in enumerate(self.columns):
+        for column_index in range(col1, col2):
+            column = self.columns[column_index]
             cell_location = Coordinate(row_index, column_index)
             cell_lines = self._render_cell(
                 row_index,
@@ -1597,6 +1624,10 @@ class ArrowTable(ScrollView, can_focus=True):
             The Strip which represents this cropped line.
         """
         width = self.size.width
+        fixed_width = self._index_column_width
+        visible_scrollable_width = max(0, width - fixed_width)
+        col1, col2 = self._visible_column_range(x1, visible_scrollable_width)
+
         header_lines = 1 if self.show_header else 0
         row_index = (
             self._header_row_index if self.show_header and y == 0 else y - header_lines
@@ -1628,17 +1659,22 @@ class ArrowTable(ScrollView, can_focus=True):
             base_style,
             cursor_location=self.cursor_coordinate,
             hover_location=self.hover_coordinate,
+            col1=col1,
+            col2=col2,
         )
 
         fixed_line: list[Segment] = list(chain.from_iterable(fixed)) if fixed else []
         scrollable_line: list[Segment] = list(chain.from_iterable(scrollable))
 
-        fixed_width = self._index_column_width
-        scrollable_width = sum(self._column_widths)
-        visible_scrollable_width = max(0, width - fixed_width)
+        # The virtual left starting point of the scrollable_line is offsets[col1] (not 0).
+        offsets = self._get_column_offsets()
+        virtual_left = offsets[col1] if col1 < len(offsets) else 0
+        crop_start = max(0, x1 - virtual_left)
+        crop_end = crop_start + visible_scrollable_width
+        visible_cols_total = (offsets[col2] - offsets[col1]) if col2 > col1 else 0
 
         segments = fixed_line + _line_crop(
-            scrollable_line, x1, x1 + visible_scrollable_width, scrollable_width
+            scrollable_line, crop_start, crop_end, visible_cols_total
         )
         strip = Strip(segments).adjust_cell_length(width, base_style).simplify()
 
