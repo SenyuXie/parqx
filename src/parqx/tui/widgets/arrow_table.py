@@ -1100,7 +1100,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """Move the cursor to the given position.
 
         Example:
-            ```py
+            ```python
             arrowtable = app.query_one(ArrowTable)
             arrowtable.move_cursor(row=4, column=6)
             # arrowtable.cursor_coordinate == Coordinate(4, 6)

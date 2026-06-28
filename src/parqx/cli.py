@@ -5,7 +5,6 @@ from importlib import metadata
 from pathlib import Path
 from typing import Annotated
 
-import pyarrow.parquet as pq
 import typer
 
 from parqx.logger import setup_logging
@@ -59,5 +58,9 @@ def main(
 
     setup_logging(verbose)
 
-    table = pq.read_table(path)  # type: ignore
-    ParqxApp(table).run()
+    parqx = ParqxApp(path=path)
+    parqx.run()
+
+    if parqx.load_error is not None:
+        typer.echo(f"parqx: cannot read {path}: {parqx.load_error}", err=True)
+        raise typer.Exit(code=1)
