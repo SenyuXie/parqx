@@ -739,6 +739,7 @@ name = "parqx"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "platformdirs" },
     { name = "pyarrow" },
     { name = "textual" },
     { name = "typer" },
@@ -755,6 +756,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "platformdirs", specifier = ">=4.10.0" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "textual", specifier = ">=8.2.7" },
     { name = "typer", specifier = ">=0.26.7" },

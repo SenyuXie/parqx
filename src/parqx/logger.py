@@ -58,7 +58,9 @@ def setup_logging(verbose: int = 0) -> None:
     logger.setLevel(level)
     logger.propagate = False
 
-    for existing in logger.handlers:
+    # Iterate over a copy of the handler list: removeHandler mutates logger.handlers
+    # in place, so walking the live list would skip every other entry.
+    for existing in list(logger.handlers):
         logger.removeHandler(existing)
         existing.close()
 

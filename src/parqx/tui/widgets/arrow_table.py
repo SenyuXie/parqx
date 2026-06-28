@@ -978,6 +978,10 @@ class ArrowTable(ScrollView, can_focus=True):
         return self._table.column(column)[row]
 
     def _clear_render_caches(self) -> None:
+        # Intentionally do NOT clear _row_renderable_cache: row renderables are derived
+        # purely from immutable Arrow scalars via format_cell, so they don't depend on
+        # cell_padding, cursor state, zebra stripes, or show_header/show_row_index.
+        # Only the rendered Segments/Strips below are width- and style-sensitive.
         self._cell_render_cache.clear()
         self._row_render_cache.clear()
         self._line_cache.clear()
@@ -988,6 +992,9 @@ class ArrowTable(ScrollView, can_focus=True):
         super().notify_style_update()
         self._row_render_cache.clear()
         self._cell_render_cache.clear()
+        # Also clear renderables here (unlike _clear_render_caches): a component-style
+        # change could in principle alter how format_cell output resolves under a new
+        # theme, so we invalidate defensively.
         self._row_renderable_cache.clear()
         self._line_cache.clear()
         self._styles_cache.clear()
@@ -1160,9 +1167,16 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _clamp_cursor_coordinate(self, coordinate: Coordinate) -> Coordinate:
         """Clamp a coordinate such that it falls within the boundaries of the table."""
+        # Empty table: no valid cell exists. Return Coordinate(0, 0) as a sentinel —
+        # downstream paths (get_cell_at / _highlight_coordinate / _post_selected_message)
+        # already guard with is_valid_coordinate / row_count == 0, so an out-of-bounds
+        # cursor here is harmless. Avoids clamp(value, 0, -1) which has no contract.
+        if self.row_count == 0 or self.column_count == 0:
+            return Coordinate(0, 0)
+
         row, column = coordinate
         row = clamp(row, 0, self.row_count - 1)
-        column = clamp(column, 0, len(self.columns) - 1)
+        column = clamp(column, 0, self.column_count - 1)
         return Coordinate(row, column)
 
     def watch_cursor_type(self, old: str, new: str) -> None:
@@ -1420,7 +1434,10 @@ class ArrowTable(ScrollView, can_focus=True):
         )
 
         if cache_key not in self._cell_render_cache:
-            console = self.app.console  # pyright: ignore
+            try:
+                console = self.app.console  # pyright: ignore
+            except NoActiveAppError:
+                console = Console()  # Use a fallback console
             base_style += Style.from_meta({"row": row_index, "column": column_index})
 
             index_renderable, row_cells = self._get_row_renderables(row_index)
@@ -1833,8 +1850,6 @@ class ArrowTable(ScrollView, can_focus=True):
             self.refresh_coordinate(self.hover_coordinate)
 
     async def _on_click(self, event: events.Click) -> None:
-        _ = event
-
         self._set_hover_cursor(True)
         meta = event.style.meta
         if "row" not in meta or "column" not in meta:
