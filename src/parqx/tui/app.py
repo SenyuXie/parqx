@@ -52,6 +52,7 @@ class ParqxApp(App[Any]):
     def _on_load_ok(self, table: pa.Table) -> None:
         self.query_one(FileLoading).remove()
         self.mount(ArrowTable(table))
+        self.query_one(ArrowTable).focus()
 
     def _on_load_error(self, message: str) -> None:
         self.load_error = message
