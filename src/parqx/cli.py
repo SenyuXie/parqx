@@ -41,6 +41,7 @@ def main(
             "-v",
             count=True,
             help="Enable verbose logging (or `-vv` for more verbose output).",
+            max=2,
         ),
     ] = 0,
     version: Annotated[
