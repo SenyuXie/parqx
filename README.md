@@ -2,7 +2,7 @@
 
 Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
 
-It opens a local Parquet file directly in your terminal and displays it as an interactive, scrollable table backed by PyArrow and Textual.
+Parqx opens a local Parquet file directly in terminal and displays it as an interactive, scrollable table backed by PyArrow and Textual.
 
 ## Installation
 
@@ -20,7 +20,9 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
-## Navigation
+## Keyboard control
+
+### Navigation
 
 | Key                   | Action                        |
 | ---                   | ---                           |
@@ -32,7 +34,15 @@ parqx data/weather.parquet
 | `Ctrl+Home`           | Move to the first row         |
 | `Ctrl+End`            | Move to the last row          |
 | `Enter`               | Select the current cell       |
-| `Ctrl+Q`              | Quit                          |
+
+### Table View
+
+| Key | Action                                         |
+| --- | ---                                            |
+| `H` | Toggle the column header row                   |
+| `I` | Toggle the row-index column                    |
+| `Z` | Toggle zebra striping                          |
+| `C` | Cycle cursor type (cell → row → column → none) |
 
 ## License
 

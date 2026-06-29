@@ -39,6 +39,12 @@ async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
         assert table.cursor_coordinate.row == 2
         assert table.cursor_coordinate.column == 1
 
+        # Toggle bindings on ArrowTable.
+        await pilot.press("h")
+        assert table.show_header is False
+        await pilot.press("c")
+        assert table.cursor_type == "row"
+
     assert app.load_error is None
 
 
