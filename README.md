@@ -47,3 +47,5 @@ parqx data/weather.parquet
 ## License
 
 Parqx is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+This project includes code derived from Textual; see [NOTICE](NOTICE).

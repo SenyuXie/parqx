@@ -1,4 +1,13 @@
-"""The ArrowTable widget."""
+"""The ArrowTable widget.
+
+Derived from Textual's DataTable implementation:
+https://github.com/Textualize/textual/blob/v8.2.7/src/textual/widgets/_data_table.py
+
+Textual is licensed under the MIT License.
+Copyright (c) 2021 Will McGugan.
+
+Modifications copyright (c) 2026 Senyu Xie.
+"""
 
 from __future__ import annotations
 
