@@ -10,9 +10,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
-from textual.widgets import Footer
+from textual.widgets import Footer, LoadingIndicator
 
-from parqx.tui.widgets import ArrowTable, FileLoading
+from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.arrow_table import CursorType
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class ParqxApp(App[Any]):
         only thing that gets mounted/removed. `Footer` is docked to the bottom
         and persists for the app's lifetime so its key hints are always visible.
         """
-        yield FileLoading(self._path)
+        yield LoadingIndicator()
         yield Footer(show_command_palette=True)
 
     def on_mount(self) -> None:
@@ -75,7 +75,7 @@ class ParqxApp(App[Any]):
         self.call_from_thread(self._on_load_ok, table)
 
     def _on_load_ok(self, table: pa.Table) -> None:
-        self.query_one(FileLoading).remove()
+        self.query_one(LoadingIndicator).remove()
         self.mount(ArrowTable(table))
         self.query_one(ArrowTable).focus()
 
