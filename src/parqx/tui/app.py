@@ -67,7 +67,7 @@ class ParqxApp(App[Any]):
     @work(thread=True, exclusive=True)
     def _load_table(self) -> None:
         try:
-            table: pa.Table = pq.read_table(self._path)  # type: ignore
+            table: pa.Table = pq.read_table(self._path)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
             self.call_from_thread(self._on_load_error, str(exc))
