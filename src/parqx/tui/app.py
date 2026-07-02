@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
 from textual.widgets import Footer, LoadingIndicator
 
+from parqx.data.source import DEFAULT_MAX_CACHE_BYTES, ParquetSource, TableSource
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.arrow_table import CursorType
 
@@ -36,15 +36,20 @@ class ParqxApp(App[Any]):
     )
     """Order in which `action_cycle_cursor_type` advances the cursor type."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
+    ) -> None:
         """Initialize the app with a Parquet file path to inspect.
 
         Args:
             path: Parquet file shown by the main table widget. The file is read
                 asynchronously after the UI mounts, not in this constructor.
+            max_cache_bytes: Maximum decoded row-group cache size in bytes.
         """
         super().__init__()
         self._path = path
+        self._max_cache_bytes = max_cache_bytes
+        self._source: TableSource | None = None
         self.load_error: str | None = None
         """Set when the worker thread fails to read the file. The CLI inspects
         this after `run` returns to decide between a clean exit and a non-zero
@@ -67,21 +72,28 @@ class ParqxApp(App[Any]):
     @work(thread=True, exclusive=True)
     def _load_table(self) -> None:
         try:
-            table: pa.Table = pq.read_table(self._path)
+            source = ParquetSource(self._path, max_cache_bytes=self._max_cache_bytes)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
             self.call_from_thread(self._on_load_error, str(exc))
             return
-        self.call_from_thread(self._on_load_ok, table)
+        self.call_from_thread(self._on_load_ok, source)
 
-    def _on_load_ok(self, table: pa.Table) -> None:
+    def _on_load_ok(self, source: TableSource) -> None:
+        self._source = source
         self.query_one(LoadingIndicator).remove()
-        self.mount(ArrowTable(table))
+        self.mount(ArrowTable(source))
         self.query_one(ArrowTable).focus()
 
     def _on_load_error(self, message: str) -> None:
         self.load_error = message
         self.exit(return_code=1)
+
+    def on_unmount(self) -> None:
+        """Release the source when the app is unmounted."""
+        if self._source is not None:
+            self._source.close()
+            self._source = None
 
     def _get_arrow_table(self) -> ArrowTable | None:
         """Return the mounted `ArrowTable`, or `None` during the loading phase."""

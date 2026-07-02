@@ -3,13 +3,13 @@ import pytest
 from parqx.data.cache import BoundedLRUCache
 
 
-def test_budget_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="budget_bytes must be positive"):
+def test_max_bytes_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_bytes must be positive"):
         BoundedLRUCache[int, str](0, len)
 
 
 def test_set_get_updates_current_bytes() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=10, sizeof=len)
+    cache = BoundedLRUCache[str, str](max_bytes=10, sizeof=len)
 
     cache["a"] = "123"
 
@@ -17,8 +17,8 @@ def test_set_get_updates_current_bytes() -> None:
     assert cache.current_bytes == 3
 
 
-def test_evicts_oldest_when_budget_exceeded() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=5, sizeof=len)
+def test_evicts_oldest_when_cache_limit_exceeded() -> None:
+    cache = BoundedLRUCache[str, str](max_bytes=5, sizeof=len)
 
     cache["a"] = "123"
     cache["b"] = "456"
@@ -29,7 +29,7 @@ def test_evicts_oldest_when_budget_exceeded() -> None:
 
 
 def test_get_marks_entry_recently_used() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=5, sizeof=len)
+    cache = BoundedLRUCache[str, str](max_bytes=5, sizeof=len)
     cache["a"] = "12"
     cache["b"] = "34"
 
@@ -42,7 +42,7 @@ def test_get_marks_entry_recently_used() -> None:
 
 
 def test_replace_same_key_updates_size() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=10, sizeof=len)
+    cache = BoundedLRUCache[str, str](max_bytes=10, sizeof=len)
 
     cache["a"] = "12"
     cache["a"] = "12345"
@@ -52,7 +52,7 @@ def test_replace_same_key_updates_size() -> None:
 
 
 def test_oversized_entry_is_kept_when_alone() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=3, sizeof=len)
+    cache = BoundedLRUCache[str, str](max_bytes=3, sizeof=len)
 
     cache["a"] = "12345"
 
@@ -62,7 +62,7 @@ def test_oversized_entry_is_kept_when_alone() -> None:
 
 
 def test_clear_resets_cache() -> None:
-    cache = BoundedLRUCache[str, str](budget_bytes=10, sizeof=len)
+    cache = BoundedLRUCache[str, str](max_bytes=10, sizeof=len)
     cache["a"] = "123"
 
     cache.clear()

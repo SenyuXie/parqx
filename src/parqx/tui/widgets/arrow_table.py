@@ -43,6 +43,8 @@ from textual.strip import Strip
 from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
 
+from parqx.data.source import TableSource
+
 logger = logging.getLogger(__name__)
 
 type CursorType = Literal["cell", "row", "column", "none"]
@@ -712,7 +714,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def __init__(
         self,
-        table: pa.Table,
+        source: TableSource,
         show_header: bool = True,
         show_row_index: bool = True,
         zebra_stripes: bool = False,
@@ -729,7 +731,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """Initialize a widget to display Arrow-backed tabular data.
 
         Args:
-            table: Arrow table used as the backing data source.
+            source: Source used as the backing data provider.
             show_header: Whether the table header should be visible or not.
             show_row_index: Whether zero-based row numbers should be shown or not.
             zebra_stripes: Enables or disables a zebra effect applied to the background
@@ -754,8 +756,8 @@ class ArrowTable(ScrollView, can_focus=True):
         """
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
 
-        self._table = table
-        """Arrow table used as the backing data source."""
+        self._source = source
+        """Source used as the backing data provider."""
         self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
         self._column_offsets: tuple[int, ...] | None = None
@@ -838,7 +840,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def row_count(self) -> int:
         """The total number of rows currently present in the ArrowTable."""
-        return self._table.num_rows
+        return self._source.row_count
 
     @property
     def _total_row_height(self) -> int:
@@ -848,12 +850,12 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def column_count(self) -> int:
         """The total number of columns currently present in the ArrowTable."""
-        return self._table.num_columns
+        return self._source.column_count
 
     def _measure_content_width(
         self,
-        column: pa.ChunkedArray,
-        sample_indices: pa.Array,
+        column_index: int,
+        sample_indices: tuple[int, ...],
         percentile: float = 0.95,
     ) -> int:
         """Estimate the display width of a column's formatted cell content.
@@ -863,7 +865,7 @@ class ArrowTable(ScrollView, can_focus=True):
         width is known without scanning sampled values.
 
         Args:
-            column: Arrow column to measure.
+            column_index: Index of the column to measure.
             sample_indices: Row indices used to sample values from the column.
             percentile: Percentile of sampled widths to return, expressed as a
                 value in the range `0 < percentile <= 1`.
@@ -872,7 +874,7 @@ class ArrowTable(ScrollView, can_focus=True):
             Estimated content width in terminal cells, excluding horizontal cell
             padding.
         """
-        data_type = column.type
+        data_type = self._source.columns[column_index].arrow_type
         try:
             console = self.app.console  # pyright: ignore
         except NoActiveAppError:
@@ -886,8 +888,10 @@ class ArrowTable(ScrollView, can_focus=True):
 
         # For everything else, we need to compute it
         widths: list[int] = [
-            measure(console, format_cell(scalar), 0)
-            for scalar in column.take(sample_indices)
+            measure(
+                console, format_cell(self._source.get_cell_at(row, column_index)), 0
+            )
+            for row in sample_indices
         ]
 
         if len(widths) == 0:
@@ -903,13 +907,10 @@ class ArrowTable(ScrollView, can_focus=True):
             return self._columns
 
         row_indices = _sample_row_indices(self.row_count)
-        sample_indices = pa.array(row_indices, type=pa.int64())
 
         self._columns = tuple(
-            Column(name, self._measure_content_width(column, sample_indices))
-            for name, column in zip(
-                self._table.column_names, self._table.columns, strict=True
-            )
+            Column(column.name, self._measure_content_width(column_index, row_indices))
+            for column_index, column in enumerate(self._source.columns)
         )
         return self._columns
 
@@ -984,7 +985,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_coordinate(coordinate):
             raise CellNotExistError(coordinate)
 
-        return self._table.column(column)[row]
+        return self._source.get_cell_at(row, column)
 
     def _clear_render_caches(self) -> None:
         # Intentionally do NOT clear _row_renderable_cache: row renderables are derived

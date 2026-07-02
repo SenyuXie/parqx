@@ -90,8 +90,8 @@ def test_get_cell_at_caches_decoded_row_groups(multi_row_group_parquet: Path) ->
         source.close()
 
 
-def test_cache_budget_evicts_old_row_groups(multi_row_group_parquet: Path) -> None:
-    source = ParquetSource(multi_row_group_parquet, budget_bytes=1)
+def test_cache_limit_evicts_old_row_groups(multi_row_group_parquet: Path) -> None:
+    source = ParquetSource(multi_row_group_parquet, max_cache_bytes=1)
     cache = _row_group_cache(source)
     try:
         _ = source.get_cell_at(0, 0)

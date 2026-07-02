@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -38,7 +38,7 @@ class TableSource(Protocol):
         """Column metadata in source order. Stable across calls."""
         ...
 
-    def get_cell_at(self, row: int, column: int) -> Any:
+    def get_cell_at(self, row: int, column: int) -> pa.Scalar:
         """Return the value at (row, column).
 
         Args:

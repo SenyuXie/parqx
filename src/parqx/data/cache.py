@@ -9,19 +9,19 @@ from collections.abc import Callable
 class BoundedLRUCache[K, V]:
     """LRU cache bounded by a byte budget."""
 
-    def __init__(self, budget_bytes: int, sizeof: Callable[[V], int]) -> None:
+    def __init__(self, max_bytes: int, sizeof: Callable[[V], int]) -> None:
         """Initialize the cache.
 
         Args:
-            budget_bytes: Maximum cached size in bytes.
+            max_bytes: Maximum cached size in bytes.
             sizeof: Function returning the byte size of a cached value.
 
         Raises:
-            ValueError: If budget_bytes is not positive.
+            ValueError: If max_bytes is not positive.
         """
-        if budget_bytes <= 0:
-            raise ValueError(f"budget_bytes must be positive, got {budget_bytes}")
-        self._budget_bytes = budget_bytes
+        if max_bytes <= 0:
+            raise ValueError(f"max_bytes must be positive, got {max_bytes}")
+        self._max_bytes = max_bytes
         self._sizeof = sizeof
         self._data: OrderedDict[K, V] = OrderedDict()
         self._sizes: dict[K, int] = {}
@@ -64,9 +64,9 @@ class BoundedLRUCache[K, V]:
         return self._current_bytes
 
     @property
-    def budget_bytes(self) -> int:
-        """Configured byte budget."""
-        return self._budget_bytes
+    def max_bytes(self) -> int:
+        """Configured cache size limit in bytes."""
+        return self._max_bytes
 
     def clear(self) -> None:
         """Clear all cached values."""
@@ -75,6 +75,6 @@ class BoundedLRUCache[K, V]:
         self._current_bytes = 0
 
     def _evict(self) -> None:
-        while self._current_bytes > self._budget_bytes and len(self._data) > 1:
+        while self._current_bytes > self._max_bytes and len(self._data) > 1:
             oldest_key, _ = self._data.popitem(last=False)
             self._current_bytes -= self._sizes.pop(oldest_key)

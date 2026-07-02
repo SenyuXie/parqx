@@ -12,18 +12,20 @@ import pyarrow.parquet as pq
 from parqx.data.cache import BoundedLRUCache
 from parqx.data.source.base import ColumnInfo
 
-DEFAULT_BUDGET_BYTES = 256 * 1024 * 1024  # 256MiB
+DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024  # 256MiB
 
 
 class ParquetSource:
     """Table source backed by a Parquet file."""
 
-    def __init__(self, path: Path, budget_bytes: int = DEFAULT_BUDGET_BYTES) -> None:
+    def __init__(
+        self, path: Path, max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
+    ) -> None:
         """Initialize the source from a Parquet file.
 
         Args:
             path: Parquet file to inspect.
-            budget_bytes: Maximum decoded row-group cache size in bytes.
+            max_cache_bytes: Maximum decoded row-group cache size in bytes.
         """
         self._path = path
         """Parquet file path backing this source."""
@@ -46,7 +48,7 @@ class ParquetSource:
         """Column metadata in source order, derived once from the Arrow schema."""
 
         self._cache: BoundedLRUCache[int, pa.Table] = BoundedLRUCache(
-            budget_bytes=budget_bytes, sizeof=lambda table: table.nbytes
+            max_bytes=max_cache_bytes, sizeof=lambda table: table.nbytes
         )
         """Decoded row-group cache keyed by row-group index."""
         self._closed = False
