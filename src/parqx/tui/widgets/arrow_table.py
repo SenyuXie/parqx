@@ -18,7 +18,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import chain
 from math import ceil
-from typing import ClassVar, Literal, NamedTuple, Self, cast
+from typing import ClassVar, Literal, NamedTuple, Self
 
 import pyarrow as pa
 import rich.repr
@@ -182,7 +182,7 @@ def format_cell(scalar: pa.Scalar, binary_inline_limit: int = 16) -> RenderableT
 
 
 @dataclass
-class ArrowColumn:
+class Column:
     """Metadata for a column in the ArrowTable."""
 
     name: str
@@ -756,7 +756,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         self._table = table
         """Arrow table used as the backing data source."""
-        self._columns: tuple[ArrowColumn, ...] | None = None
+        self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
         self._column_offsets: tuple[int, ...] | None = None
         """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
@@ -792,7 +792,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """The header is a special row - not part of the data."""
         self._index_column_index = -1
         """The column containing row index is not part of the data."""
-        self._index_column: ArrowColumn | None = None
+        self._index_column: Column | None = None
         """The largest content width out of all row indices in the table.
         Lazily computed in `self.index_column`."""
 
@@ -838,7 +838,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def row_count(self) -> int:
         """The total number of rows currently present in the ArrowTable."""
-        return cast(int, self._table.num_rows)
+        return self._table.num_rows
 
     @property
     def _total_row_height(self) -> int:
@@ -848,7 +848,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def column_count(self) -> int:
         """The total number of columns currently present in the ArrowTable."""
-        return cast(int, self._table.num_columns)
+        return self._table.num_columns
 
     def _measure_content_width(
         self,
@@ -897,7 +897,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return sorted(widths)[index]
 
     @property
-    def columns(self) -> tuple[ArrowColumn, ...]:
+    def columns(self) -> tuple[Column, ...]:
         """Metadata about the columns of the arrow."""
         if self._columns is not None:
             return self._columns
@@ -906,7 +906,7 @@ class ArrowTable(ScrollView, can_focus=True):
         sample_indices = pa.array(row_indices, type=pa.int64())
 
         self._columns = tuple(
-            ArrowColumn(name, self._measure_content_width(column, sample_indices))
+            Column(name, self._measure_content_width(column, sample_indices))
             for name, column in zip(
                 self._table.column_names, self._table.columns, strict=True
             )
@@ -947,14 +947,14 @@ class ArrowTable(ScrollView, can_focus=True):
         return col1, col2
 
     @property
-    def index_column(self) -> ArrowColumn:
+    def index_column(self) -> Column:
         """Virtual column metadata for the row-index column."""
         if self._index_column is not None:
             return self._index_column
 
         max_row_index = max(self.row_count - 1, 0)
         content_width = len(str(max_row_index))
-        self._index_column = ArrowColumn("#", content_width)
+        self._index_column = Column("#", content_width)
 
         return self._index_column
 

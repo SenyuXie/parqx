@@ -1,4 +1,4 @@
-"""Budgeted LRU cache."""
+"""The bounded LRU cache."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from collections import OrderedDict
 from collections.abc import Callable
 
 
-class BudgetedLRU[K, V]:
-    """LRU cache that evicts entries by byte budget."""
+class BoundedLRUCache[K, V]:
+    """LRU cache bounded by a byte budget."""
 
     def __init__(self, budget_bytes: int, sizeof: Callable[[V], int]) -> None:
         """Initialize the cache.

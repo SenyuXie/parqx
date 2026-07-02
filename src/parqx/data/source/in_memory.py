@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING
 
-import pyarrow as pa
+from parqx.data.source.base import ColumnInfo
 
-from parqx.data.source import ColumnInfo
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 
 class InMemorySource:
@@ -26,12 +27,12 @@ class InMemorySource:
     @property
     def row_count(self) -> int:
         """Total number of rows exposed by this source."""
-        return cast(int, self._table.num_rows)
+        return self._table.num_rows
 
     @property
     def column_count(self) -> int:
         """Total number of columns exposed by this source."""
-        return cast(int, self._table.num_columns)
+        return self._table.num_columns
 
     @property
     def columns(self) -> tuple[ColumnInfo, ...]:
