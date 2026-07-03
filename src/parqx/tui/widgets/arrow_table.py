@@ -18,7 +18,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import chain
 from math import ceil
-from typing import ClassVar, Literal, NamedTuple, Self, cast
+from typing import ClassVar, Literal, NamedTuple, Self
 
 import pyarrow as pa
 import rich.repr
@@ -52,31 +52,48 @@ class RowCacheKey(NamedTuple):
     """Cache key for rendered fixed and scrollable segments in a row."""
 
     row_index: int
+    """Index of the rendered table row, or `_header_row_index` for the header."""
     base_style: Style
+    """Base Rich style applied before row and cell component styles."""
     cursor_location: Coordinate
+    """Current keyboard cursor coordinate used to compute cursor highlighting."""
     hover_location: Coordinate
+    """Current hover cursor coordinate used to compute hover highlighting."""
     cursor_type: CursorType
+    """Active cursor mode used when deciding which cells are highlighted."""
     show_cursor: bool
+    """Whether keyboard cursor highlighting should be rendered."""
     show_hover_cursor: bool
+    """Whether hover cursor highlighting should be rendered."""
     update_count: int
+    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
+    """Widget pseudo-class state used by style resolution."""
     col1: int
+    """First visible data column index rendered for this row, inclusive."""
     col2: int
+    """One past the last visible data column index rendered for this row."""
 
 
 class CellCacheKey(NamedTuple):
     """Cache key for rendered segment lines in a cell."""
 
     row_index: int
+    """Index of the cell row, or `_header_row_index` for a header cell."""
     column_index: int
+    """Index of the cell column, or `_index_column_index` for the row index cell."""
     base_style: Style
+    """Base Rich style applied before cell component styles and metadata."""
     cursor: bool
     """Whether this cell is affected by cursor highlighting."""
     hover: bool
     """Whether this cell is affected by hover cursor highlighting."""
     show_hover_cursor: bool
+    """Whether hover cursor highlighting should be rendered."""
     update_count: int
+    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
+    """Widget pseudo-class state used by style resolution."""
 
 
 class LineCacheKey(NamedTuple):
@@ -85,15 +102,25 @@ class LineCacheKey(NamedTuple):
     y: int
     """Y coordinate of line relative to virtual table top."""
     x1: int
+    """Left crop offset in the table's horizontal scroll space."""
     x2: int
+    """Right crop offset in the table's horizontal scroll space, exclusive."""
     width: int
+    """Rendered line width in terminal cells."""
     cursor_coordinate: Coordinate
+    """Current keyboard cursor coordinate used by row rendering."""
     hover_coordinate: Coordinate
+    """Current hover cursor coordinate used by row rendering."""
     base_style: Style
+    """Base Rich style applied to the rendered line."""
     cursor_type: CursorType
+    """Active cursor mode used when rendering highlights."""
     show_hover_cursor: bool
+    """Whether hover cursor highlighting should be rendered."""
     update_count: int
+    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
+    """Widget pseudo-class state used by style resolution."""
 
 
 class CellNotExistError(Exception):
@@ -838,7 +865,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def row_count(self) -> int:
         """The total number of rows currently present in the ArrowTable."""
-        return cast(int, self._table.num_rows)
+        return self._table.num_rows
 
     @property
     def _total_row_height(self) -> int:
@@ -848,7 +875,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def column_count(self) -> int:
         """The total number of columns currently present in the ArrowTable."""
-        return cast(int, self._table.num_columns)
+        return self._table.num_columns
 
     def _measure_content_width(
         self,
