@@ -11,7 +11,8 @@ from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
 from textual.widgets import Footer, LoadingIndicator
 
-from parqx.data.source import DEFAULT_MAX_CACHE_BYTES, ParquetSource, TableSource
+from parqx.config import ParqxConfig
+from parqx.data.source import ParquetSource, TableSource
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.arrow_table import CursorType
 
@@ -36,19 +37,16 @@ class ParqxApp(App[Any]):
     )
     """Order in which `action_cycle_cursor_type` advances the cursor type."""
 
-    def __init__(
-        self, path: Path, max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
-    ) -> None:
+    def __init__(self, path: Path, config: ParqxConfig | None = None) -> None:
         """Initialize the app with a Parquet file path to inspect.
 
         Args:
-            path: Parquet file shown by the main table widget. The file is read
-                asynchronously after the UI mounts, not in this constructor.
-            max_cache_bytes: Maximum decoded row-group cache size in bytes.
+            path: Parquet file shown by the main table widget.
+            config: TODO.
         """
         super().__init__()
         self._path = path
-        self._max_cache_bytes = max_cache_bytes
+        self._config = config or ParqxConfig()
         self._source: TableSource | None = None
         self.load_error: str | None = None
         """Set when the worker thread fails to read the file. The CLI inspects
@@ -72,7 +70,9 @@ class ParqxApp(App[Any]):
     @work(thread=True, exclusive=True)
     def _load_table(self) -> None:
         try:
-            source = ParquetSource(self._path, max_cache_bytes=self._max_cache_bytes)
+            source = ParquetSource(
+                self._path, max_cache_bytes=self._config.max_cache_bytes
+            )
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
             self.call_from_thread(self._on_load_error, str(exc))

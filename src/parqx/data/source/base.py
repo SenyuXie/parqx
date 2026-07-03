@@ -39,11 +39,14 @@ class TableSource(Protocol):
         ...
 
     def get_cell_at(self, row: int, column: int) -> pa.Scalar:
-        """Return the value at (row, column).
+        """Get the value at (row, column).
 
         Args:
             row: Zero-based row index of the value to retrieve.
             column: Zero-based column index of the value to retrieve.
+
+        Returns:
+            TODO.
 
         Raises:
             IndexError: If row or column is out of range.

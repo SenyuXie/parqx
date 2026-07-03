@@ -12,15 +12,11 @@ import pyarrow.parquet as pq
 from parqx.data.cache import BoundedLRUCache
 from parqx.data.source.base import ColumnInfo
 
-DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024  # 256MiB
-
 
 class ParquetSource:
     """Table source backed by a Parquet file."""
 
-    def __init__(
-        self, path: Path, max_cache_bytes: int = DEFAULT_MAX_CACHE_BYTES
-    ) -> None:
+    def __init__(self, path: Path, max_cache_bytes: int) -> None:
         """Initialize the source from a Parquet file.
 
         Args:
@@ -85,11 +81,14 @@ class ParquetSource:
         return table
 
     def get_cell_at(self, row: int, column: int) -> pa.Scalar:
-        """Return the value at (row, column).
+        """Get the value at (row, column).
 
         Args:
             row: Zero-based row index of the value to retrieve.
             column: Zero-based column index of the value to retrieve.
+
+        Returns:
+            TODO.
 
         Raises:
             IndexError: If row or column is out of range.

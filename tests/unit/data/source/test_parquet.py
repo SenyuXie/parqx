@@ -8,6 +8,8 @@ import pytest
 from parqx.data.cache import BoundedLRUCache
 from parqx.data.source.parquet import ParquetSource
 
+TEST_MAX_CACHE_BYTES = 256 * 1024 * 1024
+
 
 def _row_group_cache(source: ParquetSource) -> BoundedLRUCache[int, pa.Table]:
     return cast(BoundedLRUCache[int, pa.Table], source.__dict__["_cache"])
@@ -34,7 +36,9 @@ def multi_row_group_parquet(tmp_path: Path) -> Path:
 def test_exposes_metadata_without_loading_row_groups(
     multi_row_group_parquet: Path,
 ) -> None:
-    source = ParquetSource(multi_row_group_parquet)
+    source = ParquetSource(
+        multi_row_group_parquet, max_cache_bytes=TEST_MAX_CACHE_BYTES
+    )
     try:
         assert source.row_count == 5
         assert source.column_count == 3
@@ -47,7 +51,9 @@ def test_exposes_metadata_without_loading_row_groups(
 def test_get_cell_at_reads_values_across_row_group_boundaries(
     multi_row_group_parquet: Path,
 ) -> None:
-    source = ParquetSource(multi_row_group_parquet)
+    source = ParquetSource(
+        multi_row_group_parquet, max_cache_bytes=TEST_MAX_CACHE_BYTES
+    )
     try:
         assert source.get_cell_at(0, 0).as_py() == 0
         assert source.get_cell_at(1, 1).as_py() == "one"
@@ -60,7 +66,9 @@ def test_get_cell_at_reads_values_across_row_group_boundaries(
 def test_get_cell_at_rejects_out_of_range_coordinates(
     multi_row_group_parquet: Path,
 ) -> None:
-    source = ParquetSource(multi_row_group_parquet)
+    source = ParquetSource(
+        multi_row_group_parquet, max_cache_bytes=TEST_MAX_CACHE_BYTES
+    )
     try:
         with pytest.raises(IndexError):
             source.get_cell_at(-1, 0)
@@ -75,7 +83,9 @@ def test_get_cell_at_rejects_out_of_range_coordinates(
 
 
 def test_get_cell_at_caches_decoded_row_groups(multi_row_group_parquet: Path) -> None:
-    source = ParquetSource(multi_row_group_parquet)
+    source = ParquetSource(
+        multi_row_group_parquet, max_cache_bytes=TEST_MAX_CACHE_BYTES
+    )
     cache = _row_group_cache(source)
     try:
         _ = source.get_cell_at(0, 0)
@@ -107,7 +117,9 @@ def test_cache_limit_evicts_old_row_groups(multi_row_group_parquet: Path) -> Non
 
 
 def test_close_is_idempotent_and_clears_cache(multi_row_group_parquet: Path) -> None:
-    source = ParquetSource(multi_row_group_parquet)
+    source = ParquetSource(
+        multi_row_group_parquet, max_cache_bytes=TEST_MAX_CACHE_BYTES
+    )
     cache = _row_group_cache(source)
     _ = source.get_cell_at(0, 0)
     assert len(cache) == 1
