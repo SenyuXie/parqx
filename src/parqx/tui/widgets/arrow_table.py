@@ -1114,11 +1114,21 @@ class ArrowTable(ScrollView, can_focus=True):
                 self.refresh_coordinate(old_coordinate)
                 self._highlight_coordinate(new_coordinate)
             elif self.cursor_type == "row":
-                self.refresh_row(old_coordinate.row)
-                self._highlight_row(new_coordinate.row)
+                # Row highlighting only depends on the row index. Horizontal cursor
+                # movement within the same row doesn't change any rendered highlight,
+                # so refreshing and reposting the highlighted row would only create
+                # unnecessary repaint work.
+                if old_coordinate.row != new_coordinate.row:
+                    self.refresh_row(old_coordinate.row)
+                    self._highlight_row(new_coordinate.row)
             elif self.cursor_type == "column":
-                self.refresh_column(old_coordinate.column)
-                self._highlight_column(new_coordinate.column)
+                # Column highlighting only depends on the column index. Vertical cursor
+                # movement within the same column doesn't change the visible highlight;
+                # skipping it avoids an expensive full-column refresh path on large
+                # tables.
+                if old_coordinate.column != new_coordinate.column:
+                    self.refresh_column(old_coordinate.column)
+                    self._highlight_column(new_coordinate.column)
 
             if self._require_update_dimensions:
                 self.call_after_refresh(self._scroll_cursor_into_view)
@@ -1356,10 +1366,16 @@ class ArrowTable(ScrollView, can_focus=True):
         Returns:
             The `ArrowTable` instance.
         """
-        if not self.window_region.overlaps(region):
+        # Refresh regions are expressed in virtual table coordinates. Column refreshes
+        # can cover the full table height, and after scrolling that would translate
+        # into a very large negative-y dirty region. Clip to the visible window first
+        # so Textual only receives the portion that can actually be repainted.
+        visible_region = region.intersection(self.window_region)
+        # Region is falsy when width or height is zero, i.e. nothing is visible.
+        if not visible_region:
             return self
-        region = region.translate(-self.scroll_offset)
-        self.refresh(region)
+
+        self.refresh(visible_region.translate(-self.scroll_offset))
         return self
 
     def is_valid_row_index(self, row_index: int) -> bool:
@@ -1876,6 +1892,13 @@ class ArrowTable(ScrollView, can_focus=True):
         Args:
             active: Display the hover cursor.
         """
+        # Keyboard navigation repeatedly hides the hover cursor. If the state is
+        # already unchanged, refreshing the hover row/column/cell cannot affect the
+        # rendered output; in column mode it would still schedule a costly column
+        # refresh, so return before touching render state.
+        if self._show_hover_cursor == active:
+            return
+
         self._show_hover_cursor = active
         cursor_type = self.cursor_type
         if cursor_type == "column":
