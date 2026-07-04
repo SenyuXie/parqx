@@ -55,10 +55,10 @@ class RowCacheKey(NamedTuple):
     """Index of the rendered table row, or `_header_row_index` for the header."""
     base_style: Style
     """Base Rich style applied before row and cell component styles."""
-    cursor_location: Coordinate
-    """Current keyboard cursor coordinate used to compute cursor highlighting."""
-    hover_location: Coordinate
-    """Current hover cursor coordinate used to compute hover highlighting."""
+    cursor_coordinate: Coordinate
+    """Cursor coordinate normalized to only the axes that affect row rendering."""
+    hover_coordinate: Coordinate
+    """Hover coordinate normalized to only the axes that affect row rendering."""
     cursor_type: CursorType
     """Active cursor mode used when deciding which cells are highlighted."""
     show_cursor: bool
@@ -87,9 +87,7 @@ class CellCacheKey(NamedTuple):
     cursor: bool
     """Whether this cell is affected by cursor highlighting."""
     hover: bool
-    """Whether this cell is affected by hover cursor highlighting."""
-    show_hover_cursor: bool
-    """Whether hover cursor highlighting should be rendered."""
+    """Whether this cell is affected by visible hover cursor highlighting."""
     update_count: int
     """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
@@ -108,9 +106,9 @@ class LineCacheKey(NamedTuple):
     width: int
     """Rendered line width in terminal cells."""
     cursor_coordinate: Coordinate
-    """Current keyboard cursor coordinate used by row rendering."""
+    """Cursor coordinate normalized to only the axes that affect line rendering."""
     hover_coordinate: Coordinate
-    """Current hover cursor coordinate used by row rendering."""
+    """Hover coordinate normalized to only the axes that affect line rendering."""
     base_style: Style
     """Base Rich style applied to the rendered line."""
     cursor_type: CursorType
@@ -1414,6 +1412,29 @@ class ArrowTable(ScrollView, can_focus=True):
             column_index
         )
 
+    def _normalize_cache_coordinate(
+        self, coordinate: Coordinate, visible: bool
+    ) -> Coordinate:
+        """Reduce a cursor coordinate to the parts that can affect rendering.
+
+        Args:
+            coordinate: The raw cursor or hover coordinate.
+            visible: Whether the cursor represented by this coordinate is currently
+                visible and can affect rendered output.
+
+        Returns:
+            A coordinate suitable for cache keys. Irrelevant axes are replaced with
+            `-1` based on the active `cursor_type`, and `Coordinate(-1, -1)` is used
+            when the cursor is hidden or cursor rendering is disabled.
+        """
+        if not visible or self.cursor_type == "none":
+            return Coordinate(-1, -1)
+        if self.cursor_type == "row":
+            return Coordinate(coordinate.row, -1)
+        if self.cursor_type == "column":
+            return Coordinate(-1, coordinate.column)
+        return coordinate
+
     def _get_row_renderables(self, row_index: int) -> RowRenderables:
         """Get renderables for the row currently at the given row index.
 
@@ -1474,13 +1495,14 @@ class ArrowTable(ScrollView, can_focus=True):
         is_header_cell = row_index == self._header_row_index
         is_row_index_cell = column_index == self._index_column_index
 
+        effective_cursor = cursor and self.show_cursor
+        effective_hover = hover and self.show_cursor and self._show_hover_cursor
         cache_key = CellCacheKey(
             row_index,
             column_index,
             base_style,
-            cursor,
-            hover,
-            self._show_hover_cursor,
+            effective_cursor,
+            effective_hover,
             self._update_count,
             self._pseudo_class_state,
         )
@@ -1502,8 +1524,8 @@ class ArrowTable(ScrollView, can_focus=True):
             component_style, post_style = self._get_styles_to_render_cell(
                 is_header_cell,
                 is_row_index_cell,
-                hover,
-                cursor,
+                effective_hover,
+                effective_cursor,
                 self.show_cursor,
                 self._show_hover_cursor,
                 self.cursor_foreground_priority == "css",
@@ -1614,11 +1636,17 @@ class ArrowTable(ScrollView, can_focus=True):
         cursor_type = self.cursor_type
         show_cursor = self.show_cursor
 
+        normalized_cursor_coordinate = self._normalize_cache_coordinate(
+            cursor_location, visible=show_cursor
+        )
+        normalized_hover_coordinate = self._normalize_cache_coordinate(
+            hover_location, visible=show_cursor and self._show_hover_cursor
+        )
         cache_key = RowCacheKey(
             row_index,
             base_style,
-            cursor_location,
-            hover_location,
+            normalized_cursor_coordinate,
+            normalized_hover_coordinate,
             cursor_type,
             show_cursor,
             self._show_hover_cursor,
@@ -1707,13 +1735,19 @@ class ArrowTable(ScrollView, can_focus=True):
         ):
             return Strip.blank(width, base_style)
 
+        normalized_cursor_coordinate = self._normalize_cache_coordinate(
+            self.cursor_coordinate, visible=self.show_cursor
+        )
+        normalized_hover_coordinate = self._normalize_cache_coordinate(
+            self.hover_coordinate, visible=self.show_cursor and self._show_hover_cursor
+        )
         cache_key = LineCacheKey(
             y,
             x1,
             x2,
             width,
-            self.cursor_coordinate,
-            self.hover_coordinate,
+            normalized_cursor_coordinate,
+            normalized_hover_coordinate,
             base_style,
             self.cursor_type,
             self._show_hover_cursor,
