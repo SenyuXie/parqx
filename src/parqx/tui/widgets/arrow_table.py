@@ -55,10 +55,10 @@ class RowCacheKey(NamedTuple):
     """Index of the rendered table row, or `_header_row_index` for the header."""
     base_style: Style
     """Base Rich style applied before row and cell component styles."""
-    cursor_location: Coordinate
-    """Current keyboard cursor coordinate used to compute cursor highlighting."""
-    hover_location: Coordinate
-    """Current hover cursor coordinate used to compute hover highlighting."""
+    cursor_coordinate: Coordinate
+    """Cursor coordinate normalized to only the axes that affect row rendering."""
+    hover_coordinate: Coordinate
+    """Hover coordinate normalized to only the axes that affect row rendering."""
     cursor_type: CursorType
     """Active cursor mode used when deciding which cells are highlighted."""
     show_cursor: bool
@@ -87,9 +87,7 @@ class CellCacheKey(NamedTuple):
     cursor: bool
     """Whether this cell is affected by cursor highlighting."""
     hover: bool
-    """Whether this cell is affected by hover cursor highlighting."""
-    show_hover_cursor: bool
-    """Whether hover cursor highlighting should be rendered."""
+    """Whether this cell is affected by visible hover cursor highlighting."""
     update_count: int
     """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
@@ -108,9 +106,9 @@ class LineCacheKey(NamedTuple):
     width: int
     """Rendered line width in terminal cells."""
     cursor_coordinate: Coordinate
-    """Current keyboard cursor coordinate used by row rendering."""
+    """Cursor coordinate normalized to only the axes that affect line rendering."""
     hover_coordinate: Coordinate
-    """Current hover cursor coordinate used by row rendering."""
+    """Hover coordinate normalized to only the axes that affect line rendering."""
     base_style: Style
     """Base Rich style applied to the rendered line."""
     cursor_type: CursorType
@@ -1114,11 +1112,21 @@ class ArrowTable(ScrollView, can_focus=True):
                 self.refresh_coordinate(old_coordinate)
                 self._highlight_coordinate(new_coordinate)
             elif self.cursor_type == "row":
-                self.refresh_row(old_coordinate.row)
-                self._highlight_row(new_coordinate.row)
+                # Row highlighting only depends on the row index. Horizontal cursor
+                # movement within the same row doesn't change any rendered highlight,
+                # so refreshing and reposting the highlighted row would only create
+                # unnecessary repaint work.
+                if old_coordinate.row != new_coordinate.row:
+                    self.refresh_row(old_coordinate.row)
+                    self._highlight_row(new_coordinate.row)
             elif self.cursor_type == "column":
-                self.refresh_column(old_coordinate.column)
-                self._highlight_column(new_coordinate.column)
+                # Column highlighting only depends on the column index. Vertical cursor
+                # movement within the same column doesn't change the visible highlight;
+                # skipping it avoids an expensive full-column refresh path on large
+                # tables.
+                if old_coordinate.column != new_coordinate.column:
+                    self.refresh_column(old_coordinate.column)
+                    self._highlight_column(new_coordinate.column)
 
             if self._require_update_dimensions:
                 self.call_after_refresh(self._scroll_cursor_into_view)
@@ -1356,10 +1364,16 @@ class ArrowTable(ScrollView, can_focus=True):
         Returns:
             The `ArrowTable` instance.
         """
-        if not self.window_region.overlaps(region):
+        # Refresh regions are expressed in virtual table coordinates. Column refreshes
+        # can cover the full table height, and after scrolling that would translate
+        # into a very large negative-y dirty region. Clip to the visible window first
+        # so Textual only receives the portion that can actually be repainted.
+        visible_region = region.intersection(self.window_region)
+        # Region is falsy when width or height is zero, i.e. nothing is visible.
+        if not visible_region:
             return self
-        region = region.translate(-self.scroll_offset)
-        self.refresh(region)
+
+        self.refresh(visible_region.translate(-self.scroll_offset))
         return self
 
     def is_valid_row_index(self, row_index: int) -> bool:
@@ -1398,6 +1412,29 @@ class ArrowTable(ScrollView, can_focus=True):
             column_index
         )
 
+    def _normalize_cache_coordinate(
+        self, coordinate: Coordinate, visible: bool
+    ) -> Coordinate:
+        """Reduce a cursor coordinate to the parts that can affect rendering.
+
+        Args:
+            coordinate: The raw cursor or hover coordinate.
+            visible: Whether the cursor represented by this coordinate is currently
+                visible and can affect rendered output.
+
+        Returns:
+            A coordinate suitable for cache keys. Irrelevant axes are replaced with
+            `-1` based on the active `cursor_type`, and `Coordinate(-1, -1)` is used
+            when the cursor is hidden or cursor rendering is disabled.
+        """
+        if not visible or self.cursor_type == "none":
+            return Coordinate(-1, -1)
+        if self.cursor_type == "row":
+            return Coordinate(coordinate.row, -1)
+        if self.cursor_type == "column":
+            return Coordinate(-1, coordinate.column)
+        return coordinate
+
     def _get_row_renderables(self, row_index: int) -> RowRenderables:
         """Get renderables for the row currently at the given row index.
 
@@ -1410,8 +1447,10 @@ class ArrowTable(ScrollView, can_focus=True):
             A RowRenderables containing the optional label and the rendered cells.
         """
         cache_key = row_index
-        if cache_key in self._row_renderable_cache:
-            return self._row_renderable_cache[cache_key]
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so row-renderable cache hit/miss stats stay accurate.
+        if (renderables := self._row_renderable_cache.get(cache_key)) is not None:
+            return renderables
 
         if row_index == self._header_row_index:
             renderables = RowRenderables(
@@ -1458,58 +1497,62 @@ class ArrowTable(ScrollView, can_focus=True):
         is_header_cell = row_index == self._header_row_index
         is_row_index_cell = column_index == self._index_column_index
 
+        effective_cursor = cursor and self.show_cursor
+        effective_hover = hover and self.show_cursor and self._show_hover_cursor
         cache_key = CellCacheKey(
             row_index,
             column_index,
             base_style,
-            cursor,
-            hover,
-            self._show_hover_cursor,
+            effective_cursor,
+            effective_hover,
             self._update_count,
             self._pseudo_class_state,
         )
 
-        if cache_key not in self._cell_render_cache:
-            try:
-                console = self.app.console  # pyright: ignore
-            except NoActiveAppError:
-                console = Console()  # Use a fallback console
-            base_style += Style.from_meta({"row": row_index, "column": column_index})
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so cell cache hit/miss stats stay accurate.
+        if (lines := self._cell_render_cache.get(cache_key)) is not None:
+            return lines
 
-            index_renderable, row_cells = self._get_row_renderables(row_index)
+        try:
+            console = self.app.console  # pyright: ignore
+        except NoActiveAppError:
+            console = Console()  # Use a fallback console
+        base_style += Style.from_meta({"row": row_index, "column": column_index})
 
-            if is_row_index_cell:
-                cell = index_renderable if index_renderable is not None else ""
-            else:
-                cell = row_cells[column_index]
+        index_renderable, row_cells = self._get_row_renderables(row_index)
 
-            component_style, post_style = self._get_styles_to_render_cell(
-                is_header_cell,
-                is_row_index_cell,
-                hover,
-                cursor,
-                self.show_cursor,
-                self._show_hover_cursor,
-                self.cursor_foreground_priority == "css",
-                self.cursor_background_priority == "css",
-            )
+        if is_row_index_cell:
+            cell = index_renderable if index_renderable is not None else ""
+        else:
+            cell = row_cells[column_index]
 
-            options = console.options.update_dimensions(width, 1).update(
-                no_wrap=True, overflow="ellipsis"
-            )
+        component_style, post_style = self._get_styles_to_render_cell(
+            is_header_cell,
+            is_row_index_cell,
+            effective_hover,
+            effective_cursor,
+            self.show_cursor,
+            self._show_hover_cursor,
+            self.cursor_foreground_priority == "css",
+            self.cursor_background_priority == "css",
+        )
 
-            lines = console.render_lines(
-                Styled(
-                    Padding(cell, (0, self.cell_padding)),
-                    pre_style=base_style + component_style,
-                    post_style=post_style,
-                ),
-                options,
-            )
+        options = console.options.update_dimensions(width, 1).update(
+            no_wrap=True, overflow="ellipsis"
+        )
 
-            self._cell_render_cache[cache_key] = lines
+        lines = console.render_lines(
+            Styled(
+                Padding(cell, (0, self.cell_padding)),
+                pre_style=base_style + component_style,
+                post_style=post_style,
+            ),
+            options,
+        )
 
-        return self._cell_render_cache[cache_key]
+        self._cell_render_cache[cache_key] = lines
+        return lines
 
     def _get_styles_to_render_cell(
         self,
@@ -1598,11 +1641,17 @@ class ArrowTable(ScrollView, can_focus=True):
         cursor_type = self.cursor_type
         show_cursor = self.show_cursor
 
+        normalized_cursor_coordinate = self._normalize_cache_coordinate(
+            cursor_location, visible=show_cursor
+        )
+        normalized_hover_coordinate = self._normalize_cache_coordinate(
+            hover_location, visible=show_cursor and self._show_hover_cursor
+        )
         cache_key = RowCacheKey(
             row_index,
             base_style,
-            cursor_location,
-            hover_location,
+            normalized_cursor_coordinate,
+            normalized_hover_coordinate,
             cursor_type,
             show_cursor,
             self._show_hover_cursor,
@@ -1612,8 +1661,10 @@ class ArrowTable(ScrollView, can_focus=True):
             col2,
         )
 
-        if cache_key in self._row_render_cache:
-            return self._row_render_cache[cache_key]
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so row cache hit/miss stats stay accurate.
+        if (row_pair := self._row_render_cache.get(cache_key)) is not None:
+            return row_pair
 
         header_style = self.get_component_styles("arrowtable--header").rich_style
 
@@ -1691,21 +1742,30 @@ class ArrowTable(ScrollView, can_focus=True):
         ):
             return Strip.blank(width, base_style)
 
+        normalized_cursor_coordinate = self._normalize_cache_coordinate(
+            self.cursor_coordinate, visible=self.show_cursor
+        )
+        normalized_hover_coordinate = self._normalize_cache_coordinate(
+            self.hover_coordinate, visible=self.show_cursor and self._show_hover_cursor
+        )
         cache_key = LineCacheKey(
             y,
             x1,
             x2,
             width,
-            self.cursor_coordinate,
-            self.hover_coordinate,
+            normalized_cursor_coordinate,
+            normalized_hover_coordinate,
             base_style,
             self.cursor_type,
             self._show_hover_cursor,
             self._update_count,
             self._pseudo_class_state,
         )
-        if cache_key in self._line_cache:
-            return self._line_cache[cache_key]
+
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so line cache hit/miss stats stay accurate.
+        if (strip := self._line_cache.get(cache_key)) is not None:
+            return strip
 
         fixed, scrollable = self._render_line_in_row(
             row_index,
@@ -1876,6 +1936,13 @@ class ArrowTable(ScrollView, can_focus=True):
         Args:
             active: Display the hover cursor.
         """
+        # Keyboard navigation repeatedly hides the hover cursor. If the state is
+        # already unchanged, refreshing the hover row/column/cell cannot affect the
+        # rendered output; in column mode it would still schedule a costly column
+        # refresh, so return before touching render state.
+        if self._show_hover_cursor == active:
+            return
+
         self._show_hover_cursor = active
         cursor_type = self.cursor_type
         if cursor_type == "column":
