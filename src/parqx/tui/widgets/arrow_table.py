@@ -1447,8 +1447,10 @@ class ArrowTable(ScrollView, can_focus=True):
             A RowRenderables containing the optional label and the rendered cells.
         """
         cache_key = row_index
-        if cache_key in self._row_renderable_cache:
-            return self._row_renderable_cache[cache_key]
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so row-renderable cache hit/miss stats stay accurate.
+        if (renderables := self._row_renderable_cache.get(cache_key)) is not None:
+            return renderables
 
         if row_index == self._header_row_index:
             renderables = RowRenderables(
@@ -1507,47 +1509,50 @@ class ArrowTable(ScrollView, can_focus=True):
             self._pseudo_class_state,
         )
 
-        if cache_key not in self._cell_render_cache:
-            try:
-                console = self.app.console  # pyright: ignore
-            except NoActiveAppError:
-                console = Console()  # Use a fallback console
-            base_style += Style.from_meta({"row": row_index, "column": column_index})
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so cell cache hit/miss stats stay accurate.
+        if (lines := self._cell_render_cache.get(cache_key)) is not None:
+            return lines
 
-            index_renderable, row_cells = self._get_row_renderables(row_index)
+        try:
+            console = self.app.console  # pyright: ignore
+        except NoActiveAppError:
+            console = Console()  # Use a fallback console
+        base_style += Style.from_meta({"row": row_index, "column": column_index})
 
-            if is_row_index_cell:
-                cell = index_renderable if index_renderable is not None else ""
-            else:
-                cell = row_cells[column_index]
+        index_renderable, row_cells = self._get_row_renderables(row_index)
 
-            component_style, post_style = self._get_styles_to_render_cell(
-                is_header_cell,
-                is_row_index_cell,
-                effective_hover,
-                effective_cursor,
-                self.show_cursor,
-                self._show_hover_cursor,
-                self.cursor_foreground_priority == "css",
-                self.cursor_background_priority == "css",
-            )
+        if is_row_index_cell:
+            cell = index_renderable if index_renderable is not None else ""
+        else:
+            cell = row_cells[column_index]
 
-            options = console.options.update_dimensions(width, 1).update(
-                no_wrap=True, overflow="ellipsis"
-            )
+        component_style, post_style = self._get_styles_to_render_cell(
+            is_header_cell,
+            is_row_index_cell,
+            effective_hover,
+            effective_cursor,
+            self.show_cursor,
+            self._show_hover_cursor,
+            self.cursor_foreground_priority == "css",
+            self.cursor_background_priority == "css",
+        )
 
-            lines = console.render_lines(
-                Styled(
-                    Padding(cell, (0, self.cell_padding)),
-                    pre_style=base_style + component_style,
-                    post_style=post_style,
-                ),
-                options,
-            )
+        options = console.options.update_dimensions(width, 1).update(
+            no_wrap=True, overflow="ellipsis"
+        )
 
-            self._cell_render_cache[cache_key] = lines
+        lines = console.render_lines(
+            Styled(
+                Padding(cell, (0, self.cell_padding)),
+                pre_style=base_style + component_style,
+                post_style=post_style,
+            ),
+            options,
+        )
 
-        return self._cell_render_cache[cache_key]
+        self._cell_render_cache[cache_key] = lines
+        return lines
 
     def _get_styles_to_render_cell(
         self,
@@ -1656,8 +1661,10 @@ class ArrowTable(ScrollView, can_focus=True):
             col2,
         )
 
-        if cache_key in self._row_render_cache:
-            return self._row_render_cache[cache_key]
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so row cache hit/miss stats stay accurate.
+        if (row_pair := self._row_render_cache.get(cache_key)) is not None:
+            return row_pair
 
         header_style = self.get_component_styles("arrowtable--header").rich_style
 
@@ -1754,8 +1761,11 @@ class ArrowTable(ScrollView, can_focus=True):
             self._update_count,
             self._pseudo_class_state,
         )
-        if cache_key in self._line_cache:
-            return self._line_cache[cache_key]
+
+        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
+        # Use get() here so line cache hit/miss stats stay accurate.
+        if (strip := self._line_cache.get(cache_key)) is not None:
+            return strip
 
         fixed, scrollable = self._render_line_in_row(
             row_index,
