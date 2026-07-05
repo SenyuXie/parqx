@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import random
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import chain
@@ -21,6 +20,7 @@ from math import ceil
 from typing import ClassVar, Literal, NamedTuple, Self
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import rich.repr
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
@@ -36,7 +36,6 @@ from textual.coordinate import Coordinate
 from textual.geometry import Region, Size, Spacing, clamp
 from textual.message import Message
 from textual.reactive import Reactive
-from textual.render import measure
 from textual.renderables.styled import Styled
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
@@ -145,7 +144,7 @@ class ColumnNotExistError(Exception):
     """
 
 
-def format_cell(scalar: pa.Scalar, binary_inline_limit: int = 16) -> RenderableType:
+def default_cell_formatter(scalar: pa.Scalar, binary_inline_limit: int = 16) -> Text:
     """Convert a cell into a Rich renderable for display.
 
     Args:
@@ -207,13 +206,13 @@ def format_cell(scalar: pa.Scalar, binary_inline_limit: int = 16) -> RenderableT
 
 
 @dataclass
-class ArrowColumn:
+class Column:
     """Metadata for a column in the ArrowTable."""
 
     name: str
     """Column name from the Arrow schema."""
     content_width: int
-    """Estimated p95 terminal-cell width over sampled, formatted cell values."""
+    """Estimated terminal-cell width over (sampled) formatted cell values."""
     min_width: int = 4
     """Minimum content width, excluding horizontal padding."""
     max_width: int = 32
@@ -232,52 +231,17 @@ class ArrowColumn:
         return min(width, self.max_width) + padding * 2
 
 
-def _sample_row_indices(
-    total_rows: int,
-    target_count: int = 2048,
-    head_count: int = 128,
-    tail_count: int = 128,
-    random_count: int = 128,
-    seed: int = 42,
-) -> tuple[int, ...]:
-    """Return row indices sampled from head, tail, evenly spaced, and random rows.
-
-    Assumes `target_count` >> `head_count + tail_count + random_count`
-    so the evenly spaced middle sample keeps most of the budget.
-
-    Args:
-        total_rows: Total number of rows available for sampling.
-        target_count: Target number of sampled rows.
-        head_count: The number of rows to include from the beginning.
-        tail_count: The number of rows to include from the end.
-        random_count: The number of random rows to sample from the middle.
-        seed: Seed used for deterministic random sampling.
-
-    Returns:
-        Sorted, deduplicated row indices. The returned tuple may contain fewer
-        than `target_count` rows when sampling strategies overlap.
-    """
+def _sample_row_indices(total_rows: int, target_count: int = 256) -> tuple[int, ...]:
+    """Return deterministic row indices sampled from evenly spaced rows."""
+    if total_rows <= 0 or target_count <= 0:
+        return ()
     if total_rows <= target_count:
         return tuple(range(total_rows))
+    if target_count == 1:
+        return (0,)
 
-    even_count = target_count - head_count - tail_count - random_count
-    middle_start, middle_stop = head_count, total_rows - tail_count
-    middle_count = middle_stop - middle_start
-
-    indices: set[int] = set(range(middle_start))
-    indices.update(range(middle_stop, total_rows))
-
-    span = middle_count - 1
-    denominator = max(even_count - 1, 1)
-    indices.update(
-        middle_start + round(i * span / denominator) for i in range(even_count)
-    )
-
-    rng = random.Random(seed)  # noqa: S311
-    k = min(random_count, middle_count)
-    indices.update(rng.sample(range(middle_start, middle_stop), k))
-
-    return tuple(sorted(indices))
+    last = total_rows - 1
+    return tuple(round(i * last / (target_count - 1)) for i in range(target_count))
 
 
 def _line_crop(
@@ -781,7 +745,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         self._table = table
         """Arrow table used as the backing data source."""
-        self._columns: tuple[ArrowColumn, ...] | None = None
+        self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
         self._column_offsets: tuple[int, ...] | None = None
         """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
@@ -817,7 +781,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """The header is a special row - not part of the data."""
         self._index_column_index = -1
         """The column containing row index is not part of the data."""
-        self._index_column: ArrowColumn | None = None
+        self._index_column: Column | None = None
         """The largest content width out of all row indices in the table.
         Lazily computed in `self.index_column`."""
 
@@ -898,10 +862,6 @@ class ArrowTable(ScrollView, can_focus=True):
             padding.
         """
         data_type = column.type
-        try:
-            console = self.app.console  # pyright: ignore
-        except NoActiveAppError:
-            console = Console()  # Use a fallback console
 
         # Some types can be measured more efficiently
         if pa.types.is_boolean(data_type):
@@ -909,9 +869,21 @@ class ArrowTable(ScrollView, can_focus=True):
         if pa.types.is_null(data_type):
             return 4  # "null"
 
+        if (
+            pa.types.is_integer(data_type)
+            or pa.types.is_decimal(data_type)
+            or pa.types.is_temporal(data_type)
+        ):
+            result = pc.min_max(column).as_py()
+            values = [result["min"], result["max"]]
+            valid_values = [value for value in values if value is not None]
+            if not valid_values:
+                return 4  # "null"
+            return max(cell_len(str(value)) for value in valid_values)
+
         # For everything else, we need to compute it
         widths: list[int] = [
-            measure(console, format_cell(scalar), 0)
+            cell_len(default_cell_formatter(scalar).plain)
             for scalar in column.take(sample_indices)
         ]
 
@@ -922,7 +894,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return sorted(widths)[index]
 
     @property
-    def columns(self) -> tuple[ArrowColumn, ...]:
+    def columns(self) -> tuple[Column, ...]:
         """Metadata about the columns of the arrow."""
         if self._columns is not None:
             return self._columns
@@ -931,7 +903,7 @@ class ArrowTable(ScrollView, can_focus=True):
         sample_indices = pa.array(row_indices, type=pa.int64())
 
         self._columns = tuple(
-            ArrowColumn(name, self._measure_content_width(column, sample_indices))
+            Column(name, self._measure_content_width(column, sample_indices))
             for name, column in zip(
                 self._table.column_names, self._table.columns, strict=True
             )
@@ -972,14 +944,14 @@ class ArrowTable(ScrollView, can_focus=True):
         return col1, col2
 
     @property
-    def index_column(self) -> ArrowColumn:
+    def index_column(self) -> Column:
         """Virtual column metadata for the row-index column."""
         if self._index_column is not None:
             return self._index_column
 
         max_row_index = max(self.row_count - 1, 0)
         content_width = len(str(max_row_index))
-        self._index_column = ArrowColumn("#", content_width)
+        self._index_column = Column("#", content_width)
 
         return self._index_column
 
@@ -1013,7 +985,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _clear_render_caches(self) -> None:
         # Intentionally do NOT clear _row_renderable_cache: row renderables are derived
-        # purely from immutable Arrow scalars via format_cell, so they don't depend on
+        # purely from immutable Arrow scalars via default_cell_formatter, so they don't depend on
         # cell_padding, cursor state, zebra stripes, or show_header/show_row_index.
         # Only the rendered Segments/Strips below are width- and style-sensitive.
         self._cell_render_cache.clear()
@@ -1027,7 +999,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self._row_render_cache.clear()
         self._cell_render_cache.clear()
         # Also clear renderables here (unlike _clear_render_caches): a component-style
-        # change could in principle alter how format_cell output resolves under a new
+        # change could in principle alter how default_cell_formatter output resolves under a new
         # theme, so we invalidate defensively.
         self._row_renderable_cache.clear()
         self._line_cache.clear()
@@ -1438,7 +1410,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _get_row_renderables(self, row_index: int) -> RowRenderables:
         """Get renderables for the row currently at the given row index.
 
-        The renderables returned here have already been passed through the `format_cell`.
+        The renderables returned here have already been passed through the `default_cell_formatter`.
 
         Args:
             row_index: Index of the row.
@@ -1465,7 +1437,9 @@ class ArrowTable(ScrollView, can_focus=True):
         renderables = RowRenderables(
             Text(str(row_index), style="dim"),
             [
-                format_cell(self.get_cell_at(Coordinate(row_index, column_index)))
+                default_cell_formatter(
+                    self.get_cell_at(Coordinate(row_index, column_index))
+                )
                 for column_index in range(self.column_count)
             ],
         )
