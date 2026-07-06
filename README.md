@@ -1,10 +1,10 @@
 # Parqx
 
-Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
+Parqx is a lightweight terminal UI for inspecting Apache Parquet files, built on top of [Textual](https://github.com/Textualize/textual) and [PyArrow](https://arrow.apache.org/docs/python/).
 
-Parqx opens a local Parquet file directly in terminal and displays it as an interactive, scrollable table backed by PyArrow and Textual.
+Parqx opens local Parquet files directly in the terminal and displays them with ArrowTable, an interactive, scrollable, Arrow-backed widget purpose-built for inspecting Parquet data rather than wrapping Textual's general-purpose [DataTable](https://textual.textualize.io/widget_gallery/#datatable).
 
-![ParqxApp](./assets/ParqxApp.png)
+![Parqx app screenshot](https://github.com/user-attachments/assets/2df09bca-9ee6-423d-a4dd-dac0e9297cc6)
 
 ## Installation
 
