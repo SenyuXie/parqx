@@ -4,6 +4,8 @@ Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
 
 Parqx opens a local Parquet file directly in terminal and displays it as an interactive, scrollable table backed by PyArrow and Textual.
 
+![ParqxApp](https://github.com/user-attachments/assets/2df09bca-9ee6-423d-a4dd-dac0e9297cc6)
+
 ## Installation
 
 Parqx requires Python 3.12 or newer.
