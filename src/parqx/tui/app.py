@@ -1,15 +1,19 @@
-"""The Parqx Textual App."""
+"""Textual application for Parqx."""
+
+from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
+from textual.screen import Screen
 from textual.widgets import Footer
 
 from parqx.tui.widgets import ArrowTable, FileLoading
@@ -49,6 +53,20 @@ class ParqxApp(App[Any]):
         """Set when the worker thread fails to read the file. The CLI inspects
         this after `run` returns to decide between a clean exit and a non-zero
         exit with an error message."""
+
+    def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
+        """A generator of system commands used in the command palette.
+
+        Args:
+            screen: The screen where the command palette was invoked from.
+
+        Yields:
+            SystemCommand instances.
+        """
+        yield from super().get_system_commands(screen)  # pyright: ignore
+        yield SystemCommand(
+            "Metadata", "Show Parquet schema and file metadata", self._show_metadata
+        )
 
     def compose(self) -> ComposeResult:
         """Yield the loading placeholder plus a persistent footer.
@@ -113,3 +131,5 @@ class ParqxApp(App[Any]):
         cycle = self._CURSOR_TYPE_CYCLE
         next_index = (cycle.index(table.cursor_type) + 1) % len(cycle)
         table.cursor_type = cycle[next_index]
+
+    def _show_metadata(self) -> None: ...

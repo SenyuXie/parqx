@@ -1,4 +1,4 @@
-"""The FileLoading widget."""
+"""File loading placeholder widget."""
 
 from pathlib import Path
 

@@ -1,4 +1,4 @@
-"""The Parqx logging configuration."""
+"""Logging configuration for Parqx."""
 
 import logging
 from logging.handlers import RotatingFileHandler

@@ -1,4 +1,4 @@
-"""The Parqx CLI entrypoint."""
+"""CLI entrypoint for Parqx."""
 
 import logging
 from importlib import metadata

@@ -1,1 +1,1 @@
-"""The Parqx TUI package."""
+"""Terminal UI for Parqx."""

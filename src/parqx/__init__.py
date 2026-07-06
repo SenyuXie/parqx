@@ -1,1 +1,1 @@
-"""The Parqx package."""
+"""Parqx: A Parquet TUI inspector."""
