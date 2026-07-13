@@ -1,7 +1,7 @@
 [project]
 name = "parqx"
 version = "0.1.6"
-description = "Parquet TUI inspector"
+description = "TUI Parquet inspector"
 readme = "README.md"
 license-files = ["LICENSE", "NOTICE"]
 authors = [

@@ -1,4 +1,4 @@
-"""Parqx: A Parquet TUI inspector."""
+"""Parqx: A TUI Parquet inspector."""
 
 from parqx.cli import app
 

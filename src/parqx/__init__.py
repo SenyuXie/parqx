@@ -1,1 +1,1 @@
-"""Parqx: A Parquet TUI inspector."""
+"""Parqx: A TUI Parquet inspector."""

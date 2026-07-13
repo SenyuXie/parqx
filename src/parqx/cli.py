@@ -12,7 +12,7 @@ from parqx.tui.app import ParqxApp
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(help="Parqx: A Parquet TUI inspector.")
+app = typer.Typer(help="Parqx: A TUI Parquet inspector.")
 
 
 def version_callback(value: bool) -> None:
@@ -54,7 +54,7 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Parqx: A Parquet TUI inspector."""
+    """Parqx: A TUI Parquet inspector."""
     _ = version
 
     setup_logging(verbose)
