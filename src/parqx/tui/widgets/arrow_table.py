@@ -23,7 +23,6 @@ import pyarrow.compute as pc
 import rich.repr
 from rich.cells import cell_len
 from rich.console import Console, RenderableType
-from rich.filesize import decimal
 from rich.padding import Padding
 from rich.segment import Segment
 from rich.style import Style
@@ -40,6 +39,8 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
+
+from parqx.tui.cell_formatter import CellFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,9 @@ class RowCacheKey(NamedTuple):
     """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
     """Widget pseudo-class state used by style resolution."""
-    col1: int
+    column1: int
     """First visible data column index rendered for this row, inclusive."""
-    col2: int
+    column2: int
     """One past the last visible data column index rendered for this row."""
 
 
@@ -143,91 +144,18 @@ class ColumnNotExistError(Exception):
     """
 
 
-def default_cell_formatter(scalar: pa.Scalar, binary_inline_limit: int = 16) -> Text:
-    """Convert a cell into a Rich renderable for display.
-
-    Args:
-        scalar: Arrow scalar for a cell.
-        binary_inline_limit: Maximum number of binary bytes to render inline as hex.
-
-    Returns:
-        A single-line renderable representing the data.
-    """
-    if not scalar.is_valid:
-        return Text("null", style="dim italic magenta")
-
-    data_type, value = scalar.type, scalar.as_py()
-
-    if (
-        pa.types.is_integer(data_type)
-        or pa.types.is_floating(data_type)
-        or pa.types.is_decimal(data_type)
-    ):
-        return Text(str(value), style="cyan")
-
-    if pa.types.is_boolean(data_type):
-        if value:
-            return Text("true", style="green")
-        return Text("false", style="red")
-
-    if pa.types.is_temporal(data_type):
-        return Text(str(value), style="yellow")
-
-    if (
-        pa.types.is_binary(data_type)
-        or pa.types.is_large_binary(data_type)
-        or pa.types.is_fixed_size_binary(data_type)
-    ):
-        if len(value) <= binary_inline_limit:
-            return Text("0x" + value.hex(), style="dim cyan")
-        return Text(f"<binary {decimal(len(value))}>", style="dim cyan")
-
-    if (
-        pa.types.is_list(data_type)
-        or pa.types.is_large_list(data_type)
-        or pa.types.is_fixed_size_list(data_type)
-    ):
-        return Text(f"<list {len(value)}>", style="blue")
-
-    if pa.types.is_struct(data_type):
-        return Text(f"<struct {len(value)} fields>", style="blue")
-
-    if pa.types.is_map(data_type):
-        return Text(f"<map {len(value)}>", style="blue")
-
-    return Text(
-        str(value)
-        .replace("\r\n", "\\n")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-
-
 @dataclass
 class Column:
     """Metadata for a column in the ArrowTable."""
 
     name: str
     """Column name from the Arrow schema."""
-    content_width: int
-    """Estimated terminal-cell width over (sampled) formatted cell values."""
-    min_width: int = 4
-    """Minimum content width, excluding horizontal padding."""
-    max_width: int = 32
-    """Maximum content width, excluding horizontal padding."""
-
-    def get_render_width(self, padding: int = 1) -> int:
-        """Width, in cells, required to render the column with padding included.
-
-        Args:
-            padding: Horizontal padding, applied on each side of each cell.
-
-        Returns:
-            The width, in cells, required to render the column with padding included.
-        """
-        width = max(len(self.name), self.content_width, self.min_width)
-        return min(width, self.max_width) + padding * 2
+    width: int = 0
+    """Fixed content width if auto_width is false."""
+    content_width: int = 0
+    """Estimated terminal-cell width over formatted cell values."""
+    auto_width: bool = True
+    """Whether render width is based on measured content_width."""
 
 
 def _sample_row_indices(total_rows: int, target_count: int = 256) -> tuple[int, ...]:
@@ -654,6 +582,7 @@ class ArrowTable(ScrollView, can_focus=True):
         cursor_background_priority: Literal["renderable", "css"] = "renderable",
         cursor_type: CursorType = "cell",
         cell_padding: int = 1,
+        max_column_content_width: int = 48,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -680,6 +609,7 @@ class ArrowTable(ScrollView, can_focus=True):
                 with the keyboard.
             cell_padding: The number of cells added on each side of each column. Setting
                 this value to zero will likely make your table very hard to read.
+            max_column_content_width: The maximum width of a column's content, in cells.
             name: The name of the widget.
             id: The ID of the widget in the DOM.
             classes: The CSS classes for the widget.
@@ -694,6 +624,10 @@ class ArrowTable(ScrollView, can_focus=True):
         self._column_offsets: tuple[int, ...] | None = None
         """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
         length = column_count + 1; offsets[0] == 0; offsets[-1] == total scrollable width."""
+        self._max_column_content_width = max_column_content_width
+        """Maximum width of a column's content, in cells."""
+        self._cell_formatter = CellFormatter(inline_limit=max_column_content_width)
+        """Formatter shared by width measurement and row rendering."""
 
         self._row_render_cache: LRUCache[
             RowCacheKey, tuple[list[list[Segment]], list[list[Segment]]]
@@ -806,36 +740,44 @@ class ArrowTable(ScrollView, can_focus=True):
             padding.
         """
         data_type = column.type
+        null_width = 4 if column.null_count else 0
 
         # Some types can be measured more efficiently
         if pa.types.is_boolean(data_type):
             return 5  # "false"
         if pa.types.is_null(data_type):
             return 4  # "null"
-
         if (
             pa.types.is_integer(data_type)
             or pa.types.is_decimal(data_type)
-            or pa.types.is_temporal(data_type)
+            or pa.types.is_date(data_type)
+            or pa.types.is_time(data_type)
+            or pa.types.is_timestamp(data_type)
         ):
-            result = pc.min_max(column).as_py()
-            values = [result["min"], result["max"]]
-            valid_values = [value for value in values if value is not None]
-            if not valid_values:
-                return 4  # "null"
-            return max(cell_len(str(value)) for value in valid_values)
+            extrema = pc.min_max(column)
+            values = (extrema["min"], extrema["max"])
+            measured_width = max(
+                (
+                    cell_len(self._cell_formatter(value).plain)
+                    for value in values
+                    if value.is_valid
+                ),
+                default=0,
+            )
+            return max(null_width, measured_width)
 
         # For everything else, we need to compute it
         widths: list[int] = [
-            cell_len(default_cell_formatter(scalar).plain)
+            cell_len(self._cell_formatter(scalar).plain)
             for scalar in column.take(sample_indices)
         ]
 
-        if len(widths) == 0:
-            return 0
+        if not widths:
+            return null_width
 
         index = ceil(len(widths) * percentile) - 1
-        return sorted(widths)[index]
+        percentile_width = sorted(widths)[index]
+        return max(null_width, percentile_width)
 
     @property
     def columns(self) -> tuple[Column, ...]:
@@ -847,27 +789,35 @@ class ArrowTable(ScrollView, can_focus=True):
         sample_indices = pa.array(row_indices, type=pa.int64())
 
         self._columns = tuple(
-            Column(name, self._measure_content_width(column, sample_indices))
+            Column(
+                name,
+                content_width=self._measure_content_width(column, sample_indices),
+                auto_width=True,
+            )
             for name, column in zip(
                 self._table.column_names, self._table.columns, strict=True
             )
         )
         return self._columns
 
-    @property
-    def _column_widths(self) -> tuple[int, ...]:
-        """Rendered column widths, including horizontal padding."""
-        return tuple(
-            column.get_render_width(self.cell_padding) for column in self.columns
-        )
+    def _get_column_render_width(self, column: Column) -> int:
+        """Get the render width of a column, including horizontal padding."""
+        content_render_width = 0
+
+        if not column.auto_width:
+            content_render_width = column.width
+        else:
+            width = max(cell_len(column.name), column.content_width)
+            content_render_width = min(width, self._max_column_content_width)
+
+        return content_render_width + 2 * self.cell_padding
 
     def _get_column_offsets(self) -> tuple[int, ...]:
         if self._column_offsets is None:
-            widths = self._column_widths
             offsets = [0]
             acc = 0
-            for w in widths:
-                acc += w
+            for column in self.columns:
+                acc += self._get_column_render_width(column)
                 offsets.append(acc)
             self._column_offsets = tuple(offsets)
         return self._column_offsets
@@ -881,11 +831,11 @@ class ArrowTable(ScrollView, can_focus=True):
         if self.column_count == 0 or viewport_width <= 0:
             return 0, 0
         offsets = self._get_column_offsets()
-        col1 = max(0, min(self.column_count - 1, bisect_right(offsets, x1) - 1))
-        col2 = min(self.column_count, bisect_left(offsets, x1 + viewport_width))
-        if col2 <= col1:
-            col2 = min(self.column_count, col1 + 1)
-        return col1, col2
+        column1 = max(0, min(self.column_count - 1, bisect_right(offsets, x1) - 1))
+        column2 = min(self.column_count, bisect_left(offsets, x1 + viewport_width))
+        if column2 <= column1:
+            column2 = min(self.column_count, column1 + 1)
+        return column1, column2
 
     @property
     def index_column(self) -> Column:
@@ -895,7 +845,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         max_row_index = max(self.row_count - 1, 0)
         content_width = len(str(max_row_index))
-        self._index_column = Column("#", content_width)
+        self._index_column = Column("#", content_width=content_width, auto_width=True)
 
         return self._index_column
 
@@ -903,7 +853,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _index_column_width(self) -> int:
         """The render width of the column containing row indices."""
         return (
-            self.index_column.get_render_width(self.cell_padding)
+            self._get_column_render_width(self.index_column)
             if self.show_row_index
             else 0
         )
@@ -929,7 +879,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _clear_render_caches(self) -> None:
         # Intentionally do NOT clear _row_renderable_cache: row renderables are derived
-        # purely from immutable Arrow scalars via default_cell_formatter, so they don't depend on
+        # purely from immutable Arrow scalars via CellFormatter, so they don't depend on
         # cell_padding, cursor state, zebra stripes, or show_header/show_row_index.
         # Only the rendered Segments/Strips below are width- and style-sensitive.
         self._cell_render_cache.clear()
@@ -943,7 +893,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self._row_render_cache.clear()
         self._cell_render_cache.clear()
         # Also clear renderables here (unlike _clear_render_caches): a component-style
-        # change could in principle alter how default_cell_formatter output resolves under a new
+        # change could in principle alter how CellFormatter output resolves under a new
         # theme, so we invalidate defensively.
         self._row_renderable_cache.clear()
         self._line_cache.clear()
@@ -985,7 +935,7 @@ class ArrowTable(ScrollView, can_focus=True):
         # At this point, `self.show_row_index` is already the new value.
         # If we are hiding the index column, `self._index_column_width` now returns 0,
         # but we still need the old visible width to subtract from `virtual_size`.
-        column_width = self.index_column.get_render_width(self.cell_padding)
+        column_width = self._get_column_render_width(self.index_column)
         width_change = column_width if show else -column_width
         self.virtual_size = Size(width + width_change, height)
         self._scroll_cursor_into_view()
@@ -1186,7 +1136,7 @@ class ArrowTable(ScrollView, can_focus=True):
         # The x-coordinate of a cell is the sum of widths of the data cells to the left
         # plus the width of the render width of the longest row label.
         x = self._get_column_offsets()[column_index] + self._index_column_width
-        width = self.columns[column_index].get_render_width(self.cell_padding)
+        width = self._get_column_render_width(self.columns[column_index])
         height = 1  # The height of the row.
         y = row_index + (1 if self.show_header else 0)
         return Region(x, y, width, height)
@@ -1206,7 +1156,7 @@ class ArrowTable(ScrollView, can_focus=True):
             return Region(0, 0, 0, 0)
 
         x = self._get_column_offsets()[column_index] + self._index_column_width
-        width = self.columns[column_index].get_render_width(self.cell_padding)
+        width = self._get_column_render_width(self.columns[column_index])
         header_height = 1 if self.show_header else 0
         height = self._total_row_height + header_height
         return Region(x, 0, width, height)
@@ -1354,7 +1304,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _get_row_renderables(self, row_index: int) -> RowRenderables:
         """Get renderables for the row currently at the given row index.
 
-        The renderables returned here have already been passed through the `default_cell_formatter`.
+        The renderables returned here have already been passed through the `CellFormatter`.
 
         Args:
             row_index: Index of the row.
@@ -1381,7 +1331,7 @@ class ArrowTable(ScrollView, can_focus=True):
         renderables = RowRenderables(
             Text(str(row_index), style="dim"),
             [
-                default_cell_formatter(
+                self._cell_formatter(
                     self.get_cell_at(Coordinate(row_index, column_index))
                 )
                 for column_index in range(self.column_count)
@@ -1538,8 +1488,8 @@ class ArrowTable(ScrollView, can_focus=True):
         base_style: Style,
         cursor_location: Coordinate,
         hover_location: Coordinate,
-        col1: int,
-        col2: int,
+        column1: int,
+        column2: int,
     ) -> tuple[list[list[Segment]], list[list[Segment]]]:
         """Render a single line from a row in the ArrowTable.
 
@@ -1548,10 +1498,10 @@ class ArrowTable(ScrollView, can_focus=True):
             base_style: Base style of row.
             cursor_location: The location of the cursor in the ArrowTable.
             hover_location: The location of the hover cursor in the ArrowTable.
-            col1: Index of the first data column to render (inclusive). Computed
+            column1: Index of the first data column to render (inclusive). Computed
                 from the horizontal scroll offset via `_visible_column_range`.
-            col2: Index just past the last data column to render (exclusive).
-                Columns outside `[col1, col2)` are skipped entirely.
+            column2: Index just past the last data column to render (exclusive).
+                Columns outside `[column1, column2)` are skipped entirely.
 
         Returns:
             Lines for fixed cells, and Lines for scrollable cells.
@@ -1575,8 +1525,8 @@ class ArrowTable(ScrollView, can_focus=True):
             self._show_hover_cursor,
             self._update_count,
             self._pseudo_class_state,
-            col1,
-            col2,
+            column1,
+            column2,
         )
 
         # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
@@ -1610,14 +1560,14 @@ class ArrowTable(ScrollView, can_focus=True):
 
         scrollable_row: list[list[Segment]] = []
 
-        for column_index in range(col1, col2):
+        for column_index in range(column1, column2):
             column = self.columns[column_index]
             cell_location = Coordinate(row_index, column_index)
             cell_lines = self._render_cell(
                 row_index,
                 column_index,
                 row_style,
-                width=column.get_render_width(self.cell_padding),
+                width=self._get_column_render_width(column),
                 cursor=self._should_highlight(
                     cursor_location, cell_location, cursor_type
                 ),
@@ -1648,7 +1598,7 @@ class ArrowTable(ScrollView, can_focus=True):
         width = self.size.width
         fixed_width = self._index_column_width
         visible_scrollable_width = max(0, width - fixed_width)
-        col1, col2 = self._visible_column_range(x1, visible_scrollable_width)
+        column1, column2 = self._visible_column_range(x1, visible_scrollable_width)
 
         header_lines = 1 if self.show_header else 0
         row_index = (
@@ -1690,19 +1640,21 @@ class ArrowTable(ScrollView, can_focus=True):
             base_style,
             cursor_location=self.cursor_coordinate,
             hover_location=self.hover_coordinate,
-            col1=col1,
-            col2=col2,
+            column1=column1,
+            column2=column2,
         )
 
         fixed_line: list[Segment] = list(chain.from_iterable(fixed)) if fixed else []
         scrollable_line: list[Segment] = list(chain.from_iterable(scrollable))
 
-        # The virtual left starting point of the scrollable_line is offsets[col1] (not 0).
+        # The virtual left starting point of the scrollable_line is offsets[column1] (not 0).
         offsets = self._get_column_offsets()
-        virtual_left = offsets[col1] if col1 < len(offsets) else 0
+        virtual_left = offsets[column1] if column1 < len(offsets) else 0
         crop_start = max(0, x1 - virtual_left)
         crop_end = crop_start + visible_scrollable_width
-        visible_cols_total = (offsets[col2] - offsets[col1]) if col2 > col1 else 0
+        visible_cols_total = (
+            (offsets[column2] - offsets[column1]) if column2 > column1 else 0
+        )
 
         segments = fixed_line + list(
             Strip(scrollable_line, visible_cols_total).crop(crop_start, crop_end)
