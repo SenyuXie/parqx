@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 from time import perf_counter
@@ -17,6 +19,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Footer, Static, TextArea
 
 from parqx.data.parquet import ParquetSource, ReadCancelledError
+from parqx.data.result_store import ResultStore
 from parqx.data.view import DataPage, TableData, WindowSource
 from parqx.query.engine import (
     QueryCancelledError,
@@ -51,6 +54,7 @@ class ParqxApp(App[Any]):
         Binding("ctrl+enter", "run_query", show=False, priority=True),
         Binding("escape", "cancel_query", show=False, priority=True),
         Binding("f6", "browse", "Browse", show=False),
+        Binding("f7", "load_all", "Load all", show=False, priority=True),
         Binding("h", "toggle_header", "Header", show=True),
         Binding("i", "toggle_row_index", "Index", show=True),
         Binding("z", "toggle_zebra", "Zebra", show=True),
@@ -87,6 +91,8 @@ class ParqxApp(App[Any]):
         self._query_control: QueryControl | None = None
         self.query_running = False
         self.query_error: str | None = None
+        self.can_load_all = False
+        self._query_controls: list[QueryControl] = []
         self._window_source: WindowSource | None = None
         self._page_cancelled = Event()
         self._page_request = 0
@@ -121,16 +127,19 @@ class ParqxApp(App[Any]):
             source = ParquetSource(self._path)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
-            self.call_from_thread(self._on_load_error, str(exc), request_id)
+            self._publish(self._on_load_error, str(exc), request_id)
             return
-        self.call_from_thread(self._on_load_ok, source, request_id)
+        self._publish(self._on_load_ok, source, request_id)
 
     def _show_table(
         self, table: pa.Table | TableData, source: WindowSource | None = None
     ) -> None:
         self._page_cancelled.set()
         self._page_request += 1
+        previous_source = self._window_source
         self._window_source = source
+        if isinstance(previous_source, ResultStore) and previous_source is not source:
+            self._close_result(previous_source)
         if (widget := self._get_arrow_table()) is not None:
             if isinstance(table, TableData):
                 widget.replace_data(table)
@@ -141,6 +150,23 @@ class ParqxApp(App[Any]):
             widget = ArrowTable(table)
             self.mount(widget, after=self.query_one(QueryPanel))
         widget.focus()
+
+    @work(thread=True, group="cleanup", exit_on_error=False)
+    def _close_result(self, source: ResultStore) -> None:
+        source.close()
+
+    def _publish[T, **P](
+        self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T | None:
+        """Deliver a worker update while tolerating concurrent app shutdown."""
+        if not self.is_running:
+            return None
+        try:
+            return self.call_from_thread(callback, *args, **kwargs)
+        except RuntimeError:
+            if self.is_running:
+                raise
+            return None
 
     def _on_load_ok(self, source: ParquetSource, request_id: int) -> None:
         if request_id != self._request_id:
@@ -189,10 +215,10 @@ class ParqxApp(App[Any]):
             return
         except (OSError, pa.ArrowException, MemoryError) as exc:
             if not cancelled.is_set():
-                self.call_from_thread(self._on_page_error, request, str(exc))
+                self._publish(self._on_page_error, request, str(exc))
             return
         if not cancelled.is_set():
-            self.call_from_thread(self._on_page_loaded, data, page, request)
+            self._publish(self._on_page_loaded, data, page, request)
 
     def _on_page_loaded(self, data: TableData, page: DataPage, request: int) -> None:
         widget = self._get_arrow_table()
@@ -219,6 +245,9 @@ class ParqxApp(App[Any]):
         self._request_id += 1
         self.query_running = False
         self.query_error = None
+        self.can_load_all = False
+        if self.query("#load-all"):
+            self.query_one("#load-all", Button).disabled = True
         return self._request_id
 
     def action_toggle_query(self) -> None:
@@ -240,6 +269,10 @@ class ParqxApp(App[Any]):
         """Submit the editor's SQL on a fresh, cancellable worker."""
         request_id = self._new_request()
         self._query_control = control = QueryControl()
+        self._query_controls = [
+            c for c in self._query_controls if not c.finished.is_set()
+        ]
+        self._query_controls.append(control)
         self.query_running = True
         self.query_one(QueryPanel).display = True
         self._status("Running SQL… Escape to cancel")
@@ -247,11 +280,42 @@ class ParqxApp(App[Any]):
 
     @work(thread=True, group="query", exit_on_error=False)
     def _run_query(self, sql: str, request_id: int, control: QueryControl) -> None:
+        control.started.set()
         started = perf_counter()
+        store: ResultStore | None = None
+        handed_off = False
         try:
             with QuerySession(self._path, sql, control, self._query_limits) as session:
                 preview = session.preview()
-            control.check()
+                control.check()
+                self._publish(
+                    self._on_query_ok, request_id, preview, perf_counter() - started
+                )
+                if not preview.truncated:
+                    return
+                # Pause this execution rather than rerunning a possibly expensive
+                # or non-deterministic query when the user asks for all rows.
+                control.load_all.wait()
+                control.check()
+                store = ResultStore(session.schema)
+                for preview_batch in preview.table.to_batches(
+                    max_chunksize=self._query_limits.batch_rows
+                ):
+                    control.check()
+                    store.append(preview_batch)
+                del preview
+                control.check()
+                handed_off = bool(self._publish(self._on_full_start, request_id, store))
+                if not handed_off:
+                    return
+                last_update = perf_counter()
+                while (batch := session.read_batch()) is not None:
+                    store.append(batch)
+                    if perf_counter() - last_update >= 0.1:
+                        self._publish(self._on_full_progress, request_id, store)
+                        last_update = perf_counter()
+                store.finish()
+                self._publish(self._on_full_progress, request_id, store)
         except (
             duckdb.Error,
             pa.ArrowException,
@@ -260,13 +324,50 @@ class ParqxApp(App[Any]):
             MemoryError,
         ) as exc:
             if not control.cancelled.is_set():
-                self.call_from_thread(self._on_query_error, request_id, str(exc))
+                if handed_off and store is not None:
+                    self._publish(self._on_full_progress, request_id, store)
+                self._publish(self._on_query_error, request_id, str(exc))
             return
-        except QueryCancelledError:
+        except (QueryCancelledError, ReadCancelledError):
             return
-        self.call_from_thread(
-            self._on_query_ok, request_id, preview, perf_counter() - started
+        finally:
+            if store is not None and not handed_off:
+                store.close()
+            control.finished.set()
+
+    def action_load_all(self) -> None:
+        """Continue the current query into a disk-backed, browsable result."""
+        if self.can_load_all and self._query_control is not None:
+            self.can_load_all = False
+            self.query_one("#load-all", Button).disabled = True
+            self.query_running = True
+            self._status("Loading full SQL result… Escape to stop")
+            self._query_control.load_all.set()
+
+    def _on_full_start(self, request_id: int, store: ResultStore) -> bool:
+        if request_id != self._request_id:
+            return False
+        widget = self._get_arrow_table()
+        cursor = widget.cursor_coordinate if widget is not None else None
+        self._show_table(TableData(store.schema, store.row_count, None), store)
+        if cursor is not None and (widget := self._get_arrow_table()) is not None:
+            widget.move_cursor(row=cursor.row, column=cursor.column)
+        self._on_full_progress(request_id, store)
+        return True
+
+    def _on_full_progress(self, request_id: int, store: ResultStore) -> None:
+        if request_id != self._request_id or store is not self._window_source:
+            return
+        widget = self._get_arrow_table()
+        if widget is not None:
+            widget.update_row_count(
+                store.row_count, store.row_count if store.finished else None
+            )
+        self.query_running = not store.finished
+        suffix = (
+            "complete" if store.finished else "loaded · total unknown · Escape to stop"
         )
+        self._status(f"SQL · {store.row_count:,} rows · {suffix}")
 
     def _on_query_ok(
         self, request_id: int, preview: QueryPreview, elapsed: float
@@ -274,8 +375,14 @@ class ParqxApp(App[Any]):
         if request_id != self._request_id:
             return
         self.query_running = False
+        self.can_load_all = preview.truncated
+        self.query_one("#load-all", Button).disabled = not preview.truncated
         self._show_table(preview.table)
-        suffix = f"preview, {preview.reason}" if preview.truncated else "complete"
+        suffix = (
+            f"preview, {preview.reason} · F7 to load all"
+            if preview.truncated
+            else "complete"
+        )
         self._status(
             f"SQL · {preview.table.num_rows:,} rows · {suffix} · {elapsed:.2f}s"
         )
@@ -292,9 +399,9 @@ class ParqxApp(App[Any]):
 
     def action_cancel_query(self) -> None:
         """Interrupt execution and prevent late results from replacing the view."""
-        if self.query_running:
+        if self.query_running or self.can_load_all:
             self._new_request()
-            self._status("Query cancelled · previous result retained")
+            self._status("Query cancelled · displayed rows retained")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route editor buttons to the same actions as keyboard shortcuts."""
@@ -305,13 +412,21 @@ class ParqxApp(App[Any]):
                 self.action_cancel_query()
             case "browse-file":
                 self.action_browse()
+            case "load-all":
+                self.action_load_all()
             case _:
                 pass
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Interrupt remaining background computation when the app exits."""
-        self._new_request()
+        for control in self._query_controls:
+            control.cancel()
         self._page_cancelled.set()
+        if isinstance(self._window_source, ResultStore):
+            await asyncio.to_thread(self._window_source.close)
+        for control in self._query_controls:
+            if control.started.is_set() and not control.finished.is_set():
+                await asyncio.to_thread(control.finished.wait, 5)
 
     def _get_arrow_table(self) -> ArrowTable | None:
         """Return the mounted `ArrowTable`, or `None` during the loading phase."""

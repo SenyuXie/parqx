@@ -33,3 +33,4 @@ class QueryPanel(Vertical):
             yield Button("Run", id="run-query", variant="primary")
             yield Button("Cancel", id="cancel-query")
             yield Button("Browse file", id="browse-file")
+            yield Button("Load all", id="load-all", disabled=True)

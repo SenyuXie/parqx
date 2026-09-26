@@ -906,6 +906,16 @@ class ArrowTable(ScrollView, can_focus=True):
         if page.start <= self.cursor_row < page.stop:
             self._highlight_cursor()
 
+    def update_row_count(self, available: int, total: int | None) -> None:
+        """Extend a streamed result without resetting navigation or loaded pages."""
+        self.data.row_count = available
+        self.data.total_rows = total
+        self._index_column = None
+        self._require_update_dimensions = True
+        self._update_count += 1
+        self._clear_render_caches()
+        self.refresh(layout=True)
+
     def replace_table(self, table: pa.Table) -> None:
         """Replace data and invalidate every data-dependent layout and cache."""
         self.replace_data(TableData.from_table(table))

@@ -42,12 +42,16 @@ class QueryControl:
     def __init__(self) -> None:
         """Create a cancellation signal for one query only."""
         self.cancelled = Event()
+        self.load_all = Event()
+        self.started = Event()
+        self.finished = Event()
         self._lock = Lock()
         self._connection: duckdb.DuckDBPyConnection | None = None
 
     def cancel(self) -> None:
         """Signal cancellation and interrupt a currently executing query."""
         self.cancelled.set()
+        self.load_all.set()
         with self._lock:
             if self._connection is not None:
                 self._connection.interrupt()
