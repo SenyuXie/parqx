@@ -93,6 +93,7 @@ class ParqxApp(App[Any]):
         self.query_error: str | None = None
         self.can_load_all = False
         self._query_controls: list[QueryControl] = []
+        self._result_stores: list[ResultStore] = []
         self._window_source: WindowSource | None = None
         self._page_cancelled = Event()
         self._page_request = 0
@@ -349,6 +350,8 @@ class ParqxApp(App[Any]):
     def _on_full_start(self, request_id: int, store: ResultStore) -> bool:
         if request_id != self._request_id:
             return False
+        self._result_stores = [s for s in self._result_stores if not s.closed]
+        self._result_stores.append(store)
         widget = self._get_arrow_table()
         cursor = widget.cursor_coordinate if widget is not None else None
         self._show_table(TableData(store.schema, store.row_count, None), store)
@@ -427,8 +430,10 @@ class ParqxApp(App[Any]):
         for control in self._query_controls:
             control.cancel()
         self._page_cancelled.set()
-        if isinstance(self._window_source, ResultStore):
-            await asyncio.to_thread(self._window_source.close)
+        # Include superseded stores whose scheduled cleanup worker may have
+        # been cancelled before starting during Textual's shutdown sequence.
+        for store in self._result_stores:
+            await asyncio.to_thread(store.close)
         for control in self._query_controls:
             if control.started.is_set() and not control.finished.is_set():
                 await asyncio.to_thread(control.finished.wait, 5)

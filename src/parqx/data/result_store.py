@@ -41,6 +41,11 @@ class ResultStore:
         self._lock = Lock()
         self._closed = False
 
+    @property
+    def closed(self) -> bool:
+        """Whether cleanup completed; reading this flag performs no disk I/O."""
+        return self._closed
+
     def append(self, batch: pa.RecordBatch) -> None:
         """Publish a batch only after its complete IPC file has been written."""
         if not batch.num_rows:
@@ -96,6 +101,6 @@ class ResultStore:
         """Remove result files after any in-flight read or write releases the lock."""
         with self._lock:
             if not self._closed:
-                self._closed = True
                 self._temporary.cleanup()
                 self._starts.clear()
+                self._closed = True

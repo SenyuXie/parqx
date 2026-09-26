@@ -226,3 +226,25 @@ async def test_full_result_write_error_keeps_displayed_prefix(
             widget = app.query_one(ArrowTable)
             assert widget.row_count == 3
             assert widget.data.total_rows is None
+
+
+async def test_shutdown_cleans_superseded_store_even_if_cleanup_was_not_started(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp(
+        small_parquet,
+        initial_sql="SELECT i FROM range(100) t(i)",
+        query_limits=QueryLimits(preview_rows=3),
+    )
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.can_load_all, pilot)
+        await pilot.press("f7")
+        await wait_for(lambda: not app.query_running, pilot)
+        source = app._window_source  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(source, ResultStore)
+        with patch.object(app, "_close_result"):
+            await pilot.press("f6")
+            await wait_for(lambda: app.query_one(ArrowTable).row_count == 5, pilot)
+        assert source.directory.exists()
+    assert source.closed
+    assert not source.directory.exists()
