@@ -3,11 +3,9 @@ name = "parqx"
 version = "0.1.7"
 description = "TUI Parquet inspector"
 readme = "README.md"
-license-files = ["LICENSE", "NOTICE"]
-authors = [
-    { name = "Senyu Xie", email = "senyuxie@qq.com" }
-]
 requires-python = ">=3.12"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Senyu Xie", email = "senyuxie@qq.com" }]
 dependencies = [
     "platformdirs>=4.10.0",
     "pyarrow>=24.0.0",
@@ -22,10 +20,6 @@ repository = "https://github.com/SenyuXie/parqx.git"
 [project.scripts]
 parqx = "parqx.cli:app"
 
-[build-system]
-requires = ["uv_build>=0.11.21,<0.13.0"]
-build-backend = "uv_build"
-
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
@@ -36,6 +30,10 @@ dev = [
     "textual-dev>=1.8.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.11.21,<0.13.0"]
+build-backend = "uv_build"
+
 [tool.mypy]
 strict = true
 python_version = "3.12"
@@ -44,6 +42,10 @@ mypy_path = "typings"
 [tool.pyright]
 typeCheckingMode = "strict"
 stubPath = "typings"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py312"
@@ -84,7 +86,3 @@ split-on-trailing-comma = false
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
