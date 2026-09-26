@@ -39,9 +39,8 @@ class ParqxApp(App[Any]):
     """A Textual App for Parqx."""
 
     CSS = """
-    ArrowTable { height: 1fr; }
+    ArrowTable, FileLoading { height: 1fr; }
     #query-status {
-        dock: bottom;
         height: auto;
         max-height: 3;
         color: $text-muted;
@@ -103,7 +102,7 @@ class ParqxApp(App[Any]):
         exit with an error message."""
 
     def compose(self) -> ComposeResult:
-        """Yield the loading placeholder plus a persistent footer.
+        """Yield the body above the SQL panel and persistent footer.
 
         The body widget (`FileLoading`, later swapped for `ArrowTable`) is the
         only thing that gets mounted/removed. `Footer` is docked to the bottom
@@ -149,7 +148,7 @@ class ParqxApp(App[Any]):
         else:
             self.query(FileLoading).remove()
             widget = ArrowTable(table)
-            self.mount(widget, after=self.query_one(QueryPanel))
+            self.mount(widget, before=self.query_one(QueryPanel))
         widget.focus()
 
     @work(thread=True, group="cleanup", exit_on_error=False)
