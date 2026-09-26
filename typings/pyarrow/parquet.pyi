@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from os import PathLike
 from typing import Any, BinaryIO
 
-from . import DataType, NativeFile, Schema, Table
+from . import DataType, NativeFile, RecordBatch, Schema, Table
 
 class RowGroupMetaData:
     @property
     def num_rows(self) -> int: ...
 
 class FileMetaData:
+    @property
+    def num_rows(self) -> int: ...
     @property
     def num_row_groups(self) -> int: ...
     def row_group(self, i: int) -> RowGroupMetaData: ...
@@ -43,6 +45,14 @@ class ParquetFile:
     @property
     def closed(self) -> bool: ...
     def close(self, force: bool = False) -> None: ...
+    def iter_batches(
+        self,
+        batch_size: int = 65536,
+        row_groups: Sequence[int] | None = None,
+        columns: Sequence[str] | None = None,
+        use_threads: bool = True,
+        use_pandas_metadata: bool = False,
+    ) -> Iterator[RecordBatch]: ...
     def read_row_group(
         self,
         i: int,
