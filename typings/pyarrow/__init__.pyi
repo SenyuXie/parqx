@@ -5,6 +5,8 @@ from typing import Any, Literal, Self, overload
 
 from . import types as types
 
+__version__: str
+
 class ArrowException(Exception): ...  # noqa: N818
 class DataType: ...
 class Int8Type(DataType): ...

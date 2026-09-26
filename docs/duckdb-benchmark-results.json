@@ -1,0 +1,72 @@
+{
+  "environment": {
+    "platform": "macOS-26.5.1-arm64-arm-64bit",
+    "python": "3.12.14",
+    "duckdb": "1.5.5",
+    "pyarrow": "24.0.0",
+    "textual": "8.2.7"
+  },
+  "limits": {
+    "preview_rows": 10000,
+    "duckdb_memory": "256MB"
+  },
+  "measurements": {
+    "narrow": {
+      "first_viewport_ms": 124.81,
+      "last_row_jump_ms": 95.05,
+      "format_calls_on_jump": 114,
+      "cache_bytes": 7056,
+      "rows": 1000000,
+      "columns": 3,
+      "peak_rss_mib": 100.77
+    },
+    "wide": {
+      "first_viewport_ms": 206.95,
+      "last_row_jump_ms": 116.41,
+      "format_calls_on_jump": 444,
+      "cache_bytes": 1886500,
+      "rows": 2000,
+      "columns": 500,
+      "peak_rss_mib": 231.5
+    },
+    "nested": {
+      "first_viewport_ms": 124.29,
+      "last_row_jump_ms": 93.17,
+      "format_calls_on_jump": 76,
+      "cache_bytes": 1213229,
+      "rows": 10000,
+      "columns": 2,
+      "peak_rss_mib": 107.3
+    },
+    "filter": {
+      "preview_ms": 7.7,
+      "preview_rows": 1000,
+      "preview_bytes": 16250,
+      "peak_rss_mib": 90.81
+    },
+    "aggregate": {
+      "preview_ms": 9.23,
+      "preview_rows": 100,
+      "preview_bytes": 1626,
+      "peak_rss_mib": 90.41
+    },
+    "sort": {
+      "preview_ms": 32.98,
+      "preview_rows": 10000,
+      "preview_bytes": 243456,
+      "peak_rss_mib": 128.91
+    },
+    "full": {
+      "preview_ms": 7.44,
+      "preview_rows": 10000,
+      "preview_bytes": 243456,
+      "full_rows": 100000,
+      "full_ms": 15.98,
+      "peak_rss_mib": 97.14
+    },
+    "cancel": {
+      "cancel_and_cleanup_ms": 0.92,
+      "peak_rss_mib": 88.12
+    }
+  }
+}

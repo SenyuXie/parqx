@@ -73,10 +73,10 @@ CLI / ParqxApp
 - [x] 分别设置 DuckDB 内存/线程/临时目录和应用 Arrow 缓存预算。
 - [x] 明确 DuckDB `memory_limit` 不等于进程硬上限，单个超大值和解码批次可能超出缓存预算。
 - [x] 排序、聚合等阻塞算子执行期间保持界面响应并允许取消。
-- [ ] 添加可重复的合成数据性能检查：百万行窄表、数百列宽表、长文本/嵌套值、筛选/排序/聚合。
-- [ ] 测量首屏、查询首批、峰值内存、冷缓存导航、格式化次数和取消响应；记录环境与结果，不宣称未经测量的提速倍数。
-- [ ] 更新 README、使用说明、测试和打包 smoke checks。
-- [ ] 完成 pytest、Ruff、mypy、Pyright；测试资源清理、错误恢复、连续提交和类型保真。
+- [x] 添加可重复的合成数据性能检查：百万行窄表、数百列宽表、长文本/嵌套值、筛选/排序/聚合。
+- [x] 测量首屏、查询首批、峰值内存、冷缓存导航、格式化次数和取消响应；记录环境与结果，不宣称未经测量的提速倍数。
+- [x] 更新 README、使用说明、测试和打包 smoke checks。
+- [x] 完成 pytest、Ruff、mypy、Pyright；测试资源清理、错误恢复、连续提交和类型保真。
 
 ## 实现约束
 
@@ -91,11 +91,21 @@ CLI / ParqxApp
 
 - 2026-09-26：完成架构分析，建立本计划；开始阶段一。
 
+- 2026-09-26：完成单元格惰性格式化、有限采样列宽和表格替换入口；新增宽表调用次数、整列扫描防回归与缓存替换测试。
+
 - 2026-09-26：完成 SQL 预览交互与 CLI 查询入口，查询生命周期及错误恢复通过 TUI 交互测试。
 
 - 2026-09-27：默认浏览已改为 footer + 后台窗口读取。十万行首末导航、读取阻塞时的 UI 响应、迟到窗口不能覆盖 SQL 的交互测试通过。
 
 - 2026-09-27：完整 SQL 结果可继续同一次执行并落盘回读；两万行随机值测试验证预览值保持、只执行一次、末尾/开头导航及退出清理。
+
+- 2026-09-27：完成 58 项测试、Ruff、mypy、Pyright、发行包构建及安装后的 smoke check。性能脚本覆盖所有约定场景，结果与测量边界见 [验收记录](duckdb-performance.md)。
+
+## 交付与审查
+
+实现分支为 `codex/duckdb-query`，从 `c89f3c5` 创建。提交按计划文档、渲染基础、查询引擎、SQL 交互、数据窗口、按需浏览、结果存储、完整结果加载、状态边界修复、关闭清理和性能验收分别拆分。分支留在本地，供后续推送并创建 PR。
+
+实现位置：`query/engine.py` 管理 DuckDB 会话与 reader；`data/` 管理窗口、缓存和临时结果；`tui/app.py` 协调后台执行与请求版本；`ArrowTable` 只同步访问缓存。性能记录没有将进程内存误写为 Arrow 缓存占用，也没有声称相对旧版本的提速倍数。
 
 ## 参考资料
 
@@ -105,5 +115,3 @@ CLI / ParqxApp
 - [DuckDB 内存配置](https://duckdb.org/docs/current/configuration/pragmas#memory-limit)
 - [DuckDB 阻塞算子与落盘](https://duckdb.org/docs/current/guides/performance/how_to_tune_workloads)
 - [PyArrow ParquetFile 批次与 row group API](https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html)
-
-- 2026-09-26：完成单元格惰性格式化、有限采样列宽和表格替换入口；新增宽表调用次数、整列扫描防回归与缓存替换测试。
