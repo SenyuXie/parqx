@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from typing import Any, ClassVar
 
 import duckdb
 import pyarrow as pa
-import pyarrow.parquet as pq
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
 from textual.widgets import Button, Footer, Static, TextArea
 
+from parqx.data.parquet import ParquetSource, ReadCancelledError
+from parqx.data.view import DataPage, TableData, WindowSource
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -85,6 +87,9 @@ class ParqxApp(App[Any]):
         self._query_control: QueryControl | None = None
         self.query_running = False
         self.query_error: str | None = None
+        self._window_source: WindowSource | None = None
+        self._page_cancelled = Event()
+        self._page_request = 0
         self.load_error: str | None = None
         """Set when the worker thread fails to read the file. The CLI inspects
         this after `run` returns to decide between a clean exit and a non-zero
@@ -113,27 +118,90 @@ class ParqxApp(App[Any]):
     @work(thread=True, group="load", exclusive=True, exit_on_error=False)
     def _load_table(self, request_id: int) -> None:
         try:
-            table: pa.Table = pq.read_table(self._path)
+            source = ParquetSource(self._path)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
             self.call_from_thread(self._on_load_error, str(exc), request_id)
             return
-        self.call_from_thread(self._on_load_ok, table, request_id)
+        self.call_from_thread(self._on_load_ok, source, request_id)
 
-    def _show_table(self, table: pa.Table) -> None:
+    def _show_table(
+        self, table: pa.Table | TableData, source: WindowSource | None = None
+    ) -> None:
+        self._page_cancelled.set()
+        self._page_request += 1
+        self._window_source = source
         if (widget := self._get_arrow_table()) is not None:
-            widget.replace_table(table)
+            if isinstance(table, TableData):
+                widget.replace_data(table)
+            else:
+                widget.replace_table(table)
         else:
             self.query(FileLoading).remove()
             widget = ArrowTable(table)
             self.mount(widget, after=self.query_one(QueryPanel))
         widget.focus()
 
-    def _on_load_ok(self, table: pa.Table, request_id: int) -> None:
+    def _on_load_ok(self, source: ParquetSource, request_id: int) -> None:
         if request_id != self._request_id:
             return
-        self._show_table(table)
-        self._status(f"{self._path.name} · {table.num_rows:,} rows · original values")
+        self._show_table(
+            TableData(source.schema, source.row_count, source.row_count), source
+        )
+        self._status(f"{self._path.name} · {source.row_count:,} rows · original values")
+
+    def on_arrow_table_window_requested(
+        self, event: ArrowTable.WindowRequested
+    ) -> None:
+        """Read the current viewport outside of render and navigation callbacks."""
+        widget = self._get_arrow_table()
+        if (
+            widget is None
+            or widget.data is not event.data
+            or self._window_source is None
+        ):
+            return
+        self._page_cancelled.set()
+        self._page_cancelled = cancelled = Event()
+        self._page_request += 1
+        self._read_page(
+            self._window_source,
+            event.data,
+            event.start_row,
+            event.stop_row,
+            self._page_request,
+            cancelled,
+        )
+
+    @work(thread=True, group="page", exclusive=True, exit_on_error=False)
+    def _read_page(
+        self,
+        source: WindowSource,
+        data: TableData,
+        start: int,
+        stop: int,
+        request: int,
+        cancelled: Event,
+    ) -> None:
+        try:
+            page = source.read_window(start, stop, cancelled)
+        except ReadCancelledError:
+            return
+        except (OSError, pa.ArrowException, MemoryError) as exc:
+            if not cancelled.is_set():
+                self.call_from_thread(self._on_page_error, request, str(exc))
+            return
+        if not cancelled.is_set():
+            self.call_from_thread(self._on_page_loaded, data, page, request)
+
+    def _on_page_loaded(self, data: TableData, page: DataPage, request: int) -> None:
+        widget = self._get_arrow_table()
+        if request == self._page_request and widget is not None and widget.data is data:
+            widget.accept_page(page)
+
+    def _on_page_error(self, request: int, message: str) -> None:
+        if request == self._page_request:
+            self._status(f"Read error: {message}")
 
     def _on_load_error(self, message: str, request_id: int) -> None:
         if request_id != self._request_id:
@@ -243,6 +311,7 @@ class ParqxApp(App[Any]):
     def on_unmount(self) -> None:
         """Interrupt remaining background computation when the app exits."""
         self._new_request()
+        self._page_cancelled.set()
 
     def _get_arrow_table(self) -> ArrowTable | None:
         """Return the mounted `ArrowTable`, or `None` during the loading phase."""

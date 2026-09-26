@@ -1,0 +1,73 @@
+from pathlib import Path
+from threading import Event
+from unittest.mock import patch
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+from textual.coordinate import Coordinate
+from textual.widgets import TextArea
+
+from parqx.data.parquet import ParquetSource
+from parqx.data.view import DataPage
+from parqx.tui.app import ParqxApp
+from parqx.tui.widgets import ArrowTable
+from tests.test_query_app import wait_for
+
+
+async def test_default_browse_loads_windows_and_jumps_to_last_row(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "large.parquet"
+    pq.write_table(pa.table({"n": range(100_000)}), path, row_group_size=10_000)
+    app = ParqxApp(path)
+    with patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")):
+        async with app.run_test() as pilot:
+            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            widget = app.query_one(ArrowTable)
+            assert widget.row_count == 100_000
+            await wait_for(lambda: widget.data.peek(0, 0) is not None, pilot)
+            assert widget.data.peek(50_000, 0) is None
+            await pilot.press("ctrl+end")
+            await wait_for(lambda: widget.data.peek(99_999, 0) is not None, pilot)
+            assert widget.get_cell_at(Coordinate(99_999, 0)).as_py() == 99_999
+            assert widget.cursor_row == 99_999
+            await pilot.press("ctrl+home")
+            await wait_for(lambda: widget.data.peek(0, 0) is not None, pilot)
+            assert widget.get_cell_at(Coordinate(0, 0)).as_py() == 0
+            assert widget.data.cache_bytes <= widget.data.cache_budget
+
+
+async def test_pending_io_keeps_ui_responsive_and_cannot_replace_sql(
+    small_parquet: Path,
+) -> None:
+    release = Event()
+    started = Event()
+    original = ParquetSource.read_window
+
+    def slow_read(
+        self: ParquetSource, start: int, stop: int, cancelled: Event
+    ) -> DataPage:
+        started.set()
+        release.wait(timeout=5)
+        return original(self, start, stop, cancelled)
+
+    app = ParqxApp(small_parquet)
+    try:
+        with patch.object(ParquetSource, "read_window", slow_read):
+            async with app.run_test() as pilot:
+                await wait_for(started.is_set, pilot)
+                widget = app.query_one(ArrowTable)
+                assert widget.data.peek(0, 0) is None
+                await pilot.press("down", "right", "enter")
+                assert widget.cursor_coordinate == Coordinate(1, 1)
+                await pilot.press("f2")
+                app.query_one(TextArea).load_text("SELECT 42 AS answer")
+                await pilot.press("f5")
+                await wait_for(lambda: not app.query_running, pilot)
+                release.set()
+                await pilot.pause()
+                assert widget.row_count == 1
+                assert widget.columns[0].name == "answer"
+                assert widget.get_cell_at(Coordinate(0, 0)).as_py() == 42
+    finally:
+        release.set()
