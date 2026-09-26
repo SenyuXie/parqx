@@ -43,9 +43,9 @@ CLI / ParqxApp
 
 ## 阶段一：SQL 预览与渲染基础
 
-- [ ] 单元格惰性格式化；不可见列不参与格式化。
-- [ ] 列宽使用有限样本，避免整列扫描；保留 Unicode、null 和嵌套值预览行为。
-- [ ] 表格提供统一的数据替换入口，处理 Schema、列宽、缓存、光标与滚动状态。
+- [x] 单元格惰性格式化；不可见列不参与格式化。
+- [x] 列宽使用有限样本，避免整列扫描；保留 Unicode、null 和嵌套值预览行为。
+- [x] 表格提供统一的数据替换入口，处理 Schema、列宽、缓存、光标与滚动状态。
 - [ ] 封装 DuckDB 会话、文件视图和 Arrow 输出；添加依赖及锁文件。
 - [ ] SQL 编辑、执行、取消、错误展示、返回原始浏览；提供 CLI 初始查询入口。
 - [ ] 默认最多预览 10,000 行，并设置批次与缓存字节预算，明确显示截断状态。
@@ -99,3 +99,5 @@ CLI / ParqxApp
 - [DuckDB 内存配置](https://duckdb.org/docs/current/configuration/pragmas#memory-limit)
 - [DuckDB 阻塞算子与落盘](https://duckdb.org/docs/current/guides/performance/how_to_tune_workloads)
 - [PyArrow ParquetFile 批次与 row group API](https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html)
+
+- 2026-09-26：完成单元格惰性格式化、有限采样列宽和表格替换入口；新增宽表调用次数、整列扫描防回归与缓存替换测试。

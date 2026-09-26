@@ -19,10 +19,9 @@ from math import ceil
 from typing import ClassVar, Literal, NamedTuple, Self
 
 import pyarrow as pa
-import pyarrow.compute as pc
 import rich.repr
 from rich.cells import cell_len
-from rich.console import Console, RenderableType
+from rich.console import Console
 from rich.padding import Padding
 from rich.segment import Segment
 from rich.style import Style
@@ -169,13 +168,6 @@ def _sample_row_indices(total_rows: int, target_count: int = 256) -> tuple[int, 
 
     last = total_rows - 1
     return tuple(round(i * last / (target_count - 1)) for i in range(target_count))
-
-
-class RowRenderables(NamedTuple):
-    """Container for a row, which contains an optional index and some data cells."""
-
-    idx: RenderableType | None
-    cells: list[RenderableType]
 
 
 class ArrowTable(ScrollView, can_focus=True):
@@ -638,8 +630,8 @@ class ArrowTable(ScrollView, can_focus=True):
             10000
         )
         """Cache for individual cells."""
-        self._row_renderable_cache: LRUCache[int, RowRenderables] = LRUCache(1000)
-        """Caches row renderables - key is just row_index."""
+        self._cell_renderable_cache: LRUCache[Coordinate, Text] = LRUCache(10000)
+        """Format only accessed cells; bound the cache independently of table width."""
         self._line_cache: LRUCache[LineCacheKey, Strip] = LRUCache(1000)
         """Cache for lines within rows."""
 
@@ -726,8 +718,8 @@ class ArrowTable(ScrollView, can_focus=True):
         """Estimate the display width of a column's formatted cell content.
 
         The estimate is based on the terminal-cell width of sampled, formatted
-        values. Some Arrow types use constant-width shortcuts when their display
-        width is known without scanning sampled values.
+        values. Boolean and null columns use constant-width shortcuts. No data
+        values outside the bounded sample are scanned.
 
         Args:
             column: Arrow column to measure.
@@ -747,26 +739,6 @@ class ArrowTable(ScrollView, can_focus=True):
             return 5  # "false"
         if pa.types.is_null(data_type):
             return 4  # "null"
-        if (
-            pa.types.is_integer(data_type)
-            or pa.types.is_decimal(data_type)
-            or pa.types.is_date(data_type)
-            or pa.types.is_time(data_type)
-            or pa.types.is_timestamp(data_type)
-        ):
-            extrema = pc.min_max(column)
-            values = (extrema["min"], extrema["max"])
-            measured_width = max(
-                (
-                    cell_len(self._cell_formatter(value).plain)
-                    for value in values
-                    if value.is_valid
-                ),
-                default=0,
-            )
-            return max(null_width, measured_width)
-
-        # For everything else, we need to compute it
         widths: list[int] = [
             cell_len(self._cell_formatter(scalar).plain)
             for scalar in column.take(sample_indices)
@@ -877,8 +849,25 @@ class ArrowTable(ScrollView, can_focus=True):
 
         return self._table.column(column)[row]
 
+    def replace_table(self, table: pa.Table) -> None:
+        """Replace data and invalidate every data-dependent layout and cache."""
+        self._table = table
+        self._columns = None
+        self._column_offsets = None
+        self._index_column = None
+        self._update_count += 1
+        self._cell_renderable_cache.clear()
+        self._clear_render_caches()
+        self._require_update_dimensions = True
+        self._show_hover_cursor = False
+        self.cursor_coordinate = Coordinate(0, 0)
+        self.hover_coordinate = Coordinate(0, 0)
+        if self.is_mounted:
+            self.scroll_to(x=0, y=0, animate=False, force=True)
+        self.refresh(layout=True)
+
     def _clear_render_caches(self) -> None:
-        # Intentionally do NOT clear _row_renderable_cache: row renderables are derived
+        # Intentionally do NOT clear _cell_renderable_cache: cell renderables are derived
         # purely from immutable Arrow scalars via CellFormatter, so they don't depend on
         # cell_padding, cursor state, zebra stripes, or show_header/show_row_index.
         # Only the rendered Segments/Strips below are width- and style-sensitive.
@@ -895,7 +884,7 @@ class ArrowTable(ScrollView, can_focus=True):
         # Also clear renderables here (unlike _clear_render_caches): a component-style
         # change could in principle alter how CellFormatter output resolves under a new
         # theme, so we invalidate defensively.
-        self._row_renderable_cache.clear()
+        self._cell_renderable_cache.clear()
         self._line_cache.clear()
         self._styles_cache.clear()
         self.refresh()
@@ -1301,44 +1290,23 @@ class ArrowTable(ScrollView, can_focus=True):
             return Coordinate(-1, coordinate.column)
         return coordinate
 
-    def _get_row_renderables(self, row_index: int) -> RowRenderables:
-        """Get renderables for the row currently at the given row index.
-
-        The renderables returned here have already been passed through the `CellFormatter`.
-
-        Args:
-            row_index: Index of the row.
-
-        Returns:
-            A RowRenderables containing the optional label and the rendered cells.
-        """
-        cache_key = row_index
-        # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
-        # Use get() here so row-renderable cache hit/miss stats stay accurate.
-        if (renderables := self._row_renderable_cache.get(cache_key)) is not None:
-            return renderables
-
+    def _get_cell_renderable(self, row_index: int, column_index: int) -> Text:
+        """Format a single accessed cell without touching off-screen columns."""
+        coordinate = Coordinate(row_index, column_index)
+        if (renderable := self._cell_renderable_cache.get(coordinate)) is not None:
+            return renderable
         if row_index == self._header_row_index:
-            renderables = RowRenderables(
-                None, [Text(column.name) for column in self.columns]
+            renderable = Text(
+                ""
+                if column_index == self._index_column_index
+                else self.columns[column_index].name
             )
-            self._row_renderable_cache[cache_key] = renderables
-            return renderables
-
-        if not self.is_valid_row_index(row_index):
-            return RowRenderables(None, [])
-
-        renderables = RowRenderables(
-            Text(str(row_index), style="dim"),
-            [
-                self._cell_formatter(
-                    self.get_cell_at(Coordinate(row_index, column_index))
-                )
-                for column_index in range(self.column_count)
-            ],
-        )
-        self._row_renderable_cache[cache_key] = renderables
-        return renderables
+        elif column_index == self._index_column_index:
+            renderable = Text(str(row_index), style="dim")
+        else:
+            renderable = self._cell_formatter(self.get_cell_at(coordinate))
+        self._cell_renderable_cache[coordinate] = renderable
+        return renderable
 
     def _render_cell(
         self,
@@ -1388,12 +1356,7 @@ class ArrowTable(ScrollView, can_focus=True):
             console = Console()  # Use a fallback console
         base_style += Style.from_meta({"row": row_index, "column": column_index})
 
-        index_renderable, row_cells = self._get_row_renderables(row_index)
-
-        if is_row_index_cell:
-            cell = index_renderable if index_renderable is not None else ""
-        else:
-            cell = row_cells[column_index]
+        cell = self._get_cell_renderable(row_index, column_index)
 
         component_style, post_style = self._get_styles_to_render_cell(
             is_header_cell,
