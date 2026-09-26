@@ -22,6 +22,23 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
+Run SQL directly against the file, available as the `data` view:
+
+```bash
+parqx data/weather.parquet --query 'SELECT count(*) AS rows FROM data'
+```
+
+Press `F2` to open the SQL editor, then `F5` or `Ctrl+Enter` to run a query.
+`Escape` cancels execution, and `F6` returns to the original file. Query errors
+keep the previous result visible. The initial preview is limited to 10,000 rows
+and approximately 32 MiB of Arrow data; the status line identifies truncated
+results. Aggregations still operate on the full input. A single oversized value
+and engine/decoder allocations can exceed the preview budget.
+
+SQL results use DuckDB's types; original browsing retains the file's Arrow types.
+The architecture and staged implementation are tracked in
+[the DuckDB integration plan](docs/duckdb-integration.md).
+
 ## Keyboard control
 
 ### Navigation

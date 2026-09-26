@@ -44,6 +44,10 @@ def main(
             max=2,
         ),
     ] = 0,
+    query: Annotated[
+        str | None,
+        typer.Option("--query", "-q", help="Run SQL against the file's data view."),
+    ] = None,
     version: Annotated[
         bool | None,
         typer.Option(
@@ -59,7 +63,7 @@ def main(
 
     setup_logging(verbose)
 
-    parqx = ParqxApp(path=path)
+    parqx = ParqxApp(path=path, initial_sql=query)
     parqx.run()
 
     if parqx.load_error is not None:
