@@ -331,9 +331,11 @@ class ParqxApp(App[Any]):
         except (QueryCancelledError, ReadCancelledError):
             return
         finally:
-            if store is not None and not handed_off:
-                store.close()
-            control.finished.set()
+            try:
+                if store is not None and not handed_off:
+                    store.close()
+            finally:
+                control.finished.set()
 
     def action_load_all(self) -> None:
         """Continue the current query into a disk-backed, browsable result."""
@@ -377,7 +379,10 @@ class ParqxApp(App[Any]):
         self.query_running = False
         self.can_load_all = preview.truncated
         self.query_one("#load-all", Button).disabled = not preview.truncated
-        self._show_table(preview.table)
+        data = TableData.from_table(preview.table)
+        if preview.truncated:
+            data.total_rows = None
+        self._show_table(data)
         suffix = (
             f"preview, {preview.reason} · F7 to load all"
             if preview.truncated

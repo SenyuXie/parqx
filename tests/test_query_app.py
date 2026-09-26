@@ -1,9 +1,12 @@
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 from typing import Any
 from unittest.mock import patch
 
+import pyarrow as pa
+import pytest
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import TextArea
@@ -57,7 +60,10 @@ async def test_query_replace_error_empty_and_browse(small_parquet: Path) -> None
         assert table.column_count == 3
 
 
-async def test_preview_and_new_query_after_cancel(small_parquet: Path) -> None:
+@pytest.mark.parametrize("cancel_first", [False, True])
+async def test_preview_and_new_query_interrupt_prior_work(
+    small_parquet: Path, cancel_first: bool
+) -> None:
     app = ParqxApp(
         small_parquet,
         initial_sql="SELECT * FROM data",
@@ -66,18 +72,20 @@ async def test_preview_and_new_query_after_cancel(small_parquet: Path) -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         assert app.query_one(ArrowTable).row_count == 2
+        assert app.query_one(ArrowTable).data.total_rows is None
         editor = app.query_one(TextArea)
         editor.load_text("SELECT sum(sin(i)) FROM range(1000000000) t(i)")
         await pilot.press("f5")
         control = app._query_control  # pyright: ignore[reportPrivateUsage]
         assert control is not None
         await wait_for(control.started.is_set, pilot)
-        await pilot.press("escape")
-        assert not app.query_running
-        await wait_for(control.finished.is_set, pilot)
+        if cancel_first:
+            await pilot.press("escape")
+            assert not app.query_running
         editor.load_text("SELECT 42 AS answer")
         await pilot.press("f5")
         await wait_for(lambda: not app.query_running, pilot)
+        await wait_for(control.finished.is_set, pilot)
         assert app.query_error is None
         table = app.query_one(ArrowTable)
         assert table.row_count == 1
@@ -150,3 +158,71 @@ async def test_cancel_paused_preview_releases_session(small_parquet: Path) -> No
         await wait_for(control.finished.is_set, pilot)
         assert not app.can_load_all
         assert app.query_one(ArrowTable).row_count == 1
+
+
+async def test_cancel_full_load_retains_prefix_and_browse_removes_store(
+    small_parquet: Path,
+) -> None:
+    release, started = Event(), Event()
+    original = ResultStore.append
+
+    def slow_append(store: ResultStore, batch: pa.RecordBatch) -> None:
+        if store.row_count >= 3:
+            started.set()
+            release.wait(timeout=5)
+        original(store, batch)
+
+    app = ParqxApp(
+        small_parquet,
+        initial_sql="SELECT i FROM range(100000) t(i)",
+        query_limits=QueryLimits(preview_rows=3),
+    )
+    try:
+        with patch.object(ResultStore, "append", slow_append):
+            async with app.run_test() as pilot:
+                await wait_for(lambda: app.can_load_all, pilot)
+                await pilot.press("f7")
+                await wait_for(started.is_set, pilot)
+                widget = app.query_one(ArrowTable)
+                assert widget.data.total_rows is None
+                source = app._window_source  # pyright: ignore[reportPrivateUsage]
+                control = app._query_control  # pyright: ignore[reportPrivateUsage]
+                assert isinstance(source, ResultStore)
+                assert control is not None
+                await pilot.press("escape")
+                release.set()
+                await wait_for(control.finished.is_set, pilot)
+                assert widget.row_count == 3
+                assert not app.query_running
+                await pilot.press("f6")
+                await wait_for(lambda: widget.row_count == 5, pilot)
+                await wait_for(lambda: not source.directory.exists(), pilot)
+    finally:
+        release.set()
+
+
+async def test_full_result_write_error_keeps_displayed_prefix(
+    small_parquet: Path,
+) -> None:
+    original = ResultStore.append
+
+    def failing_append(store: ResultStore, batch: pa.RecordBatch) -> None:
+        if store.row_count >= 3:
+            raise OSError("disk full")
+        original(store, batch)
+
+    app = ParqxApp(
+        small_parquet,
+        initial_sql="SELECT i FROM range(100) t(i)",
+        query_limits=QueryLimits(preview_rows=3),
+    )
+    with patch.object(ResultStore, "append", failing_append):
+        async with app.run_test() as pilot:
+            await wait_for(lambda: app.can_load_all, pilot)
+            await pilot.press("f7")
+            await wait_for(lambda: app.query_error is not None, pilot)
+            assert app.query_error == "disk full"
+            assert not app.query_running
+            widget = app.query_one(ArrowTable)
+            assert widget.row_count == 3
+            assert widget.data.total_rows is None
