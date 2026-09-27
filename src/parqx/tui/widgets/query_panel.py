@@ -25,7 +25,7 @@ class QueryPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         """Yield an editor and explicit execution controls."""
-        yield Static("Current file: data · F5 / Ctrl+Enter to run · Escape to cancel")
+        yield Static("Current file: data · Ctrl+Enter to run · Escape to cancel")
         yield TextArea(
             self._sql, id="sql-editor", soft_wrap=False, show_line_numbers=True
         )

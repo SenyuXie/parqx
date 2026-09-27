@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from threading import Event
 from time import perf_counter
@@ -13,8 +13,10 @@ from typing import Any, ClassVar
 import duckdb
 import pyarrow as pa
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
+from textual.containers import Vertical
+from textual.screen import Screen
 from textual.widgets import Button, Footer, Static, TextArea
 
 from parqx.data.parquet import ParquetSource, ReadCancelledError
@@ -39,6 +41,11 @@ class ParqxApp(App[Any]):
 
     CSS = """
     ArrowTable { height: 1fr; }
+    #bottom-area {
+        dock: bottom;
+        height: auto;
+    }
+    #bottom-area > Footer { dock: none; }
     #query-status {
         height: auto;
         max-height: 3;
@@ -47,8 +54,6 @@ class ParqxApp(App[Any]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("f2", "toggle_query", "SQL", show=True),
-        Binding("f5", "run_query", "Run SQL", show=True, priority=True),
         Binding("ctrl+enter", "run_query", show=False, priority=True),
         Binding("escape", "cancel_query", show=False, priority=True),
         Binding("f6", "browse", "Browse", show=False),
@@ -103,11 +108,30 @@ class ParqxApp(App[Any]):
         exit with an error message."""
 
     def compose(self) -> ComposeResult:
-        """Keep the table mounted above the SQL panel, status, and footer."""
+        """Reserve one bottom dock for the editor, status, and footer."""
         yield self._table
-        yield QueryPanel(self._initial_sql or "SELECT * FROM data")
-        yield Static("", id="query-status", markup=False)
-        yield Footer(show_command_palette=True)
+        with Vertical(id="bottom-area"):
+            yield QueryPanel(self._initial_sql or "SELECT * FROM data")
+            yield Static("", id="query-status", markup=False)
+            yield Footer(show_command_palette=True)
+
+    def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
+        """Expose the SQL editor toggle alongside Textual's built-in commands."""
+        # Textual's base signature omits Screen's generic result type.
+        yield from super().get_system_commands(screen)  # pyright: ignore[reportUnknownMemberType]
+        yield SystemCommand(
+            "SQL editor",
+            "Hide the SQL editor"
+            if self.query_one(QueryPanel).display
+            else "Show the SQL editor",
+            self.action_toggle_query,
+        )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Keep priority query shortcuts from acting behind modal screens."""
+        if self.screen.is_modal and action in {"run_query", "cancel_query", "load_all"}:
+            return False
+        return super().check_action(action, parameters)
 
     def on_mount(self) -> None:
         """Start the initial browse or SQL request after the UI mounts."""
@@ -235,7 +259,7 @@ class ParqxApp(App[Any]):
         return self._request_id
 
     def action_toggle_query(self) -> None:
-        """Show or hide the SQL editor without discarding the current result."""
+        """Toggle the editor while retaining its SQL and the displayed result."""
         panel = self.query_one(QueryPanel)
         panel.display = not panel.display
         if panel.display:

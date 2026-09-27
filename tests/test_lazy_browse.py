@@ -61,9 +61,10 @@ async def test_pending_io_keeps_ui_responsive_and_cannot_replace_sql(
                 assert widget.data.peek(0, 0) is None
                 await pilot.press("down", "right", "enter")
                 assert widget.cursor_coordinate == Coordinate(1, 1)
-                await pilot.press("f2")
+                app.action_toggle_query()
+                await pilot.pause()
                 app.query_one(TextArea).load_text("SELECT 42 AS answer")
-                await pilot.press("f5")
+                await pilot.press("ctrl+enter")
                 await wait_for(lambda: not app.query_running, pilot)
                 release.set()
                 await pilot.pause()

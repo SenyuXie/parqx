@@ -39,19 +39,20 @@ async def test_query_replace_error_empty_and_browse(small_parquet: Path) -> None
     app = ParqxApp(small_parquet)
     async with app.run_test(size=(100, 32)) as pilot:
         await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
-        await pilot.press("f2")
+        app.action_toggle_query()
+        await pilot.pause()
         editor = app.query_one(TextArea)
         editor.load_text("SELECT id FROM data WHERE id > 3")
-        await pilot.press("f5")
+        await pilot.press("ctrl+enter")
         await wait_for(lambda: not app.query_running, pilot)
         table = app.query_one(ArrowTable)
         assert (table.row_count, table.column_count) == (2, 1)
         editor.load_text("SELECT missing FROM data")
-        await pilot.press("f5")
+        await pilot.press("ctrl+enter")
         await wait_for(lambda: app.query_error is not None, pilot)
         assert table.row_count == 2
         editor.load_text("SELECT name FROM data WHERE false")
-        await pilot.press("f5")
+        await pilot.press("ctrl+enter")
         await wait_for(lambda: not app.query_running, pilot)
         assert table.row_count == 0
         assert table.columns[0].name == "name"
@@ -75,7 +76,7 @@ async def test_preview_and_new_query_interrupt_prior_work(
         assert app.query_one(ArrowTable).data.total_rows is None
         editor = app.query_one(TextArea)
         editor.load_text("SELECT sum(sin(i)) FROM range(1000000000) t(i)")
-        await pilot.press("f5")
+        await pilot.press("ctrl+enter")
         control = app._query_control  # pyright: ignore[reportPrivateUsage]
         assert control is not None
         await wait_for(control.started.is_set, pilot)
@@ -84,7 +85,7 @@ async def test_preview_and_new_query_interrupt_prior_work(
             await pilot.press("escape")
             assert not app.query_running
         editor.load_text("SELECT 42 AS answer")
-        await pilot.press("f5")
+        await pilot.press("ctrl+enter")
         await wait_for(lambda: not app.query_running, pilot)
         await wait_for(control.finished.is_set, pilot)
         assert app.query_error is None
@@ -97,7 +98,8 @@ async def test_editor_text_does_not_trigger_table_bindings(small_parquet: Path) 
     app = ParqxApp(small_parquet)
     async with app.run_test() as pilot:
         await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
-        await pilot.press("f2", "h", "i", "z", "c")
+        app.action_toggle_query()
+        await pilot.press("h", "i", "z", "c")
         table = app.query_one(ArrowTable)
         assert table.show_header
         assert table.show_row_index

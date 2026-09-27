@@ -28,7 +28,10 @@ Run SQL directly against the file, available as the `data` view:
 parqx data/weather.parquet --query 'SELECT count(*) AS rows FROM data'
 ```
 
-Press `F2` to open the SQL editor, then `F5` or `Ctrl+Enter` to run a query.
+Press `Ctrl+P` and choose **SQL editor** to show or hide the bottom SQL panel.
+The command's description changes between **Show the SQL editor** and
+**Hide the SQL editor**. Hiding the panel retains its SQL and the displayed
+result. Press `Ctrl+Enter` or click **Run** to execute the editor's query.
 `Escape` cancels execution, and `F6` returns to the original file. Query errors
 keep the previous result visible. The initial preview is limited to 10,000 rows
 and approximately 32 MiB of Arrow data; the status line identifies truncated
@@ -78,8 +81,8 @@ The architecture and staged implementation are tracked in
 
 | Key | Action |
 | --- | --- |
-| `F2` | Show or hide the SQL editor |
-| `F5` / `Ctrl+Enter` | Run the editor's query |
+| `Ctrl+P` | Open the command palette; **SQL editor** shows or hides the panel |
+| `Ctrl+Enter` | Run the editor's query |
 | `Escape` | Cancel execution or release a paused preview |
 | `F6` | Browse the original file |
 | `F7` | Continue loading the complete query result |
