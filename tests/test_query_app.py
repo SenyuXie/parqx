@@ -27,7 +27,7 @@ async def test_initial_sql_bypasses_full_source_read(small_parquet: Path) -> Non
     app = ParqxApp(small_parquet, initial_sql="SELECT name FROM data WHERE id = 3")
     with patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")):
         async with app.run_test(size=(100, 32)) as pilot:
-            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
             table = app.query_one(ArrowTable)
             assert table.row_count == 1
             assert table.columns[0].name == "name"
@@ -38,7 +38,7 @@ async def test_initial_sql_bypasses_full_source_read(small_parquet: Path) -> Non
 async def test_query_replace_error_empty_and_browse(small_parquet: Path) -> None:
     app = ParqxApp(small_parquet)
     async with app.run_test(size=(100, 32)) as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
         await pilot.press("f2")
         editor = app.query_one(TextArea)
         editor.load_text("SELECT id FROM data WHERE id > 3")
@@ -70,7 +70,7 @@ async def test_preview_and_new_query_interrupt_prior_work(
         query_limits=QueryLimits(preview_rows=2),
     )
     async with app.run_test() as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
         assert app.query_one(ArrowTable).row_count == 2
         assert app.query_one(ArrowTable).data.total_rows is None
         editor = app.query_one(TextArea)
@@ -79,6 +79,7 @@ async def test_preview_and_new_query_interrupt_prior_work(
         control = app._query_control  # pyright: ignore[reportPrivateUsage]
         assert control is not None
         await wait_for(control.started.is_set, pilot)
+        assert not app.query_one(ArrowTable).loading
         if cancel_first:
             await pilot.press("escape")
             assert not app.query_running
@@ -95,7 +96,7 @@ async def test_preview_and_new_query_interrupt_prior_work(
 async def test_editor_text_does_not_trigger_table_bindings(small_parquet: Path) -> None:
     app = ParqxApp(small_parquet)
     async with app.run_test() as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
         await pilot.press("f2", "h", "i", "z", "c")
         table = app.query_one(ArrowTable)
         assert table.show_header
@@ -125,6 +126,7 @@ async def test_load_all_resumes_once_and_cleans_up(small_parquet: Path) -> None:
             widget = app.query_one(ArrowTable)
             preview_value = widget.get_cell_at(Coordinate(0, 1)).as_py()
             await pilot.click("#load-all")
+            assert not widget.loading
             await wait_for(lambda: not app.query_running, pilot)
             assert widget.row_count == 20_000
             assert widget.data.total_rows == 20_000
@@ -184,6 +186,7 @@ async def test_cancel_full_load_retains_prefix_and_browse_removes_store(
                 await pilot.press("f7")
                 await wait_for(started.is_set, pilot)
                 widget = app.query_one(ArrowTable)
+                assert not widget.loading
                 assert widget.data.total_rows is None
                 source = app._window_source  # pyright: ignore[reportPrivateUsage]
                 control = app._query_control  # pyright: ignore[reportPrivateUsage]

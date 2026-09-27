@@ -27,9 +27,8 @@ async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
     """Boot the app, wait for async load, drive the cursor, quit cleanly."""
     app = ParqxApp(path=small_parquet)
     async with app.run_test() as pilot:
-        # Loader runs in a @work(thread=True) worker; wait for it to swap
-        # FileLoading for ArrowTable in the DOM.
-        await _wait_until(lambda: bool(app.query(ArrowTable)), pilot)
+        # Metadata is loaded in a worker before the table can request pages.
+        await _wait_until(lambda: not app.query_one(ArrowTable).loading, pilot)
 
         table = app.query_one(ArrowTable)
         assert table.row_count == 5

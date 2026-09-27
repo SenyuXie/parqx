@@ -15,7 +15,6 @@ import pyarrow as pa
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.css.query import NoMatches
 from textual.widgets import Button, Footer, Static, TextArea
 
 from parqx.data.parquet import ParquetSource, ReadCancelledError
@@ -28,7 +27,7 @@ from parqx.query.engine import (
     QueryPreview,
     QuerySession,
 )
-from parqx.tui.widgets import ArrowTable, FileLoading
+from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.arrow_table import CursorType
 from parqx.tui.widgets.query_panel import QueryPanel
 
@@ -39,7 +38,7 @@ class ParqxApp(App[Any]):
     """A Textual App for Parqx."""
 
     CSS = """
-    ArrowTable, FileLoading { height: 1fr; }
+    ArrowTable { height: 1fr; }
     #query-status {
         height: auto;
         max-height: 3;
@@ -86,6 +85,8 @@ class ParqxApp(App[Any]):
         self._path = path
         self._initial_sql = initial_sql
         self._query_limits = query_limits or QueryLimits()
+        self._table = ArrowTable(pa.table({}))
+        self._has_result = False  # A successful empty result also counts.
         self._request_id = 0
         self._query_control: QueryControl | None = None
         self.query_running = False
@@ -102,19 +103,14 @@ class ParqxApp(App[Any]):
         exit with an error message."""
 
     def compose(self) -> ComposeResult:
-        """Yield the body above the SQL panel and persistent footer.
-
-        The body widget (`FileLoading`, later swapped for `ArrowTable`) is the
-        only thing that gets mounted/removed. `Footer` is docked to the bottom
-        and persists for the app's lifetime so its key hints are always visible.
-        """
-        yield FileLoading(self._path)
+        """Keep the table mounted above the SQL panel, status, and footer."""
+        yield self._table
         yield QueryPanel(self._initial_sql or "SELECT * FROM data")
         yield Static("", id="query-status", markup=False)
         yield Footer(show_command_palette=True)
 
     def on_mount(self) -> None:
-        """Kick off the parquet read as soon as the loading UI is visible."""
+        """Start the initial browse or SQL request after the UI mounts."""
         self.query_one(QueryPanel).display = self._initial_sql is not None
         if self._initial_sql is not None:
             self.action_run_query()
@@ -131,25 +127,18 @@ class ParqxApp(App[Any]):
             return
         self._publish(self._on_load_ok, source, request_id)
 
-    def _show_table(
-        self, table: pa.Table | TableData, source: WindowSource | None = None
-    ) -> None:
+    def _show_table(self, data: TableData, source: WindowSource | None = None) -> None:
         self._page_cancelled.set()
         self._page_request += 1
         previous_source = self._window_source
         self._window_source = source
         if isinstance(previous_source, ResultStore) and previous_source is not source:
             self._close_result(previous_source)
-        if (widget := self._get_arrow_table()) is not None:
-            if isinstance(table, TableData):
-                widget.replace_data(table)
-            else:
-                widget.replace_table(table)
-        else:
-            self.query(FileLoading).remove()
-            widget = ArrowTable(table)
-            self.mount(widget, before=self.query_one(QueryPanel))
-        widget.focus()
+        self._table.replace_data(data)
+        self._has_result = True
+        # Rendering the uncovered table triggers any needed page reads.
+        self._table.loading = False
+        self._table.focus()
 
     @work(thread=True, group="cleanup", exit_on_error=False)
     def _close_result(self, source: ResultStore) -> None:
@@ -180,12 +169,7 @@ class ParqxApp(App[Any]):
         self, event: ArrowTable.WindowRequested
     ) -> None:
         """Read the current viewport outside of render and navigation callbacks."""
-        widget = self._get_arrow_table()
-        if (
-            widget is None
-            or widget.data is not event.data
-            or self._window_source is None
-        ):
+        if self._table.data is not event.data or self._window_source is None:
             return
         self._page_cancelled.set()
         self._page_cancelled = cancelled = Event()
@@ -221,9 +205,8 @@ class ParqxApp(App[Any]):
             self._publish(self._on_page_loaded, data, page, request)
 
     def _on_page_loaded(self, data: TableData, page: DataPage, request: int) -> None:
-        widget = self._get_arrow_table()
-        if request == self._page_request and widget is not None and widget.data is data:
-            widget.accept_page(page)
+        if request == self._page_request and self._table.data is data:
+            self._table.accept_page(page)
 
     def _on_page_error(self, request: int, message: str) -> None:
         if request == self._page_request:
@@ -232,6 +215,7 @@ class ParqxApp(App[Any]):
     def _on_load_error(self, message: str, request_id: int) -> None:
         if request_id != self._request_id:
             return
+        self._table.loading = False
         self.load_error = message
         self.exit(return_code=1)
 
@@ -246,8 +230,8 @@ class ParqxApp(App[Any]):
         self.query_running = False
         self.query_error = None
         self.can_load_all = False
-        if self.query("#load-all"):
-            self.query_one("#load-all", Button).disabled = True
+        self._table.loading = False
+        self.query_one("#load-all", Button).disabled = True
         return self._request_id
 
     def action_toggle_query(self) -> None:
@@ -256,18 +240,20 @@ class ParqxApp(App[Any]):
         panel.display = not panel.display
         if panel.display:
             self.query_one(TextArea).focus()
-        elif (table := self._get_arrow_table()) is not None:
-            table.focus()
+        else:
+            self._table.focus()
 
     def action_browse(self) -> None:
         """Return to the source file's original Arrow values."""
         request_id = self._new_request()
+        self._table.loading = not self._has_result
         self._status(f"Loading {self._path.name}…")
         self._load_table(request_id)
 
     def action_run_query(self) -> None:
         """Submit the editor's SQL on a fresh, cancellable worker."""
         request_id = self._new_request()
+        self._table.loading = not self._has_result
         self._query_control = control = QueryControl()
         self._query_controls = [
             c for c in self._query_controls if not c.finished.is_set()
@@ -351,22 +337,18 @@ class ParqxApp(App[Any]):
             return False
         self._result_stores = [s for s in self._result_stores if not s.closed]
         self._result_stores.append(store)
-        widget = self._get_arrow_table()
-        cursor = widget.cursor_coordinate if widget is not None else None
+        cursor = self._table.cursor_coordinate
         self._show_table(TableData(store.schema, store.row_count, None), store)
-        if cursor is not None and (widget := self._get_arrow_table()) is not None:
-            widget.move_cursor(row=cursor.row, column=cursor.column)
+        self._table.move_cursor(row=cursor.row, column=cursor.column)
         self._on_full_progress(request_id, store)
         return True
 
     def _on_full_progress(self, request_id: int, store: ResultStore) -> None:
         if request_id != self._request_id or store is not self._window_source:
             return
-        widget = self._get_arrow_table()
-        if widget is not None:
-            widget.update_row_count(
-                store.row_count, store.row_count if store.finished else None
-            )
+        self._table.update_row_count(
+            store.row_count, store.row_count if store.finished else None
+        )
         self.query_running = not store.finished
         suffix = (
             "complete" if store.finished else "loaded · total unknown · Escape to stop"
@@ -399,9 +381,8 @@ class ParqxApp(App[Any]):
             return
         self.query_running = False
         self.query_error = message
+        self._table.loading = False
         self._status(f"SQL error: {message}")
-        if self._get_arrow_table() is None:
-            self._show_table(pa.table({}))
         self.query_one(TextArea).focus()
 
     def action_cancel_query(self) -> None:
@@ -437,33 +418,20 @@ class ParqxApp(App[Any]):
             if control.started.is_set() and not control.finished.is_set():
                 await asyncio.to_thread(control.finished.wait, 5)
 
-    def _get_arrow_table(self) -> ArrowTable | None:
-        """Return the mounted `ArrowTable`, or `None` during the loading phase."""
-        try:
-            return self.query_one(ArrowTable)
-        except NoMatches:
-            return None
-
     def action_toggle_header(self) -> None:
         """Toggle the visibility of the column header row."""
-        if (table := self._get_arrow_table()) is not None:
-            table.show_header = not table.show_header
+        self._table.show_header = not self._table.show_header
 
     def action_toggle_row_index(self) -> None:
         """Toggle the visibility of the row-index column."""
-        if (table := self._get_arrow_table()) is not None:
-            table.show_row_index = not table.show_row_index
+        self._table.show_row_index = not self._table.show_row_index
 
     def action_toggle_zebra(self) -> None:
         """Toggle zebra striping on data rows."""
-        if (table := self._get_arrow_table()) is not None:
-            table.zebra_stripes = not table.zebra_stripes
+        self._table.zebra_stripes = not self._table.zebra_stripes
 
     def action_cycle_cursor_type(self) -> None:
         """Advance the table's cursor type through `_CURSOR_TYPE_CYCLE`."""
-        table = self._get_arrow_table()
-        if table is None:
-            return
         cycle = self._CURSOR_TYPE_CYCLE
-        next_index = (cycle.index(table.cursor_type) + 1) % len(cycle)
-        table.cursor_type = cycle[next_index]
+        next_index = (cycle.index(self._table.cursor_type) + 1) % len(cycle)
+        self._table.cursor_type = cycle[next_index]

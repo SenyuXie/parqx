@@ -22,7 +22,7 @@ async def test_default_browse_loads_windows_and_jumps_to_last_row(
     app = ParqxApp(path)
     with patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")):
         async with app.run_test() as pilot:
-            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
             widget = app.query_one(ArrowTable)
             assert widget.row_count == 100_000
             await wait_for(lambda: widget.data.peek(0, 0) is not None, pilot)
@@ -57,6 +57,7 @@ async def test_pending_io_keeps_ui_responsive_and_cannot_replace_sql(
             async with app.run_test() as pilot:
                 await wait_for(started.is_set, pilot)
                 widget = app.query_one(ArrowTable)
+                assert not widget.loading
                 assert widget.data.peek(0, 0) is None
                 await pilot.press("down", "right", "enter")
                 assert widget.cursor_coordinate == Coordinate(1, 1)
@@ -78,7 +79,7 @@ async def test_horizontal_navigation_in_wide_lazy_table(tmp_path: Path) -> None:
     pq.write_table(pa.table({f"c{i}": [f"value-{i}"] for i in range(100)}), path)
     app = ParqxApp(path)
     async with app.run_test(size=(80, 24)) as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
         widget = app.query_one(ArrowTable)
         await wait_for(lambda: widget.data.peek(0, 99) is not None, pilot)
         await pilot.press("end")
