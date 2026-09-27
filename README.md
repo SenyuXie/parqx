@@ -38,13 +38,13 @@ See the [DuckDB integration plan](docs/duckdb-integration.md) for implementation
 
 ### Navigation
 
-| Key | Action |
-| --- | --- |
-| Arrow keys | Move the cursor |
-| `PageUp` / `PageDown` | Move one page up / down |
-| `Home` / `End` | Move to the first / last column |
+| Key                      | Action                                 |
+| ---                      | ---                                    |
+| Arrow keys               | Move the cursor                        |
+| `PageUp` / `PageDown`    | Move one page up / down                |
+| `Home` / `End`           | Move to the first / last column        |
 | `Ctrl+Home` / `Ctrl+End` | Move to the first / last available row |
-| `Enter` | Select the current cell |
+| `Enter`                  | Select the current cell                |
 
 ### Table View
 
@@ -57,16 +57,16 @@ See the [DuckDB integration plan](docs/duckdb-integration.md) for implementation
 
 ### SQL query
 
-| Key | Action |
-| --- | --- |
-| `Ctrl+P` → **SQL query** | Show / hide the SQL panel |
-| `F1` | Run the complete SQL query |
-| `F2` | Cancel the query or stop loading |
-| `F3` | Browse the original file |
-| `F4` | Load the complete result |
-| `Escape` / `Shift+Tab` | Leave SQL input without cancelling |
-| `Tab` | Indent SQL; enter SQL input from the table |
-| `F6` / `F7` | Select the current SQL line / all SQL |
+| Key                      | Action                                     |
+| ---                      | ---                                        |
+| `Ctrl+P` → **SQL query** | Show / hide the SQL panel                  |
+| `F1`                     | Run the complete SQL query                 |
+| `F2`                     | Cancel the query or stop loading           |
+| `F3`                     | Browse the original file                   |
+| `F4`                     | Load the complete result.                  |
+| `Escape` / `Shift+Tab`   | Leave SQL input without cancelling         |
+| `Tab`                    | Indent SQL; enter SQL input from the table |
+| `F6` / `F7`              | Select the current SQL line / all SQL      |
 
 ## License
 
