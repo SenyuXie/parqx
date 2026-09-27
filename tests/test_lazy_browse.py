@@ -64,7 +64,7 @@ async def test_pending_io_keeps_ui_responsive_and_cannot_replace_sql(
                 app.action_toggle_query()
                 await pilot.pause()
                 app.query_one(TextArea).load_text("SELECT 42 AS answer")
-                await pilot.press("ctrl+enter")
+                await pilot.press("f1")
                 await wait_for(lambda: not app.query_running, pilot)
                 release.set()
                 await pilot.pause()

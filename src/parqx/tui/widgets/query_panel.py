@@ -1,8 +1,8 @@
-"""SQL editor and query controls."""
+"""SQL query input with native keyboard editing."""
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, TextArea
+from textual.containers import Vertical
+from textual.widgets import TextArea
 
 
 class QueryPanel(Vertical):
@@ -10,28 +10,20 @@ class QueryPanel(Vertical):
 
     DEFAULT_CSS = """
     QueryPanel {
-        height: 10;
+        height: 7;
         & > TextArea { height: 1fr; }
-        & > Horizontal { height: 3; }
-        Button { min-width: 12; margin-right: 1; }
     }
     """
 
     def __init__(self, sql: str = "SELECT * FROM data") -> None:
-        """Initialize the editor without executing SQL."""
+        """Initialize the SQL query input without executing it."""
         super().__init__()
-        self.editor = TextArea.code_editor(sql, language="sql", id="sql-editor")
-        self.load_all = Button(
-            "Load all", id="load-all", action="app.load_all", disabled=True
+        self.editor = TextArea.code_editor(sql, language="sql", id="sql-query")
+        self.editor.border_title = "SQL query"
+        self.editor.border_subtitle = (
+            "F1 Run · F2 Cancel · F3 Browse · F4 All · Esc Back"
         )
 
     def compose(self) -> ComposeResult:
-        """Yield an editor and explicit execution controls."""
+        """Yield the SQL query input with shortcut hints in its border."""
         yield self.editor
-        with Horizontal():
-            yield Button(
-                "Run", id="run-query", variant="primary", action="app.run_query"
-            )
-            yield Button("Cancel", id="cancel-query", action="app.cancel_query")
-            yield Button("Browse file", id="browse-file", action="app.browse")
-            yield self.load_all

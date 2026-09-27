@@ -28,21 +28,28 @@ Run SQL directly against the file, available as the `data` view:
 parqx data/weather.parquet --query 'SELECT count(*) AS rows FROM data'
 ```
 
-Press `Ctrl+P` and choose **SQL editor** to show or hide the bottom SQL panel.
-The command's description changes between **Show the SQL editor** and
-**Hide the SQL editor**. Hiding the panel retains its SQL and the displayed
-result. Press `Ctrl+Enter` or click **Run** to execute the editor's query.
-`Escape` cancels execution, and `F6` returns to the original file. Query errors
+Press `Ctrl+P` and choose **SQL query** to show or hide the bottom SQL panel.
+The command's description changes between **Show the SQL query** and
+**Hide the SQL query**. Hiding the panel retains its SQL, selection, undo history,
+and the displayed result. Press `F1` to execute the complete SQL query.
+`F2` cancels execution, and `F3` returns to the original file. Query errors
 keep the previous result visible. The initial preview is limited to 10,000 rows
 and approximately 32 MiB of Arrow data; the status line identifies truncated
 results. Aggregations still operate on the full input. A single oversized value
 and engine/decoder allocations can exceed the preview budget.
 
-Use **Load all** (`F7`) to continue the same query beyond the preview. Results are
+Press `F4` to continue the same query beyond the preview. Results are
 written to temporary Arrow batches and read back as you navigate. While loading,
 the status shows available rows; `Ctrl+End` goes to the currently available end.
-The total becomes known when loading completes. Cancel keeps the displayed
+The total becomes known when loading completes. `F2` keeps the displayed
 prefix. Temporary results are removed when replaced or when the app closes.
+
+The SQL query panel uses keyboard controls without buttons. In the input area,
+`Enter` inserts a newline and `Tab` indents. `Escape` or `Shift+Tab` moves focus
+back to the result table without cancelling the query; `Tab` from the table
+returns to the input area. Native TextArea editing shortcuts remain available,
+including `F6` to select a line, `F7` to select all, `Ctrl+Z` to undo, and `Ctrl+Y`
+to redo. `Ctrl+Enter` and `F5` do not execute SQL.
 
 Original file browsing reads metadata first and loads row windows on demand,
 with a 32 MiB Arrow cache and a small width sample. Large Parquet row groups may
@@ -77,15 +84,18 @@ The architecture and staged implementation are tracked in
 | `Z` | Toggle zebra striping                          |
 | `C` | Cycle cursor type (cell → row → column → none) |
 
-### SQL
+### SQL query
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+P` | Open the command palette; **SQL editor** shows or hides the panel |
-| `Ctrl+Enter` | Run the editor's query |
-| `Escape` | Cancel execution or release a paused preview |
-| `F6` | Browse the original file |
-| `F7` | Continue loading the complete query result |
+| `Ctrl+P` | Open the command palette; **SQL query** shows or hides the panel |
+| `F1` | Run the complete SQL query |
+| `F2` | Cancel execution, stop loading, or release a paused preview |
+| `F3` | Browse the original file |
+| `F4` | Continue loading the complete query result |
+| `Escape` / `Shift+Tab` | Leave the SQL input without cancelling the query |
+| `Tab` | Indent in the SQL input; focus the input from the result table |
+| `F6` / `F7` | Select the current line / all text in the SQL input |
 
 ## License
 

@@ -76,7 +76,7 @@ async def test_initial_sql_clears_loading_and_can_retry(
                 assert table.loading
                 assert app.query_one(QueryPanel).display
                 if outcome == "cancel":
-                    await pilot.press("escape")
+                    await pilot.press("f2")
                     assert not table.loading
                     assert not app.query_running
                 release.set()
@@ -96,7 +96,7 @@ async def test_initial_sql_clears_loading_and_can_retry(
                 started.clear()
                 release.clear()
                 app.query_one(TextArea).load_text("SELECT 7 AS answer")
-                await pilot.press("ctrl+enter")
+                await pilot.press("f1")
                 await wait_for(started.is_set, pilot)
                 assert table.loading
                 release.set()
@@ -140,7 +140,7 @@ async def test_superseded_metadata_cannot_clear_query_loading(
                 table = app.query_one(ArrowTable)
                 metadata_worker = next(w for w in app.workers if w.group == "load")
                 app.query_one(TextArea).load_text("SELECT 42 AS answer")
-                await pilot.press("ctrl+enter")
+                await pilot.press("f1")
                 await wait_for(query_started.is_set, pilot)
                 metadata_release.set()
                 await wait_for(lambda: metadata_worker.is_finished, pilot)
@@ -180,7 +180,7 @@ async def test_new_query_keeps_existing_result_visible(
         with patch.object(QuerySession, "__enter__", slow_enter):
             try:
                 app.query_one(TextArea).load_text("SELECT 7 AS answer")
-                await pilot.press("ctrl+enter")
+                await pilot.press("f1")
                 await wait_for(started.is_set, pilot)
                 assert not table.loading
                 assert table.data is previous_data
