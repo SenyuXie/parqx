@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from textwrap import indent
 from threading import Event
 from time import perf_counter
 from typing import Any, ClassVar
@@ -95,7 +96,7 @@ class ParqxApp(App[Any]):
         self._query_limits = query_limits or QueryLimits()
         self._table = ArrowTable(pa.table({}))
         self._query_panel = QueryPanel(initial_sql or "SELECT * FROM data")
-        self._query_status = Label("", id="query-status", markup=False)
+        self._query_status = Label("", id="query-status")
         self._has_result = False  # A successful empty result also counts.
         self._request_id = 0
         self._query_control: QueryControl | None = None
@@ -257,9 +258,7 @@ class ParqxApp(App[Any]):
         self.exit(return_code=1)
 
     def _status(self, message: str) -> None:
-        if not message.startswith(" "):
-            message = " " + message
-        self._query_status.update(message)
+        self._query_status.update(indent(message, " "))
 
     def _new_request(self) -> int:
         if self._query_control is not None:

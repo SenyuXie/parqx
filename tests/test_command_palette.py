@@ -27,13 +27,12 @@ async def toggle_sql_query(pilot: Pilot[Any], help_text: str) -> None:
         if commands.option_count != 1:
             return False
         option = commands.get_option_at_index(0)
-        return (
-            isinstance(option, Command)
-            and option.hit.text == "SQL query"
-            and option.hit.help == help_text
-        )
+        return isinstance(option, Command) and option.hit.text == "SQL query"
 
     await wait_for(found, pilot)
+    option = commands.get_option_at_index(0)
+    assert isinstance(option, Command)
+    assert option.hit.help == help_text
     await pilot.press("enter")
     await wait_for(lambda: pilot.app.screen is not palette, pilot)
     await pilot.pause()
@@ -63,18 +62,18 @@ async def test_palette_toggles_sql_query_and_runs_via_shortcut(
         assert not panel.display
         assert table.data is original_data
 
-        await toggle_sql_query(pilot, "Show the SQL query")
+        await toggle_sql_query(pilot, "Show the SQL query panel")
         assert panel.display
         assert editor.has_focus
         editor.load_text("SELECT 42 AS answer")
         await pilot.press("f2", "f4", "f5", "ctrl+enter")
         assert panel.display
         assert table.data is original_data
-        await toggle_sql_query(pilot, "Hide the SQL query")
+        await toggle_sql_query(pilot, "Hide the SQL query panel")
         assert not panel.display
         assert table.has_focus
         assert table.data is original_data
-        await toggle_sql_query(pilot, "Show the SQL query")
+        await toggle_sql_query(pilot, "Show the SQL query panel")
         assert editor.text == "SELECT 42 AS answer"
         assert editor.has_focus
         assert table.data is original_data
@@ -84,11 +83,11 @@ async def test_palette_toggles_sql_query_and_runs_via_shortcut(
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
 
         result_data = table.data
-        await toggle_sql_query(pilot, "Hide the SQL query")
+        await toggle_sql_query(pilot, "Hide the SQL query panel")
         assert not panel.display
         assert table.has_focus
         assert table.data is result_data
-        await toggle_sql_query(pilot, "Show the SQL query")
+        await toggle_sql_query(pilot, "Show the SQL query panel")
         assert editor.has_focus
         assert editor.text == "SELECT 42 AS answer"
         assert table.data is result_data

@@ -69,7 +69,7 @@ async def test_panel_toggle_preserves_selection_and_undo_history(
     app = ParqxApp(small_parquet)
     async with app.run_test() as pilot:
         await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
-        await toggle_sql_query(pilot, "Show the SQL query")
+        await toggle_sql_query(pilot, "Show the SQL query panel")
         editor = app.query_one(TextArea)
         editor.load_text("SELECT ")
         await pilot.press("end", "4", "2")
@@ -77,8 +77,8 @@ async def test_panel_toggle_preserves_selection_and_undo_history(
         await pilot.press("shift+left", "shift+left")
         selection = editor.selection
         assert editor.selected_text == "42"
-        await toggle_sql_query(pilot, "Hide the SQL query")
-        await toggle_sql_query(pilot, "Show the SQL query")
+        await toggle_sql_query(pilot, "Hide the SQL query panel")
+        await toggle_sql_query(pilot, "Show the SQL query panel")
         assert app.query_one(TextArea) is editor
         assert editor.text == "SELECT 42"
         assert editor.selection == selection
