@@ -9,7 +9,7 @@ import pyarrow as pa
 import pytest
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
-from textual.widgets import TextArea
+from textual.widgets import Button, TextArea
 
 from parqx.data.result_store import ResultStore
 from parqx.query.engine import QueryLimits
@@ -125,9 +125,13 @@ async def test_load_all_resumes_once_and_cleans_up(small_parquet: Path) -> None:
     with patch.object(QuerySession, "__enter__", record_execution):
         async with app.run_test() as pilot:
             await wait_for(lambda: app.can_load_all, pilot)
+            load_all = app.query_one("#load-all", Button)
+            assert not load_all.disabled
             widget = app.query_one(ArrowTable)
             preview_value = widget.get_cell_at(Coordinate(0, 1)).as_py()
             await pilot.click("#load-all")
+            assert load_all.disabled
+            assert not app.can_load_all
             assert not widget.loading
             await wait_for(lambda: not app.query_running, pilot)
             assert widget.row_count == 20_000
@@ -148,7 +152,10 @@ async def test_load_all_resumes_once_and_cleans_up(small_parquet: Path) -> None:
     assert not directory.exists()
 
 
-async def test_cancel_paused_preview_releases_session(small_parquet: Path) -> None:
+@pytest.mark.parametrize("use_button", [False, True])
+async def test_cancel_paused_preview_releases_session(
+    small_parquet: Path, use_button: bool
+) -> None:
     app = ParqxApp(
         small_parquet,
         initial_sql="SELECT * FROM data",
@@ -158,9 +165,13 @@ async def test_cancel_paused_preview_releases_session(small_parquet: Path) -> No
         await wait_for(lambda: app.can_load_all, pilot)
         control = app._query_control  # pyright: ignore[reportPrivateUsage]
         assert control is not None
-        await pilot.press("escape")
+        if use_button:
+            await pilot.click("#cancel-query")
+        else:
+            await pilot.press("escape")
         await wait_for(control.finished.is_set, pilot)
         assert not app.can_load_all
+        assert app.query_one("#load-all", Button).disabled
         assert app.query_one(ArrowTable).row_count == 1
 
 

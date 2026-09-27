@@ -16,8 +16,9 @@ from textual import work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.reactive import var
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Static, TextArea
+from textual.widgets import Footer, Static
 
 from parqx.data.parquet import ParquetSource, ReadCancelledError
 from parqx.data.result_store import ResultStore
@@ -29,9 +30,8 @@ from parqx.query.engine import (
     QueryPreview,
     QuerySession,
 )
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.widgets import ArrowTable, QueryPanel
 from parqx.tui.widgets.arrow_table import CursorType
-from parqx.tui.widgets.query_panel import QueryPanel
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,14 @@ class ParqxApp(App[Any]):
         Binding("escape", "cancel_query", show=False, priority=True),
         Binding("f6", "browse", "Browse", show=False),
         Binding("f7", "load_all", "Load all", show=False, priority=True),
-        Binding("h", "toggle_header", "Header", show=True),
-        Binding("i", "toggle_row_index", "Index", show=True),
-        Binding("z", "toggle_zebra", "Zebra", show=True),
-        Binding("c", "cycle_cursor_type", "Cursor", show=True),
+        Binding("h", "toggle_header", "Header"),
+        Binding("i", "toggle_row_index", "Index"),
+        Binding("z", "toggle_zebra", "Zebra"),
+        Binding("c", "cycle_cursor_type", "Cursor"),
     ]
+
+    can_load_all = var(False, init=False)
+    """Whether the current preview can resume into a full result."""
 
     _CURSOR_TYPE_CYCLE: ClassVar[tuple[CursorType, ...]] = (
         "cell",
@@ -91,12 +94,13 @@ class ParqxApp(App[Any]):
         self._initial_sql = initial_sql
         self._query_limits = query_limits or QueryLimits()
         self._table = ArrowTable(pa.table({}))
+        self._query_panel = QueryPanel(initial_sql or "SELECT * FROM data")
+        self._query_status = Static("", id="query-status", markup=False)
         self._has_result = False  # A successful empty result also counts.
         self._request_id = 0
         self._query_control: QueryControl | None = None
         self.query_running = False
         self.query_error: str | None = None
-        self.can_load_all = False
         self._query_controls: list[QueryControl] = []
         self._result_stores: list[ResultStore] = []
         self._window_source: WindowSource | None = None
@@ -111,8 +115,8 @@ class ParqxApp(App[Any]):
         """Reserve one bottom dock for the editor, status, and footer."""
         yield self._table
         with Vertical(id="bottom-area"):
-            yield QueryPanel(self._initial_sql or "SELECT * FROM data")
-            yield Static("", id="query-status", markup=False)
+            yield self._query_panel
+            yield self._query_status
             yield Footer(show_command_palette=True)
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
@@ -122,7 +126,7 @@ class ParqxApp(App[Any]):
         yield SystemCommand(
             "SQL editor",
             "Hide the SQL editor"
-            if self.query_one(QueryPanel).display
+            if self._query_panel.display
             else "Show the SQL editor",
             self.action_toggle_query,
         )
@@ -135,7 +139,7 @@ class ParqxApp(App[Any]):
 
     def on_mount(self) -> None:
         """Start the initial browse or SQL request after the UI mounts."""
-        self.query_one(QueryPanel).display = self._initial_sql is not None
+        self._query_panel.display = self._initial_sql is not None
         if self._initial_sql is not None:
             self.action_run_query()
         else:
@@ -244,7 +248,10 @@ class ParqxApp(App[Any]):
         self.exit(return_code=1)
 
     def _status(self, message: str) -> None:
-        self.query_one("#query-status", Static).update(message)
+        self._query_status.update(message)
+
+    def _watch_can_load_all(self, can_load_all: bool) -> None:
+        self._query_panel.load_all.disabled = not can_load_all
 
     def _new_request(self) -> int:
         if self._query_control is not None:
@@ -255,15 +262,14 @@ class ParqxApp(App[Any]):
         self.query_error = None
         self.can_load_all = False
         self._table.loading = False
-        self.query_one("#load-all", Button).disabled = True
         return self._request_id
 
     def action_toggle_query(self) -> None:
         """Toggle the editor while retaining its SQL and the displayed result."""
-        panel = self.query_one(QueryPanel)
+        panel = self._query_panel
         panel.display = not panel.display
         if panel.display:
-            self.query_one(TextArea).focus()
+            panel.editor.focus()
         else:
             self._table.focus()
 
@@ -284,9 +290,9 @@ class ParqxApp(App[Any]):
         ]
         self._query_controls.append(control)
         self.query_running = True
-        self.query_one(QueryPanel).display = True
+        self._query_panel.display = True
         self._status("Running SQL… Escape to cancel")
-        self._run_query(self.query_one(TextArea).text, request_id, control)
+        self._run_query(self._query_panel.editor.text, request_id, control)
 
     @work(thread=True, group="query", exit_on_error=False)
     def _run_query(self, sql: str, request_id: int, control: QueryControl) -> None:
@@ -351,7 +357,6 @@ class ParqxApp(App[Any]):
         """Continue the current query into a disk-backed, browsable result."""
         if self.can_load_all and self._query_control is not None:
             self.can_load_all = False
-            self.query_one("#load-all", Button).disabled = True
             self.query_running = True
             self._status("Loading full SQL result… Escape to stop")
             self._query_control.load_all.set()
@@ -386,7 +391,6 @@ class ParqxApp(App[Any]):
             return
         self.query_running = False
         self.can_load_all = preview.truncated
-        self.query_one("#load-all", Button).disabled = not preview.truncated
         data = TableData.from_table(preview.table)
         if preview.truncated:
             data.total_rows = None
@@ -407,27 +411,13 @@ class ParqxApp(App[Any]):
         self.query_error = message
         self._table.loading = False
         self._status(f"SQL error: {message}")
-        self.query_one(TextArea).focus()
+        self._query_panel.editor.focus()
 
     def action_cancel_query(self) -> None:
         """Interrupt execution and prevent late results from replacing the view."""
         if self.query_running or self.can_load_all:
             self._new_request()
             self._status("Query cancelled · displayed rows retained")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route editor buttons to the same actions as keyboard shortcuts."""
-        match event.button.id:
-            case "run-query":
-                self.action_run_query()
-            case "cancel-query":
-                self.action_cancel_query()
-            case "browse-file":
-                self.action_browse()
-            case "load-all":
-                self.action_load_all()
-            case _:
-                pass
 
     async def on_unmount(self) -> None:
         """Interrupt remaining background computation when the app exits."""

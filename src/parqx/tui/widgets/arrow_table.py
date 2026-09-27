@@ -14,7 +14,7 @@ import contextlib
 import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from itertools import chain
+from itertools import accumulate, chain
 from math import ceil
 from typing import ClassVar, Literal, NamedTuple, Self
 
@@ -128,24 +128,8 @@ class CellNotExistError(Exception):
     """
 
 
-class RowNotExistError(Exception):
-    """The row index was invalid.
-
-    Raised when the row index provided does not exist
-    in the ArrowTable (e.g. out of bounds index)
-    """
-
-
 class CellNotLoadedError(CellNotExistError):
     """The coordinate exists but its data window has not arrived yet."""
-
-
-class ColumnNotExistError(Exception):
-    """The column index was invalid.
-
-    Raised when the column index provided does not exist
-    in the ArrowTable (e.g. out of bounds index)
-    """
 
 
 @dataclass
@@ -781,9 +765,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         self._columns = tuple(
             Column(
-                name,
-                content_width=self._measure_content_width(column, sample_indices),
-                auto_width=True,
+                name, content_width=self._measure_content_width(column, sample_indices)
             )
             for name, column in zip(
                 self.data.schema.names, self.data.sample.columns, strict=True
@@ -793,8 +775,6 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _get_column_render_width(self, column: Column) -> int:
         """Get the render width of a column, including horizontal padding."""
-        content_render_width = 0
-
         if not column.auto_width:
             content_render_width = column.width
         else:
@@ -805,12 +785,9 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _get_column_offsets(self) -> tuple[int, ...]:
         if self._column_offsets is None:
-            offsets = [0]
-            acc = 0
-            for column in self.columns:
-                acc += self._get_column_render_width(column)
-                offsets.append(acc)
-            self._column_offsets = tuple(offsets)
+            self._column_offsets = tuple(
+                accumulate(map(self._get_column_render_width, self.columns), initial=0)
+            )
         return self._column_offsets
 
     def _visible_column_range(self, x1: int, viewport_width: int) -> tuple[int, int]:
@@ -836,7 +813,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         max_row_index = max(self.row_count - 1, 0)
         content_width = len(str(max_row_index))
-        self._index_column = Column("#", content_width=content_width, auto_width=True)
+        self._index_column = Column("#", content_width=content_width)
 
         return self._index_column
 
@@ -952,14 +929,11 @@ class ArrowTable(ScrollView, can_focus=True):
     def notify_style_update(self) -> None:
         """Clear cached render output after component styles change."""
         super().notify_style_update()
-        self._row_render_cache.clear()
-        self._cell_render_cache.clear()
+        self._clear_render_caches()
         # Also clear renderables here (unlike _clear_render_caches): a component-style
         # change could in principle alter how CellFormatter output resolves under a new
         # theme, so we invalidate defensively.
         self._cell_renderable_cache.clear()
-        self._line_cache.clear()
-        self._styles_cache.clear()
         self.refresh()
 
     def _on_resize(self, _: events.Resize) -> None:

@@ -10,7 +10,8 @@ from threading import Event, Lock
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from parqx.data.parquet import ReadCancelledError, bounded_prefix
+from parqx.data.batch import bounded_prefix
+from parqx.data.parquet import ReadCancelledError
 from parqx.data.view import DataPage
 
 

@@ -34,17 +34,25 @@ def test_preview_limit_does_not_truncate_aggregation_input(small_parquet: Path) 
     assert not result.truncated
 
 
-def test_preview_resumes_the_same_result_without_gaps(small_parquet: Path) -> None:
+@pytest.mark.parametrize(
+    ("limits", "reason"),
+    [
+        (QueryLimits(preview_rows=3, batch_rows=2), "row limit"),
+        (QueryLimits(preview_rows=2, preview_bytes=1024, batch_rows=4), "row limit"),
+        (QueryLimits(preview_rows=3, preview_bytes=16, batch_rows=4), "byte budget"),
+        (QueryLimits(preview_rows=3, preview_bytes=1, batch_rows=4), "byte budget"),
+    ],
+)
+def test_preview_resumes_the_same_result_without_gaps(
+    small_parquet: Path, limits: QueryLimits, reason: str
+) -> None:
     with QuerySession(
-        small_parquet,
-        "SELECT id FROM data ORDER BY id",
-        QueryControl(),
-        QueryLimits(preview_rows=3, batch_rows=2),
+        small_parquet, "SELECT id FROM data ORDER BY id", QueryControl(), limits
     ) as session:
         result = session.preview()
         rows = [v.as_py() for v in result.table.column(0)]
         assert result.truncated
-        assert result.reason == "row limit"
+        assert result.reason == reason
         while (batch := session.read_batch()) is not None:
             rows.extend(v.as_py() for v in batch.column(0))
         assert rows == [1, 2, 3, 4, 5]

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from os import PathLike
-from typing import Any, BinaryIO
+from types import TracebackType
+from typing import Any, BinaryIO, Self
 
 from . import DataType, NativeFile, RecordBatch, Schema, Table
 
@@ -37,6 +38,13 @@ class ParquetFile:
         filesystem: Any | None = None,
         page_checksum_verification: bool = False,
         arrow_extensions_enabled: bool = True,
+    ) -> None: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
     ) -> None: ...
     @property
     def metadata(self) -> FileMetaData: ...

@@ -9,23 +9,12 @@ from threading import Event
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from parqx.data.batch import bounded_prefix
 from parqx.data.view import DataPage
 
 
 class ReadCancelledError(Exception):
     """A newer data window superseded this read."""
-
-
-def bounded_prefix(batch: pa.RecordBatch, budget: int, *, allow_one: bool) -> int:
-    """Find a prefix within a byte budget, optionally admitting one oversized row."""
-    low, high = 0, batch.num_rows
-    while low < high:
-        middle = (low + high + 1) // 2
-        if batch.slice(0, middle).nbytes <= budget:
-            low = middle
-        else:
-            high = middle - 1
-    return max(low, 1 if allow_one and batch.num_rows else 0)
 
 
 class ParquetSource:
@@ -42,8 +31,7 @@ class ParquetSource:
         self.page_bytes = page_bytes
         stat = path.stat()
         self._fingerprint = (stat.st_size, stat.st_mtime_ns)
-        file = pq.ParquetFile(path)
-        try:
+        with pq.ParquetFile(path) as file:
             self.schema = file.schema_arrow
             self.row_count = file.metadata.num_rows
             self._offsets = [0]
@@ -51,8 +39,6 @@ class ParquetSource:
                 self._offsets.append(
                     self._offsets[-1] + file.metadata.row_group(group).num_rows
                 )
-        finally:
-            file.close()
 
     def read_window(self, start: int, stop: int, cancelled: Event) -> DataPage:
         """Locate row groups, then decode a bounded window on the worker thread."""
@@ -63,8 +49,7 @@ class ParquetSource:
         stop = min(max(start, stop), start + self.page_rows, self.row_count)
         batches: list[pa.RecordBatch] = []
         rows = size = 0
-        file = pq.ParquetFile(self.path)
-        try:
+        with pq.ParquetFile(self.path) as file:
             group = max(0, bisect_right(self._offsets, start) - 1)
             for index in range(group, len(self._offsets) - 1):
                 offset = self._offsets[index]
@@ -96,6 +81,4 @@ class ParquetSource:
                             start, pa.Table.from_batches(batches, self.schema)
                         )
                     offset = end
-        finally:
-            file.close()
         return DataPage(start, pa.Table.from_batches(batches, self.schema))

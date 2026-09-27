@@ -12,6 +12,8 @@ from typing import Self
 import duckdb
 import pyarrow as pa
 
+from parqx.data.batch import bounded_prefix
+
 
 class QueryCancelledError(Exception):
     """The user cancelled this query."""
@@ -179,16 +181,11 @@ class QuerySession:
                 self._pending = batch
                 reason = "row limit" if available <= 0 else "byte budget"
                 break
-            # Find a prefix fitting the remaining byte budget without converting
-            # Arrow values to Python objects. Sliced prefixes are copied below.
-            low, high = 0, available
-            while low < high:
-                middle = (low + high + 1) // 2
-                if batch.slice(0, middle).nbytes <= self.limits.preview_bytes - size:
-                    low = middle
-                else:
-                    high = middle - 1
-            keep = max(low, 1 if rows == 0 else 0)
+            keep = bounded_prefix(
+                batch.slice(0, available),
+                self.limits.preview_bytes - size,
+                allow_one=rows == 0,
+            )
             if keep:
                 prefix = (
                     batch
