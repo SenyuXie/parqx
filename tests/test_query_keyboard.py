@@ -1,5 +1,4 @@
 from pathlib import Path
-from threading import Event
 from unittest.mock import patch
 
 import pytest
@@ -9,8 +8,7 @@ from textual.widgets import TextArea
 from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.test_command_palette import toggle_sql_query
-from tests.test_query_app import wait_for
+from tests.helpers import WorkerGate, toggle_sql_query, wait_for
 
 
 async def test_native_query_editing_and_focus(small_parquet: Path) -> None:
@@ -118,25 +116,24 @@ async def test_only_f1_runs_the_complete_sql(
 async def test_escape_leaves_running_query_and_f2_cancels(
     small_parquet: Path, focus_sql: bool
 ) -> None:
-    started, release = Event(), Event()
+    gate = WorkerGate()
     original_enter = QuerySession.__enter__
 
     def slow_enter(session: QuerySession) -> QuerySession:
-        started.set()
-        release.wait(timeout=10)
+        gate.pause()
         return original_enter(session)
 
     app = ParqxApp(small_parquet)
     with patch.object(QuerySession, "__enter__", slow_enter):
         async with app.run_test() as pilot:
-            try:
+            with gate:
                 table = app.query_one(ArrowTable)
                 await wait_for(lambda: not table.loading, pilot)
                 app.action_toggle_query()
                 editor = app.query_one(TextArea)
                 editor.load_text("SELECT 42")
                 await pilot.press("f1")
-                await wait_for(started.is_set, pilot)
+                await wait_for(gate.started.is_set, pilot)
                 control = app._query_control  # pyright: ignore[reportPrivateUsage]
                 assert control is not None
                 await pilot.press("escape")
@@ -149,8 +146,6 @@ async def test_escape_leaves_running_query_and_f2_cancels(
                 await pilot.press("f2")
                 assert not app.query_running
                 assert control.cancelled.is_set()
-                release.set()
+                gate.release.set()
                 await wait_for(control.finished.is_set, pilot)
                 assert table.row_count == 5
-            finally:
-                release.set()

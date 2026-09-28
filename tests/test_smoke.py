@@ -1,26 +1,10 @@
 """End-to-end smoke tests for the Parqx TUI."""
 
-import asyncio
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
-
-from textual.pilot import Pilot
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-
-
-async def _wait_until(
-    predicate: Callable[[], bool], pilot: Pilot[Any], *, timeout: float = 2.0
-) -> None:
-    """Pump the message loop until `predicate()` is truthy or `timeout` elapses."""
-
-    async def _loop() -> None:
-        while not predicate():
-            await pilot.pause()
-
-    await asyncio.wait_for(_loop(), timeout=timeout)
+from tests.helpers import wait_for
 
 
 async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
@@ -28,7 +12,7 @@ async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
     app = ParqxApp(path=small_parquet)
     async with app.run_test() as pilot:
         # Metadata is loaded in a worker before the table can request pages.
-        await _wait_until(lambda: not app.query_one(ArrowTable).loading, pilot)
+        await wait_for(lambda: not app.query_one(ArrowTable).loading, pilot)
 
         table = app.query_one(ArrowTable)
         assert table.row_count == 5
@@ -57,6 +41,6 @@ async def test_app_reports_load_error_for_corrupt_file(tmp_path: Path) -> None:
         # _on_load_error sets `load_error` and then calls self.exit(), which
         # marks the worker CANCELLED — so we can't await the worker. Poll the
         # observable contract (`load_error`) instead.
-        await _wait_until(lambda: app.load_error is not None, pilot)
+        await wait_for(lambda: app.load_error is not None, pilot)
 
     assert app.load_error is not None

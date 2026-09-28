@@ -27,7 +27,7 @@ Each implementation step is a separate, reviewable commit. Update this checklist
 and record validation as the work lands.
 
 1. [x] Record this plan and establish the new branch.
-2. [ ] **Shared test support.** Move asynchronous waiting and command-palette
+2. [x] **Shared test support.** Move asynchronous waiting and command-palette
    navigation into `tests/helpers.py`; replace cross-test imports. Add a small
    worker gate with guaranteed release for concurrency tests, preserving their
    assertions and real scheduling boundaries.
@@ -77,3 +77,4 @@ refactor; do not duplicate implementation details in assertions.
 ## Validation log
 
 - Baseline: Ruff lint/format, Pyright, mypy passed; pytest: 83 passed.
+- Shared test support: all four gates passed; pytest: 83 passed.

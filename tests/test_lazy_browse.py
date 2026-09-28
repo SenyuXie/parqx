@@ -11,7 +11,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.test_query_app import wait_for
+from tests.helpers import WorkerGate, wait_for
 
 
 async def test_default_browse_loads_windows_and_jumps_to_last_row(
@@ -40,39 +40,34 @@ async def test_default_browse_loads_windows_and_jumps_to_last_row(
 async def test_pending_io_keeps_ui_responsive_and_cannot_replace_sql(
     small_parquet: Path,
 ) -> None:
-    release = Event()
-    started = Event()
+    gate = WorkerGate()
     original = ParquetSource.read_window
 
     def slow_read(
         self: ParquetSource, start: int, stop: int, cancelled: Event
     ) -> DataPage:
-        started.set()
-        release.wait(timeout=5)
+        gate.pause()
         return original(self, start, stop, cancelled)
 
     app = ParqxApp(small_parquet)
-    try:
-        with patch.object(ParquetSource, "read_window", slow_read):
-            async with app.run_test() as pilot:
-                await wait_for(started.is_set, pilot)
-                widget = app.query_one(ArrowTable)
-                assert not widget.loading
-                assert widget.data.peek(0, 0) is None
-                await pilot.press("down", "right", "enter")
-                assert widget.cursor_coordinate == Coordinate(1, 1)
-                app.action_toggle_query()
-                await pilot.pause()
-                app.query_one(TextArea).load_text("SELECT 42 AS answer")
-                await pilot.press("f1")
-                await wait_for(lambda: not app.query_running, pilot)
-                release.set()
-                await pilot.pause()
-                assert widget.row_count == 1
-                assert widget.columns[0].name == "answer"
-                assert widget.get_cell_at(Coordinate(0, 0)).as_py() == 42
-    finally:
-        release.set()
+    with gate, patch.object(ParquetSource, "read_window", slow_read):
+        async with app.run_test() as pilot:
+            await wait_for(gate.started.is_set, pilot)
+            widget = app.query_one(ArrowTable)
+            assert not widget.loading
+            assert widget.data.peek(0, 0) is None
+            await pilot.press("down", "right", "enter")
+            assert widget.cursor_coordinate == Coordinate(1, 1)
+            app.action_toggle_query()
+            await pilot.pause()
+            app.query_one(TextArea).load_text("SELECT 42 AS answer")
+            await pilot.press("f1")
+            await wait_for(lambda: not app.query_running, pilot)
+            gate.release.set()
+            await pilot.pause()
+            assert widget.row_count == 1
+            assert widget.columns[0].name == "answer"
+            assert widget.get_cell_at(Coordinate(0, 0)).as_py() == 42
 
 
 async def test_horizontal_navigation_in_wide_lazy_table(tmp_path: Path) -> None:

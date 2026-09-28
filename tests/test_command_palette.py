@@ -1,41 +1,16 @@
 from pathlib import Path
-from threading import Event
-from typing import Any
 from unittest.mock import patch
 
 import pytest
-from textual.command import Command, CommandList, CommandPalette
+from textual.command import CommandPalette
 from textual.coordinate import Coordinate
-from textual.pilot import Pilot
 from textual.widgets import Button, Footer, Input, Label, TextArea
 
 from parqx.query.engine import QueryLimits, QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_panel import QueryPanel
-from tests.test_query_app import wait_for
-
-
-async def toggle_sql_query(pilot: Pilot[Any], help_text: str) -> None:
-    await pilot.press("ctrl+p")
-    palette = pilot.app.screen
-    assert isinstance(palette, CommandPalette)
-    palette.query_one(Input).value = "SQL"
-    commands = palette.query_one(CommandList)
-
-    def found() -> bool:
-        if commands.option_count != 1:
-            return False
-        option = commands.get_option_at_index(0)
-        return isinstance(option, Command) and option.hit.text == "SQL query"
-
-    await wait_for(found, pilot)
-    option = commands.get_option_at_index(0)
-    assert isinstance(option, Command)
-    assert option.hit.help == help_text
-    await pilot.press("enter")
-    await wait_for(lambda: pilot.app.screen is not palette, pilot)
-    await pilot.pause()
+from tests.helpers import WorkerGate, toggle_sql_query, wait_for
 
 
 async def test_palette_toggles_sql_query_and_runs_via_shortcut(
@@ -103,20 +78,19 @@ async def test_palette_toggles_sql_query_and_runs_via_shortcut(
 async def test_query_can_finish_while_palette_is_open(
     small_parquet: Path, query_error: bool
 ) -> None:
-    started, release = Event(), Event()
+    gate = WorkerGate()
     original_enter = QuerySession.__enter__
 
     def slow_enter(session: QuerySession) -> QuerySession:
-        started.set()
-        release.wait(timeout=5)
+        gate.pause()
         return original_enter(session)
 
     sql = "SELECT missing FROM data" if query_error else "SELECT 42 AS answer"
     app = ParqxApp(small_parquet, initial_sql=sql)
     with patch.object(QuerySession, "__enter__", slow_enter):
         async with app.run_test() as pilot:
-            try:
-                await wait_for(started.is_set, pilot)
+            with gate:
+                await wait_for(gate.started.is_set, pilot)
                 await pilot.press("ctrl+p")
                 assert isinstance(app.screen, CommandPalette)
                 control = app._query_control  # pyright: ignore[reportPrivateUsage]
@@ -132,7 +106,7 @@ async def test_query_can_finish_while_palette_is_open(
                 await pilot.press("ctrl+p")
                 palette = app.screen
                 assert isinstance(palette, CommandPalette)
-                release.set()
+                gate.release.set()
                 await wait_for(lambda: not app.query_running, pilot)
                 assert app.screen is palette
                 assert palette.query_one(Input).has_focus
@@ -140,8 +114,6 @@ async def test_query_can_finish_while_palette_is_open(
                 await pilot.press("escape")
                 assert app.screen is not palette
                 assert not app.query_one(ArrowTable).loading
-            finally:
-                release.set()
 
 
 async def test_palette_keys_do_not_run_cancel_browse_or_resume_a_query(
