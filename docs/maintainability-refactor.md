@@ -46,7 +46,7 @@ and record validation as the work lands.
    phase and derived action availability. Keep worker control events separate
    from UI state and the currently displayed data. Verify preview, Load all,
    cancellation, failure, supersession, and modal keyboard behavior.
-6. [ ] **Query execution.** Extract preview/pause/materialization/progress into the
+6. [x] **Query execution.** Extract preview/pause/materialization/progress into the
    query layer with typed callbacks and explicit synchronous store handoff. Keep
    Textual workers and request checks in the app. Name progress and shutdown
    timing constants. Verify accepted/rejected ownership, cleanup, and errors.
@@ -84,3 +84,5 @@ refactor; do not duplicate implementation details in assertions.
   terminal-cell widths, mouse metadata, cursor/hover visibility, and format-cache reuse.
 - Query phases: all four gates passed; pytest: 99 passed. Existing integration
   tests now also check phases at controlled execution, preview, full-load, and stop boundaries.
+- Query execution: all four gates passed; pytest: 104 passed. New tests verify
+  accepted/rejected handoff, failures before/after acceptance, and preview cancellation.

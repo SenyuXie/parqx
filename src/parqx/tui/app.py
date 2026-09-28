@@ -9,10 +9,8 @@ from enum import Enum, auto
 from pathlib import Path
 from textwrap import indent
 from threading import Event
-from time import perf_counter
 from typing import Any, ClassVar
 
-import duckdb
 import pyarrow as pa
 from textual import work
 from textual.app import App, ComposeResult, SystemCommand
@@ -25,18 +23,14 @@ from textual.widgets import Footer, Label
 from parqx.data.parquet import ParquetSource
 from parqx.data.result_store import ResultStore
 from parqx.data.view import DataPage, ReadCancelledError, TableData, WindowSource
-from parqx.query.engine import (
-    PreviewLimit,
-    QueryCancelledError,
-    QueryControl,
-    QueryLimits,
-    QueryPreview,
-    QuerySession,
-)
+from parqx.query.engine import PreviewLimit, QueryControl, QueryLimits, QueryPreview
+from parqx.query.execution import execute_query
 from parqx.tui.widgets import ArrowTable, QueryPanel
 from parqx.tui.widgets.arrow_table import CursorType
 
 logger = logging.getLogger(__name__)
+
+QUERY_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 _PREVIEW_LIMIT_LABELS = {
     PreviewLimit.ROWS: "row limit",
@@ -186,9 +180,9 @@ class ParqxApp(App[Any]):
             source = ParquetSource(self._path)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
-            self._publish(self._on_load_error, str(exc), request_id)
+            self._call_on_ui_thread(self._on_load_error, str(exc), request_id)
             return
-        self._publish(self._on_load_ok, source, request_id)
+        self._call_on_ui_thread(self._on_load_ok, source, request_id)
 
     def _show_table(self, data: TableData, source: WindowSource | None = None) -> None:
         self._page_cancelled.set()
@@ -207,10 +201,13 @@ class ParqxApp(App[Any]):
     def _close_result(self, source: ResultStore) -> None:
         source.close()
 
-    def _publish[T, **P](
+    def _call_on_ui_thread[T, **P](
         self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
     ) -> T | None:
-        """Deliver a worker update while tolerating concurrent app shutdown."""
+        """Synchronously call the UI, returning None if shutdown prevents delivery.
+
+        Store ownership transfers only when the UI acknowledges acceptance.
+        """
         if not self.is_running:
             return None
         try:
@@ -262,10 +259,10 @@ class ParqxApp(App[Any]):
             return
         except (OSError, pa.ArrowException, MemoryError) as exc:
             if not cancelled.is_set():
-                self._publish(self._on_page_error, request, str(exc))
+                self._call_on_ui_thread(self._on_page_error, request, str(exc))
             return
         if not cancelled.is_set():
-            self._publish(self._on_page_loaded, data, page, request)
+            self._call_on_ui_thread(self._on_page_loaded, data, page, request)
 
     def _on_page_loaded(self, data: TableData, page: DataPage, request: int) -> None:
         if request == self._page_request and self._table.data is data:
@@ -327,62 +324,24 @@ class ParqxApp(App[Any]):
 
     @work(thread=True, group="query", exit_on_error=False)
     def _run_query(self, sql: str, request_id: int, control: QueryControl) -> None:
-        control.started.set()
-        started = perf_counter()
-        store: ResultStore | None = None
-        handed_off = False
-        try:
-            with QuerySession(self._path, sql, control, self._query_limits) as session:
-                preview = session.preview()
-                control.check()
-                self._publish(
-                    self._on_query_ok, request_id, preview, perf_counter() - started
-                )
-                if not preview.truncated:
-                    return
-                # Pause this execution rather than rerunning a possibly expensive
-                # or non-deterministic query when the user asks for all rows.
-                control.load_all.wait()
-                control.check()
-                store = ResultStore(session.schema)
-                for preview_batch in preview.table.to_batches(
-                    max_chunksize=self._query_limits.batch_rows
-                ):
-                    control.check()
-                    store.append(preview_batch)
-                del preview
-                control.check()
-                handed_off = bool(self._publish(self._on_full_start, request_id, store))
-                if not handed_off:
-                    return
-                last_update = perf_counter()
-                while (batch := session.read_batch()) is not None:
-                    store.append(batch)
-                    if perf_counter() - last_update >= 0.1:
-                        self._publish(self._on_full_progress, request_id, store)
-                        last_update = perf_counter()
-                store.finish()
-                self._publish(self._on_full_progress, request_id, store)
-        except (
-            duckdb.Error,
-            pa.ArrowException,
-            OSError,
-            ValueError,
-            MemoryError,
-        ) as exc:
-            if not control.cancelled.is_set():
-                if handed_off and store is not None:
-                    self._publish(self._on_full_progress, request_id, store)
-                self._publish(self._on_query_error, request_id, str(exc))
-            return
-        except (QueryCancelledError, ReadCancelledError):
-            return
-        finally:
-            try:
-                if store is not None and not handed_off:
-                    store.close()
-            finally:
-                control.finished.set()
+        execute_query(
+            self._path,
+            sql,
+            control,
+            self._query_limits,
+            on_preview=lambda preview, elapsed: self._call_on_ui_thread(
+                self._on_query_ok, request_id, preview, elapsed
+            ),
+            accept_store=lambda store: bool(
+                self._call_on_ui_thread(self._on_full_start, request_id, store)
+            ),
+            on_progress=lambda store: self._call_on_ui_thread(
+                self._on_full_progress, request_id, store
+            ),
+            on_error=lambda message: self._call_on_ui_thread(
+                self._on_query_error, request_id, message
+            ),
+        )
 
     def action_load_all(self) -> None:
         """Continue the current query into a disk-backed, browsable result."""
@@ -459,7 +418,9 @@ class ParqxApp(App[Any]):
             await asyncio.to_thread(store.close)
         for control in self._query_controls:
             if control.started.is_set() and not control.finished.is_set():
-                await asyncio.to_thread(control.finished.wait, 5)
+                await asyncio.to_thread(
+                    control.finished.wait, QUERY_SHUTDOWN_TIMEOUT_SECONDS
+                )
 
     def action_toggle_header(self) -> None:
         """Toggle the visibility of the column header row."""
