@@ -31,7 +31,7 @@ and record validation as the work lands.
    navigation into `tests/helpers.py`; replace cross-test imports. Add a small
    worker gate with guaranteed release for concurrency tests, preserving their
    assertions and real scheduling boundaries.
-3. [ ] **Bounded data windows and contracts.** Share page cropping, byte accounting,
+3. [x] **Bounded data windows and contracts.** Share page cropping, byte accounting,
    compaction, and assembly between Parquet and IPC sources. Keep their I/O and
    locking separate. Move read cancellation to the shared data contract, clarify
    prefix/count names, type preview-limit reasons, and name independent budgets.
@@ -78,3 +78,5 @@ refactor; do not duplicate implementation details in assertions.
 
 - Baseline: Ruff lint/format, Pyright, mypy passed; pytest: 83 passed.
 - Shared test support: all four gates passed; pytest: 83 passed.
+- Data windows/contracts: all four gates passed; pytest: 97 passed, including
+  shared backend boundary cases and single-oversized-row progress.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock
@@ -12,7 +13,7 @@ from typing import Self
 import duckdb
 import pyarrow as pa
 
-from parqx.data.batch import bounded_prefix
+from parqx.data.batch import bounded_prefix_rows
 
 
 class QueryCancelledError(Exception):
@@ -75,13 +76,24 @@ class QueryControl:
             self._connection = None
 
 
+class PreviewLimit(Enum):
+    """The budget that paused preview consumption."""
+
+    ROWS = auto()
+    BYTES = auto()
+
+
 @dataclass(frozen=True)
 class QueryPreview:
     """A bounded initial result; truncation does not limit the query's input."""
 
     table: pa.Table
-    truncated: bool
-    reason: str | None = None
+    reason: PreviewLimit | None = None
+
+    @property
+    def truncated(self) -> bool:
+        """Whether the reader has more output to consume."""
+        return self.reason is not None
 
 
 class QuerySession:
@@ -171,19 +183,19 @@ class QuerySession:
         decoding and DuckDB execution have separate allocations from this budget.
         """
         batches: list[pa.RecordBatch] = []
-        rows = size = 0
-        reason: str | None = None
+        rows = used_bytes = 0
+        reason: PreviewLimit | None = None
         while (batch := self.read_batch()) is not None:
             if not batch.num_rows:
                 continue
             available = min(batch.num_rows, self.limits.preview_rows - rows)
-            if available <= 0 or size >= self.limits.preview_bytes:
+            if available <= 0 or used_bytes >= self.limits.preview_bytes:
                 self._pending = batch
-                reason = "row limit" if available <= 0 else "byte budget"
+                reason = PreviewLimit.ROWS if available <= 0 else PreviewLimit.BYTES
                 break
-            keep = bounded_prefix(
+            keep = bounded_prefix_rows(
                 batch.slice(0, available),
-                self.limits.preview_bytes - size,
+                self.limits.preview_bytes - used_bytes,
                 allow_one=rows == 0,
             )
             if keep:
@@ -194,17 +206,17 @@ class QuerySession:
                 )
                 batches.append(prefix)
                 rows += keep
-                size += prefix.nbytes
+                used_bytes += prefix.nbytes
             if keep < batch.num_rows:
                 self._pending = batch.slice(keep)
                 reason = (
-                    "row limit" if rows >= self.limits.preview_rows else "byte budget"
+                    PreviewLimit.ROWS
+                    if rows >= self.limits.preview_rows
+                    else PreviewLimit.BYTES
                 )
                 break
         return QueryPreview(
-            pa.Table.from_batches(batches, schema=self.schema),
-            truncated=reason is not None,
-            reason=reason,
+            pa.Table.from_batches(batches, schema=self.schema), reason=reason
         )
 
     def close(self) -> None:

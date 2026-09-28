@@ -9,6 +9,14 @@ from typing import Protocol
 
 import pyarrow as pa
 
+MAX_CACHED_PAGES = 128
+WIDTH_SAMPLE_ROWS = 256
+WIDTH_SAMPLE_BYTES = 256 * 1024
+
+
+class ReadCancelledError(Exception):
+    """A data read was cancelled or its source has been closed."""
+
 
 @dataclass(frozen=True)
 class DataPage:
@@ -92,15 +100,15 @@ class TableData:
         self._pages[page.start] = page
         self.cache_bytes += page.table.nbytes
         while len(self._pages) > 1 and (
-            self.cache_bytes > self.cache_budget or len(self._pages) > 128
+            self.cache_bytes > self.cache_budget or len(self._pages) > MAX_CACHED_PAGES
         ):
             _, removed = self._pages.popitem(last=False)
             self.cache_bytes -= removed.table.nbytes
         if self.sample.num_rows:
             return False
         # Compact a small sample so it cannot retain a large page's buffers.
-        count = min(256, page.table.num_rows)
-        while count and page.table.slice(0, count).nbytes > 256 * 1024:
+        count = min(WIDTH_SAMPLE_ROWS, page.table.num_rows)
+        while count and page.table.slice(0, count).nbytes > WIDTH_SAMPLE_BYTES:
             count //= 2
         if count:
             self.sample = page.table.take(pa.array(range(count), type=pa.int64()))

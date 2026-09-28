@@ -6,8 +6,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from parqx.data.parquet import ParquetSource, ReadCancelledError
-from parqx.data.view import DataPage, TableData
+from parqx.data.parquet import ParquetSource
+from parqx.data.result_store import ResultStore
+from parqx.data.view import DataPage, ReadCancelledError, TableData
 
 
 def test_metadata_open_and_cross_group_windows(tmp_path: Path) -> None:
@@ -78,3 +79,46 @@ def test_empty_file_keeps_schema(tmp_path: Path) -> None:
     source = ParquetSource(path)
     assert source.row_count == 0
     assert source.read_window(0, 10, Event()).table.column_names == ["x"]
+
+
+@pytest.mark.parametrize("backend", ["parquet", "result"])
+@pytest.mark.parametrize(
+    ("start", "stop", "max_rows", "max_bytes", "expected"),
+    [
+        (-5, 2, 4, 24, [0, 1]),
+        (2, 9, 4, 27, [2, 3, 4]),  # Byte limit across a batch boundary.
+        (2, 9, 4, 1024, [2, 3, 4, 5]),  # Row limit across a batch boundary.
+        (2, 9, 4, 1, [2]),  # One oversized row must still make progress.
+        (5, 4, 4, 1024, []),
+        (50, 60, 4, 1024, []),
+        (6, 20, 256, 1024, [6, 7, 8]),
+    ],
+)
+def test_window_budgets_match_across_backends(
+    tmp_path: Path,
+    backend: str,
+    start: int,
+    stop: int,
+    max_rows: int,
+    max_bytes: int,
+    expected: list[int],
+) -> None:
+    table = pa.table({"n": range(9)})
+    source: ParquetSource | ResultStore
+    if backend == "parquet":
+        path = tmp_path / "bounded.parquet"
+        pq.write_table(table, path, row_group_size=3)
+        source = ParquetSource(path, page_rows=max_rows, page_bytes=max_bytes)
+    else:
+        source = ResultStore(table.schema, page_rows=max_rows, page_bytes=max_bytes)
+        for batch in table.to_batches(max_chunksize=3):
+            source.append(batch)
+    try:
+        page = source.read_window(start, stop, Event())
+        assert page.start == max(0, min(start, 9))
+        assert page.table.schema == table.schema
+        assert [value.as_py() for value in page.table.column(0)] == expected
+        assert page.table.nbytes <= max_bytes or page.table.num_rows == 1
+    finally:
+        if isinstance(source, ResultStore):
+            source.close()

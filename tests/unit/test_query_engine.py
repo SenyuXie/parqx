@@ -4,6 +4,7 @@ import duckdb
 import pytest
 
 from parqx.query.engine import (
+    PreviewLimit,
     QueryCancelledError,
     QueryControl,
     QueryLimits,
@@ -37,14 +38,23 @@ def test_preview_limit_does_not_truncate_aggregation_input(small_parquet: Path) 
 @pytest.mark.parametrize(
     ("limits", "reason"),
     [
-        (QueryLimits(preview_rows=3, batch_rows=2), "row limit"),
-        (QueryLimits(preview_rows=2, preview_bytes=1024, batch_rows=4), "row limit"),
-        (QueryLimits(preview_rows=3, preview_bytes=16, batch_rows=4), "byte budget"),
-        (QueryLimits(preview_rows=3, preview_bytes=1, batch_rows=4), "byte budget"),
+        (QueryLimits(preview_rows=3, batch_rows=2), PreviewLimit.ROWS),
+        (
+            QueryLimits(preview_rows=2, preview_bytes=1024, batch_rows=4),
+            PreviewLimit.ROWS,
+        ),
+        (
+            QueryLimits(preview_rows=3, preview_bytes=16, batch_rows=4),
+            PreviewLimit.BYTES,
+        ),
+        (
+            QueryLimits(preview_rows=3, preview_bytes=1, batch_rows=4),
+            PreviewLimit.BYTES,
+        ),
     ],
 )
 def test_preview_resumes_the_same_result_without_gaps(
-    small_parquet: Path, limits: QueryLimits, reason: str
+    small_parquet: Path, limits: QueryLimits, reason: PreviewLimit
 ) -> None:
     with QuerySession(
         small_parquet, "SELECT id FROM data ORDER BY id", QueryControl(), limits
@@ -70,7 +80,7 @@ def test_byte_budget_and_single_oversized_value(small_parquet: Path) -> None:
             result = session.preview()
             assert 1 <= result.table.num_rows <= expected_rows
             assert result.truncated
-            assert result.reason == "byte budget"
+            assert result.reason == PreviewLimit.BYTES
 
 
 def test_empty_result_keeps_its_schema(small_parquet: Path) -> None:

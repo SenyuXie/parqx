@@ -10,9 +10,8 @@ from threading import Event, Lock
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-from parqx.data.batch import bounded_prefix
-from parqx.data.parquet import ReadCancelledError
-from parqx.data.view import DataPage
+from parqx.data.batch import DEFAULT_PAGE_BYTES, DEFAULT_PAGE_ROWS, PageBuilder
+from parqx.data.view import DataPage, ReadCancelledError
 
 
 class ResultStore:
@@ -27,8 +26,8 @@ class ResultStore:
         self,
         schema: pa.Schema,
         *,
-        page_rows: int = 256,
-        page_bytes: int = 4 * 1024 * 1024,
+        page_rows: int = DEFAULT_PAGE_ROWS,
+        page_bytes: int = DEFAULT_PAGE_BYTES,
     ) -> None:
         """Create a private result directory and an initially empty index."""
         self.schema = schema
@@ -66,37 +65,30 @@ class ResultStore:
 
     def read_window(self, start: int, stop: int, cancelled: Event) -> DataPage:
         """Read only indexed batches intersecting a bounded result window."""
-        batches: list[pa.RecordBatch] = []
-        rows = size = 0
         with self._lock:
             if self._closed or cancelled.is_set():
                 raise ReadCancelledError
-            start = max(0, min(start, self.row_count))
-            stop = min(max(start, stop), start + self.page_rows, self.row_count)
-            index = max(0, bisect_right(self._starts, start) - 1)
+            page = PageBuilder(
+                self.schema,
+                start,
+                stop,
+                row_count=self.row_count,
+                max_rows=self.page_rows,
+                max_bytes=self.page_bytes,
+            )
+            index = max(0, bisect_right(self._starts, page.start) - 1)
             for batch_index in range(index, len(self._starts)):
                 offset = self._starts[batch_index]
-                if offset >= stop:
+                if offset >= page.stop:
                     break
                 if cancelled.is_set():
                     raise ReadCancelledError
                 path = self.directory / f"{batch_index}.arrow"
                 with path.open("rb") as file:
                     batch = ipc.open_file(file).get_batch(0)
-                skip = max(0, start - offset)
-                length = min(batch.num_rows - skip, stop - start - rows)
-                batch = batch.slice(skip, length)
-                keep = bounded_prefix(
-                    batch, self.page_bytes - size, allow_one=rows == 0
-                )
-                if keep:
-                    batch = batch.take(pa.array(range(keep), type=pa.int64()))
-                    batches.append(batch)
-                    rows += keep
-                    size += batch.nbytes
-                if keep < length or rows >= stop - start or size >= self.page_bytes:
+                if page.append(batch, offset):
                     break
-        return DataPage(start, pa.Table.from_batches(batches, self.schema))
+        return page.to_page()
 
     def close(self) -> None:
         """Remove result files after any in-flight read or write releases the lock."""

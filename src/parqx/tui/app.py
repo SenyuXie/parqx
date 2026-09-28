@@ -21,10 +21,11 @@ from textual.reactive import var
 from textual.screen import Screen
 from textual.widgets import Footer, Label
 
-from parqx.data.parquet import ParquetSource, ReadCancelledError
+from parqx.data.parquet import ParquetSource
 from parqx.data.result_store import ResultStore
-from parqx.data.view import DataPage, TableData, WindowSource
+from parqx.data.view import DataPage, ReadCancelledError, TableData, WindowSource
 from parqx.query.engine import (
+    PreviewLimit,
     QueryCancelledError,
     QueryControl,
     QueryLimits,
@@ -35,6 +36,11 @@ from parqx.tui.widgets import ArrowTable, QueryPanel
 from parqx.tui.widgets.arrow_table import CursorType
 
 logger = logging.getLogger(__name__)
+
+_PREVIEW_LIMIT_LABELS = {
+    PreviewLimit.ROWS: "row limit",
+    PreviewLimit.BYTES: "byte budget",
+}
 
 
 class ParqxApp(App[Any]):
@@ -401,8 +407,8 @@ class ParqxApp(App[Any]):
             data.total_rows = None
         self._show_table(data)
         suffix = (
-            f"preview, {preview.reason} · F4 to load all"
-            if preview.truncated
+            f"preview, {_PREVIEW_LIMIT_LABELS[preview.reason]} · F4 to load all"
+            if preview.reason is not None
             else "complete"
         )
         self._status(

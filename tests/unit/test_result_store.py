@@ -3,8 +3,8 @@ from threading import Event
 import pyarrow as pa
 import pytest
 
-from parqx.data.parquet import ReadCancelledError
 from parqx.data.result_store import ResultStore
+from parqx.data.view import ReadCancelledError
 
 
 def test_cross_batch_random_access_and_cleanup() -> None:
