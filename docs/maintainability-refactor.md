@@ -50,7 +50,7 @@ and record validation as the work lands.
    query layer with typed callbacks and explicit synchronous store handoff. Keep
    Textual workers and request checks in the app. Name progress and shutdown
    timing constants. Verify accepted/rejected ownership, cleanup, and errors.
-7. [ ] **Architecture documentation and final verification.** Replace the old
+7. [x] **Architecture documentation and final verification.** Replace the old
    integration proposal with current threading, data flow, ownership, cache, and
    testing documentation. Document the deliberately partial PyArrow stubs.
    Review the final diff for unnecessary abstractions and behavior changes.
@@ -86,3 +86,19 @@ refactor; do not duplicate implementation details in assertions.
   tests now also check phases at controlled execution, preview, full-load, and stop boundaries.
 - Query execution: all four gates passed; pytest: 104 passed. New tests verify
   accepted/rejected handoff, failures before/after acceptance, and preview cancellation.
+- Final review: public Textual message implementations, key bindings, component
+  classes, and CSS are unchanged. No unrelated source changes or dependency updates.
+- Final source gates: Ruff lint/format, Pyright, mypy passed; pytest: 104 passed.
+- Packaging: wheel and sdist built successfully; both passed the distribution
+  smoke check in isolated environments with lockfile runtime dependencies. The
+  initial offline install lacked cached dependencies; the locked environment was
+  then prepared and both artifact checks completed successfully.
+- Documentation: current architecture and partial PyArrow-stub maintenance guide
+  completed; whitespace checks passed. No source changes after the final gates.
+
+## Handoff
+
+The seven commits follow the sequence above. Open the refactor PR with
+`codex/maintainability-refactor` as the head and `codex/duckdb-query` as the base.
+After that PR merges, the DuckDB feature branch can be reviewed separately for
+its eventual merge into `master`.
