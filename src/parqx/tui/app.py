@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Iterable
+from enum import Enum, auto
 from pathlib import Path
 from textwrap import indent
 from threading import Event
@@ -43,6 +44,15 @@ _PREVIEW_LIMIT_LABELS = {
 }
 
 
+class QueryPhase(Enum):
+    """UI query lifecycle, independent of worker events and the displayed result."""
+
+    IDLE = auto()
+    RUNNING = auto()
+    PREVIEW = auto()
+    MATERIALIZING = auto()
+
+
 class ParqxApp(App[Any]):
     """A Textual App for Parqx."""
 
@@ -71,8 +81,8 @@ class ParqxApp(App[Any]):
         Binding("c", "cycle_cursor_type", "Cursor"),
     ]
 
-    can_load_all = var(False, init=False)
-    """Whether the current preview can resume into a full result."""
+    query_phase = var(QueryPhase.IDLE, init=False)
+    """The current request's phase; a previous result may still be visible."""
 
     _CURSOR_TYPE_CYCLE: ClassVar[tuple[CursorType, ...]] = (
         "cell",
@@ -106,7 +116,6 @@ class ParqxApp(App[Any]):
         self._has_result = False  # A successful empty result also counts.
         self._request_id = 0
         self._query_control: QueryControl | None = None
-        self.query_running = False
         self.query_error: str | None = None
         self._query_controls: list[QueryControl] = []
         self._result_stores: list[ResultStore] = []
@@ -117,6 +126,16 @@ class ParqxApp(App[Any]):
         """Set when the worker thread fails to read the file. The CLI inspects
         this after `run` returns to decide between a clean exit and a non-zero
         exit with an error message."""
+
+    @property
+    def query_running(self) -> bool:
+        """Whether the current request is executing or loading its full result."""
+        return self.query_phase in {QueryPhase.RUNNING, QueryPhase.MATERIALIZING}
+
+    @property
+    def can_load_all(self) -> bool:
+        """Whether the current request is paused at a resumable preview."""
+        return self.query_phase is QueryPhase.PREVIEW
 
     def compose(self) -> ComposeResult:
         """Reserve one bottom dock for SQL query, status, and footer."""
@@ -271,9 +290,8 @@ class ParqxApp(App[Any]):
             self._query_control.cancel()
         self._query_control = None
         self._request_id += 1
-        self.query_running = False
+        self.query_phase = QueryPhase.IDLE
         self.query_error = None
-        self.can_load_all = False
         self._table.loading = False
         return self._request_id
 
@@ -302,7 +320,7 @@ class ParqxApp(App[Any]):
             c for c in self._query_controls if not c.finished.is_set()
         ]
         self._query_controls.append(control)
-        self.query_running = True
+        self.query_phase = QueryPhase.RUNNING
         self._query_panel.display = True
         self._status("Running SQL… F2 to cancel")
         self._run_query(self._query_panel.editor.text, request_id, control)
@@ -369,8 +387,7 @@ class ParqxApp(App[Any]):
     def action_load_all(self) -> None:
         """Continue the current query into a disk-backed, browsable result."""
         if self.can_load_all and self._query_control is not None:
-            self.can_load_all = False
-            self.query_running = True
+            self.query_phase = QueryPhase.MATERIALIZING
             self._status("Loading full SQL result… F2 to stop")
             self._query_control.load_all.set()
 
@@ -391,7 +408,9 @@ class ParqxApp(App[Any]):
         self._table.update_row_count(
             store.row_count, store.row_count if store.finished else None
         )
-        self.query_running = not store.finished
+        self.query_phase = (
+            QueryPhase.IDLE if store.finished else QueryPhase.MATERIALIZING
+        )
         suffix = "complete" if store.finished else "loaded · total unknown · F2 to stop"
         self._status(f"SQL · {store.row_count:,} rows · {suffix}")
 
@@ -400,8 +419,7 @@ class ParqxApp(App[Any]):
     ) -> None:
         if request_id != self._request_id:
             return
-        self.query_running = False
-        self.can_load_all = preview.truncated
+        self.query_phase = QueryPhase.PREVIEW if preview.truncated else QueryPhase.IDLE
         data = TableData.from_table(preview.table)
         if preview.truncated:
             data.total_rows = None
@@ -418,7 +436,7 @@ class ParqxApp(App[Any]):
     def _on_query_error(self, request_id: int, message: str) -> None:
         if request_id != self._request_id:
             return
-        self.query_running = False
+        self.query_phase = QueryPhase.IDLE
         self.query_error = message
         self._table.loading = False
         self._status(f"SQL error: {message}")

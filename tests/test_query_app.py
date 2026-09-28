@@ -8,7 +8,7 @@ from textual.widgets import TextArea
 
 from parqx.data.result_store import ResultStore
 from parqx.query.engine import QueryLimits
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import ParqxApp, QueryPhase
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import WorkerGate, wait_for
 
@@ -129,6 +129,7 @@ async def test_load_all_resumes_once_and_cleans_up(
     with patch.object(QuerySession, "__enter__", record_execution):
         async with app.run_test() as pilot:
             await wait_for(lambda: app.can_load_all, pilot)
+            assert app.query_phase is QueryPhase.PREVIEW
             widget = app.query_one(ArrowTable)
             if focus_sql:
                 app.query_one(TextArea).focus()
@@ -137,6 +138,7 @@ async def test_load_all_resumes_once_and_cleans_up(
             assert not app.can_load_all
             assert not widget.loading
             await wait_for(lambda: not app.query_running, pilot)
+            assert app.query_phase is QueryPhase.IDLE
             assert widget.row_count == 20_000
             assert widget.data.total_rows == 20_000
             widget.focus()
@@ -211,6 +213,7 @@ async def test_cancel_full_load_retains_prefix_and_browse_removes_store(
             await wait_for(lambda: app.can_load_all, pilot)
             await pilot.press("f4")
             await wait_for(gate.started.is_set, pilot)
+            assert app.query_phase is QueryPhase.MATERIALIZING
             widget = app.query_one(ArrowTable)
             assert not widget.loading
             assert widget.data.total_rows is None
@@ -222,6 +225,7 @@ async def test_cancel_full_load_retains_prefix_and_browse_removes_store(
             gate.release.set()
             await wait_for(control.finished.is_set, pilot)
             assert widget.row_count == 3
+            assert app.query_phase is QueryPhase.IDLE
             assert not app.query_running
             await pilot.press("f3")
             await wait_for(lambda: widget.row_count == 5, pilot)
@@ -249,6 +253,8 @@ async def test_full_result_write_error_keeps_displayed_prefix(
             await pilot.press("f4")
             await wait_for(lambda: app.query_error is not None, pilot)
             assert app.query_error == "disk full"
+            assert app.query_phase is QueryPhase.IDLE
+            assert not app.can_load_all
             assert not app.query_running
             widget = app.query_one(ArrowTable)
             assert widget.row_count == 3

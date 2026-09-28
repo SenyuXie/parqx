@@ -42,7 +42,7 @@ and record validation as the work lands.
    invalidation clear boundaries. Trim repetitive documentation while retaining
    coordinate, buffer-ownership, cache, scheduling, and public-message contracts.
    Verify rendering, cursor/hover styles, data replacement, and lazy navigation.
-5. [ ] **Query phases.** Replace independently mutable UI booleans with one query
+5. [x] **Query phases.** Replace independently mutable UI booleans with one query
    phase and derived action availability. Keep worker control events separate
    from UI state and the currently displayed data. Verify preview, Load all,
    cancellation, failure, supersession, and modal keyboard behavior.
@@ -82,3 +82,5 @@ refactor; do not duplicate implementation details in assertions.
   shared backend boundary cases and single-oversized-row progress.
 - Table rendering: all four gates passed; pytest: 99 passed. Verified ellipsis,
   terminal-cell widths, mouse metadata, cursor/hover visibility, and format-cache reuse.
+- Query phases: all four gates passed; pytest: 99 passed. Existing integration
+  tests now also check phases at controlled execution, preview, full-load, and stop boundaries.

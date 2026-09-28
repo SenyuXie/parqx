@@ -8,7 +8,7 @@ from textual.widgets import TextArea
 
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QuerySession
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import ParqxApp, QueryPhase
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_panel import QueryPanel
 from tests.helpers import WorkerGate, wait_for
@@ -70,12 +70,15 @@ async def test_initial_sql_clears_loading_and_can_retry(
                 assert control is not None
                 assert table.loading
                 assert app.query_one(QueryPanel).display
+                assert app.query_phase is QueryPhase.RUNNING
                 if outcome == "cancel":
                     await pilot.press("f2")
                     assert not table.loading
                     assert not app.query_running
                 gate.release.set()
                 await wait_for(control.finished.is_set, pilot)
+                assert app.query_phase is QueryPhase.IDLE
+                assert not app.can_load_all
                 assert not table.loading
                 assert not app.query_running
                 assert app.query_one(ArrowTable) is table
