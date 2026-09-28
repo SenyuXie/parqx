@@ -36,7 +36,7 @@ and record validation as the work lands.
    locking separate. Move read cancellation to the shared data contract, clarify
    prefix/count names, type preview-limit reasons, and name independent budgets.
    Verify cross-batch windows, byte limits, cancellation, and oversized rows.
-4. [ ] **Single-line table rendering.** Return flat cell segments and explicitly
+4. [x] **Single-line table rendering.** Return flat cell segments and explicitly
    separate fixed and scrollable row segments. Simplify cell-style inputs to
    keyword-only per-cell flags. Give formatted-cell, rendered-line, and layout
    invalidation clear boundaries. Trim repetitive documentation while retaining
@@ -80,3 +80,5 @@ refactor; do not duplicate implementation details in assertions.
 - Shared test support: all four gates passed; pytest: 83 passed.
 - Data windows/contracts: all four gates passed; pytest: 97 passed, including
   shared backend boundary cases and single-oversized-row progress.
+- Table rendering: all four gates passed; pytest: 99 passed. Verified ellipsis,
+  terminal-cell widths, mouse metadata, cursor/hover visibility, and format-cache reuse.

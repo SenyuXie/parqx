@@ -14,7 +14,7 @@ import contextlib
 import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from itertools import accumulate, chain
+from itertools import accumulate
 from math import ceil
 from typing import ClassVar, Literal, NamedTuple, Self
 
@@ -44,6 +44,9 @@ from parqx.tui.cell_formatter import CellFormatter
 
 logger = logging.getLogger(__name__)
 
+PREFETCH_ROWS = 256
+WIDTH_MEASUREMENT_ROWS = 256
+
 type CursorType = Literal["cell", "row", "column", "none"]
 
 
@@ -51,81 +54,55 @@ class RowCacheKey(NamedTuple):
     """Cache key for rendered fixed and scrollable segments in a row."""
 
     row_index: int
-    """Index of the rendered table row, or `_header_row_index` for the header."""
     base_style: Style
-    """Base Rich style applied before row and cell component styles."""
     cursor_coordinate: Coordinate
-    """Cursor coordinate normalized to only the axes that affect row rendering."""
     hover_coordinate: Coordinate
-    """Hover coordinate normalized to only the axes that affect row rendering."""
     cursor_type: CursorType
-    """Active cursor mode used when deciding which cells are highlighted."""
     show_cursor: bool
-    """Whether keyboard cursor highlighting should be rendered."""
     show_hover_cursor: bool
-    """Whether hover cursor highlighting should be rendered."""
     update_count: int
-    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
-    """Widget pseudo-class state used by style resolution."""
-    column1: int
-    """First visible data column index rendered for this row, inclusive."""
-    column2: int
-    """One past the last visible data column index rendered for this row."""
+    start_column: int
+    stop_column: int
 
 
 class CellCacheKey(NamedTuple):
-    """Cache key for rendered segment lines in a cell."""
+    """Cache key for rendered segments in a cell."""
 
     row_index: int
-    """Index of the cell row, or `_header_row_index` for a header cell."""
     column_index: int
-    """Index of the cell column, or `_index_column_index` for the row index cell."""
     base_style: Style
-    """Base Rich style applied before cell component styles and metadata."""
     cursor: bool
-    """Whether this cell is affected by cursor highlighting."""
     hover: bool
-    """Whether this cell is affected by visible hover cursor highlighting."""
     update_count: int
-    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
-    """Widget pseudo-class state used by style resolution."""
 
 
 class LineCacheKey(NamedTuple):
     """Cache key for a rendered and cropped viewport line."""
 
     y: int
-    """Y coordinate of line relative to virtual table top."""
     x1: int
-    """Left crop offset in the table's horizontal scroll space."""
     x2: int
-    """Right crop offset in the table's horizontal scroll space, exclusive."""
     width: int
-    """Rendered line width in terminal cells."""
     cursor_coordinate: Coordinate
-    """Cursor coordinate normalized to only the axes that affect line rendering."""
     hover_coordinate: Coordinate
-    """Hover coordinate normalized to only the axes that affect line rendering."""
     base_style: Style
-    """Base Rich style applied to the rendered line."""
     cursor_type: CursorType
-    """Active cursor mode used when rendering highlights."""
     show_hover_cursor: bool
-    """Whether hover cursor highlighting should be rendered."""
     update_count: int
-    """Render invalidation counter for size-sensitive cached output."""
     pseudo_class_state: PseudoClasses
-    """Widget pseudo-class state used by style resolution."""
+
+
+class RenderedRow(NamedTuple):
+    """Single-line segments before viewport cropping; the row index stays fixed."""
+
+    fixed: list[Segment]
+    scrollable: list[Segment]
 
 
 class CellNotExistError(Exception):
-    """The cell index was invalid.
-
-    Raised when the coordinates provided does not exist
-    in the ArrowTable (e.g. out of bounds index)
-    """
+    """The coordinate is outside the table bounds."""
 
 
 class CellNotLoadedError(CellNotExistError):
@@ -146,7 +123,9 @@ class Column:
     """Whether render width is based on measured content_width."""
 
 
-def _sample_row_indices(total_rows: int, target_count: int = 256) -> tuple[int, ...]:
+def _sample_row_indices(
+    total_rows: int, target_count: int = WIDTH_MEASUREMENT_ROWS
+) -> tuple[int, ...]:
     """Return deterministic row indices sampled from evenly spaced rows."""
     if total_rows <= 0 or target_count <= 0:
         return ()
@@ -185,21 +164,6 @@ class ArrowTable(ScrollView, can_focus=True):
         Binding("home", "scroll_home", "Home", show=False),
         Binding("end", "scroll_end", "End", show=False),
     ]
-    """ArrowTable bindings:
-    | Key       | Description                                  |
-    | :---      | :---                                         |
-    | enter     | Select cells under the cursor.               |
-    | up        | Move the cursor up.                          |
-    | down      | Move the cursor down.                        |
-    | right     | Move the cursor right.                       |
-    | left      | Move the cursor left.                        |
-    | pageup    | Move one page up.                            |
-    | pagedown  | Move one page down.                          |
-    | ctrl+home | Move to the top.                             |
-    | ctrl+end  | Move to the bottom.                          |
-    | home      | Move to the home position (leftmost column). |
-    | end       | Move to the end position (rightmost column). |
-    """
 
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "arrowtable--cursor",
@@ -210,17 +174,6 @@ class ArrowTable(ScrollView, can_focus=True):
         "arrowtable--odd-row",
         "arrowtable--even-row",
     }
-    """ArrowTable component classes:
-    | Class                       | Description                                                 |
-    | :---                        | :---                                                        |
-    | `arrowtable--cursor`        | Target the cursor.                                          |
-    | `arrowtable--hover`         | Target the cells under the hover cursor.                    |
-    | `arrowtable--header`        | Target the header of the data table.                        |
-    | `arrowtable--header-cursor` | Target cells highlighted by the cursor.                     |
-    | `arrowtable--header-hover`  | Target hovered header or row index cells.                   |
-    | `arrowtable--even-row`      | Target even rows (row indices start at 0) if zebra_stripes. |
-    | `arrowtable--odd-row`       | Target odd rows (row indices start at 0) if zebra_stripes.  |
-    """
 
     DEFAULT_CSS = """
     ArrowTable {
@@ -311,31 +264,15 @@ class ArrowTable(ScrollView, can_focus=True):
     """The coordinate of the `ArrowTable` that is being hovered."""
 
     class CellHighlighted(Message):
-        """Posted when the cursor moves to highlight a new cell.
-
-        This is only relevant when the `cursor_type` is `"cell"`.
-        It's also posted when the cell cursor is
-        re-enabled (by setting `show_cursor=True`), and when the cursor type is
-        changed to `"cell"`. Can be handled using `on_arrow_table_cell_highlighted` in
-        a subclass of `ArrowTable` or in a parent widget in the DOM.
-        """
+        """Posted for a loaded cell when its cursor moves or is re-enabled."""
 
         def __init__(
             self, arrow_table: ArrowTable, value: pa.Scalar, coordinate: Coordinate
         ) -> None:
-            """Initialize a cell highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                value: The value in the highlighted cell.
-                coordinate: The coordinate of the highlighted cell.
-            """
+            """Initialize a cell highlighted message."""
             self.arrow_table = arrow_table
-            """The arrow table."""
             self.value = value
-            """The value in the highlighted cell."""
             self.coordinate: Coordinate = coordinate
-            """The coordinate of the highlighted cell."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -349,29 +286,15 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     class CellSelected(Message):
-        """Posted by the `ArrowTable` widget when a cell is selected.
-
-        This is only relevant when the `cursor_type` is `"cell"`. Can be handled using
-        `on_arrow_table_cell_selected` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
+        """Posted when a cell is selected in cell cursor mode."""
 
         def __init__(
             self, arrow_table: ArrowTable, value: pa.Scalar, coordinate: Coordinate
         ) -> None:
-            """Initialize a cell selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                value: The value in the selected cell.
-                coordinate: The coordinate of the selected cell.
-            """
+            """Initialize a cell selected message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.value: pa.Scalar = value
-            """The value in the cell that was selected."""
             self.coordinate: Coordinate = coordinate
-            """The coordinate of the cell that was selected."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -385,25 +308,12 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     class RowHighlighted(Message):
-        """Posted when a row is highlighted.
-
-        This message is only posted when the
-        `cursor_type` is set to `"row"`. Can be handled using
-        `on_arrow_table_row_highlighted` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
+        """Posted when a row is highlighted in row cursor mode."""
 
         def __init__(self, arrow_table: ArrowTable, cursor_row: int) -> None:
-            """Initialize a row highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_row: The row index highlighted by the cursor.
-            """
+            """Initialize a row highlighted message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.cursor_row: int = cursor_row
-            """The y-coordinate of the cursor that highlighted the row."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -416,25 +326,12 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     class RowSelected(Message):
-        """Posted when a row is selected.
-
-        This message is only posted when the
-        `cursor_type` is set to `"row"`. Can be handled using
-        `on_arrow_table_row_selected` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
+        """Posted when a row is selected in row cursor mode."""
 
         def __init__(self, arrow_table: ArrowTable, cursor_row: int) -> None:
-            """Initialize a row selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_row: The selected row index.
-            """
+            """Initialize a row selected message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.cursor_row: int = cursor_row
-            """The y-coordinate of the cursor that made the selection."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -447,25 +344,12 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     class ColumnHighlighted(Message):
-        """Posted when a column is highlighted.
-
-        This message is only posted when the
-        `cursor_type` is set to `"column"`. Can be handled using
-        `on_arrow_table_column_highlighted` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
+        """Posted when a column is highlighted in column cursor mode."""
 
         def __init__(self, arrow_table: ArrowTable, cursor_column: int) -> None:
-            """Initialize a column highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_column: The column index highlighted by the cursor.
-            """
+            """Initialize a column highlighted message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.cursor_column: int = cursor_column
-            """The x-coordinate of the column that was highlighted."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -478,25 +362,12 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     class ColumnSelected(Message):
-        """Posted when a column is selected.
-
-        This message is only posted when the
-        `cursor_type` is set to `"column"`. Can be handled using
-        `on_arrow_table_column_selected` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
+        """Posted when a column is selected in column cursor mode."""
 
         def __init__(self, arrow_table: ArrowTable, cursor_column: int) -> None:
-            """Initialize a column selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_column: The selected column index.
-            """
+            """Initialize a column selected message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.cursor_column: int = cursor_column
-            """The x-coordinate of the column that was selected."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -512,19 +383,10 @@ class ArrowTable(ScrollView, can_focus=True):
         """Posted when a column header/label is clicked."""
 
         def __init__(self, arrow_table: ArrowTable, column_index: int, label: Text):
-            """Initialize a header selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                column_index: The index of the selected column header.
-                label: The rendered column header label.
-            """
+            """Initialize a header selected message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.column_index = column_index
-            """The index for the column."""
             self.label = label
-            """The text of the label."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -541,16 +403,9 @@ class ArrowTable(ScrollView, can_focus=True):
         """Posted when a row index cell is clicked."""
 
         def __init__(self, arrow_table: ArrowTable, row_index: int):
-            """Initialize a row-index selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                row_index: The selected row index.
-            """
+            """Initialize a row-index selected message."""
             self.arrow_table = arrow_table
-            """The data table."""
             self.row_index = row_index
-            """The index for the column."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -579,103 +434,55 @@ class ArrowTable(ScrollView, can_focus=True):
         classes: str | None = None,
         disabled: bool = False,
     ) -> None:
-        """Initialize a widget to display Arrow-backed tabular data.
+        """Create a cache-only table with single-line cells and bounded column widths.
 
-        Args:
-            table: Arrow table used as the backing data source.
-            show_header: Whether the table header should be visible or not.
-            show_row_index: Whether zero-based row numbers should be shown or not.
-            zebra_stripes: Enables or disables a zebra effect applied to the background
-                color of the rows of the table, where alternate colors are styled
-                differently to improve the readability of the table.
-            show_cursor: Whether the cursor should be visible when navigating the data
-                table or not.
-            cursor_foreground_priority: If the data associated with a cell is an
-                arbitrary renderable with a set foreground color, this determines whether
-                that color is prioritized over the cursor component class or not.
-            cursor_background_priority: If the data associated with a cell is an
-                arbitrary renderable with a set background color, this determines whether
-                that color is prioritized over the cursor component class or not.
-            cursor_type: The type of cursor to be used when navigating the data table
-                with the keyboard.
-            cell_padding: The number of cells added on each side of each column. Setting
-                this value to zero will likely make your table very hard to read.
-            max_column_content_width: The maximum width of a column's content, in cells.
-            name: The name of the widget.
-            id: The ID of the widget in the DOM.
-            classes: The CSS classes for the widget.
-            disabled: Whether the widget is disabled or not.
+        `table` may be a bounded in-memory Arrow table or a lazy TableData view.
+        Cursor color priorities choose whether component CSS or formatted content
+        wins. `max_column_content_width` caps content, excluding cell padding.
+        Name, id, classes, and disabled are passed to Textual.
         """
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
 
+        # Cache-only access; the app owns background I/O.
         self.data = (
             table if isinstance(table, TableData) else TableData.from_table(table)
         )
-        """Cache-only data access; I/O belongs to the app's background workers."""
         self._missing_rows: set[int] = set()
         self._requested_window: tuple[int, int] | None = None
         self._columns: tuple[Column, ...] | None = None
-        """Column metadata in source column order. Lazily computed in `self.columns`."""
+        # Data-column left edges, excluding the index; includes the final right edge.
         self._column_offsets: tuple[int, ...] | None = None
-        """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
-        length = column_count + 1; offsets[0] == 0; offsets[-1] == total scrollable width."""
         self._max_column_content_width = max_column_content_width
-        """Maximum width of a column's content, in cells."""
         self._cell_formatter = CellFormatter(inline_limit=max_column_content_width)
-        """Formatter shared by width measurement and row rendering."""
 
-        self._row_render_cache: LRUCache[
-            RowCacheKey, tuple[list[list[Segment]], list[list[Segment]]]
-        ] = LRUCache(1000)
-        """For each row, we maintain a cache of the fixed and scrollable lines within that row 
-        to minimize how often we need to re-render it. """
-        self._cell_render_cache: LRUCache[CellCacheKey, list[list[Segment]]] = LRUCache(
-            10000
-        )
-        """Cache for individual cells."""
+        self._row_render_cache: LRUCache[RowCacheKey, RenderedRow] = LRUCache(1000)
+        self._cell_render_cache: LRUCache[CellCacheKey, list[Segment]] = LRUCache(10000)
+        # Formatted values survive style/geometry changes, but never data replacement.
         self._cell_renderable_cache: LRUCache[Coordinate, Text] = LRUCache(10000)
-        """Format only accessed cells; bound the cache independently of table width."""
         self._line_cache: LRUCache[LineCacheKey, Strip] = LRUCache(1000)
-        """Cache for lines within rows."""
 
+        # Focus/hover state participates in render keys to prevent stale highlighting.
         self._pseudo_class_state = PseudoClasses(False, False, False)
-        """The pseudo-class state is used as part of cache keys to ensure that, for example,
-        when we lose focus on the ArrowTable, rules which apply to :focus are invalidated
-        and we prevent lingering styles."""
 
+        # Dimension recalculation is deferred until idle.
         self._require_update_dimensions = True
-        """Set to re-calculate dimensions on idle."""
 
+        # Keyboard navigation hides the mouse highlight.
         self._show_hover_cursor = False
-        """Used to hide the mouse hover cursor when the user uses the keyboard."""
         self._update_count = 0
-        """Number of updates so far. Used for cache invalidation."""
+        # Header and index coordinates use -1 outside the data bounds.
         self._header_row_index = -1
-        """The header is a special row - not part of the data."""
         self._index_column_index = -1
-        """The column containing row index is not part of the data."""
         self._index_column: Column | None = None
-        """The largest content width out of all row indices in the table.
-        Lazily computed in `self.index_column`."""
 
         self.show_header = show_header
-        """Show/hide the header row (the row of column labels)."""
         self.show_row_index = show_row_index
-        """Show/hide the row index column containing zero-based row numbers."""
         self.zebra_stripes = zebra_stripes
-        """Apply alternating styles, arrowtable--even-row and arrowtable--odd-row, to create a zebra effect."""
         self.show_cursor = show_cursor
-        """Show/hide both the keyboard and hover cursor."""
         self.cursor_foreground_priority = cursor_foreground_priority
-        """Should we prioritize the cursor component class CSS foreground or the renderable foreground
-        in the event where a cell contains a renderable with a foreground color."""
         self.cursor_background_priority = cursor_background_priority
-        """Should we prioritize the cursor component class CSS background or the renderable background
-        in the event where a cell contains a renderable with a background color."""
         self.cursor_type = cursor_type
-        """The type of the cursor of the `ArrowTable`."""
         self.cell_padding = cell_padding
-        """Horizontal padding between cells, applied on each side of each cell."""
 
     @property
     def hover_row(self) -> int:
@@ -799,11 +606,11 @@ class ArrowTable(ScrollView, can_focus=True):
         if self.column_count == 0 or viewport_width <= 0:
             return 0, 0
         offsets = self._get_column_offsets()
-        column1 = max(0, min(self.column_count - 1, bisect_right(offsets, x1) - 1))
-        column2 = min(self.column_count, bisect_left(offsets, x1 + viewport_width))
-        if column2 <= column1:
-            column2 = min(self.column_count, column1 + 1)
-        return column1, column2
+        start_column = max(0, min(self.column_count - 1, bisect_right(offsets, x1) - 1))
+        stop_column = min(self.column_count, bisect_left(offsets, x1 + viewport_width))
+        if stop_column <= start_column:
+            stop_column = min(self.column_count, start_column + 1)
+        return start_column, stop_column
 
     @property
     def index_column(self) -> Column:
@@ -827,16 +634,11 @@ class ArrowTable(ScrollView, can_focus=True):
         )
 
     def get_cell_at(self, coordinate: Coordinate) -> pa.Scalar:
-        """Get the value from the cell occupying the given coordinate.
-
-        Args:
-            coordinate: The coordinate to retrieve the value from.
-
-        Returns:
-            The value of the cell at the coordinate.
+        """Return a cached Arrow scalar, requesting missing data asynchronously.
 
         Raises:
-            IndexError: If there is no cell with the given coordinate.
+            CellNotExistError: The coordinate is outside the table bounds.
+            CellNotLoadedError: The cell exists but its page has not arrived.
         """
         row, column = coordinate.row, coordinate.column
 
@@ -864,7 +666,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self._missing_rows:
             return
         start = min(self._missing_rows)
-        stop = min(self.row_count, max(self._missing_rows) + 257)
+        stop = min(self.row_count, max(self._missing_rows) + 1 + PREFETCH_ROWS)
         self._missing_rows.clear()
         self._requested_window = (start, stop)
         self.post_message(self.WindowRequested(self.data, start, stop))
@@ -874,11 +676,9 @@ class ArrowTable(ScrollView, can_focus=True):
         sample_changed = self.data.add_page(page)
         self._requested_window = None
         if sample_changed:
-            self._columns = None
-            self._column_offsets = None
-            self._require_update_dimensions = True
-        self._update_count += 1
-        self._clear_render_caches()
+            self._invalidate_layout(columns=True)
+        else:
+            self._clear_render_caches()
         self.refresh(layout=sample_changed)
         if page.start <= self.cursor_row < page.stop:
             self._highlight_cursor()
@@ -888,9 +688,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self.data.row_count = available
         self.data.total_rows = total
         self._index_column = None
-        self._require_update_dimensions = True
-        self._update_count += 1
-        self._clear_render_caches()
+        self._invalidate_layout()
         self.refresh(layout=True)
 
     def replace_table(self, table: pa.Table) -> None:
@@ -902,13 +700,9 @@ class ArrowTable(ScrollView, can_focus=True):
         self.data = data
         self._missing_rows.clear()
         self._requested_window = None
-        self._columns = None
-        self._column_offsets = None
         self._index_column = None
-        self._update_count += 1
         self._cell_renderable_cache.clear()
-        self._clear_render_caches()
-        self._require_update_dimensions = True
+        self._invalidate_layout(columns=True)
         self._show_hover_cursor = False
         self.cursor_coordinate = Coordinate(0, 0)
         self.hover_coordinate = Coordinate(0, 0)
@@ -916,24 +710,27 @@ class ArrowTable(ScrollView, can_focus=True):
             self.scroll_to(x=0, y=0, animate=False, force=True)
         self.refresh(layout=True)
 
+    def _invalidate_layout(self, *, columns: bool = False) -> None:
+        """Schedule dimension work, remeasuring data columns only when they changed."""
+        if columns:
+            self._columns = None
+            self._column_offsets = None
+        self._require_update_dimensions = True
+        self._clear_render_caches()
+
     def _clear_render_caches(self) -> None:
-        # Intentionally do NOT clear _cell_renderable_cache: cell renderables are derived
-        # purely from immutable Arrow scalars via CellFormatter, so they don't depend on
-        # cell_padding, cursor state, zebra stripes, or show_header/show_row_index.
-        # Only the rendered Segments/Strips below are width- and style-sensitive.
+        """Drop styled segments while retaining formatted immutable Arrow values."""
+        self._update_count += 1
         self._cell_render_cache.clear()
         self._row_render_cache.clear()
         self._line_cache.clear()
         self._styles_cache.clear()
 
     def notify_style_update(self) -> None:
-        """Clear cached render output after component styles change."""
+        """Refresh both formatted content and rendered output after theme changes."""
         super().notify_style_update()
-        self._clear_render_caches()
-        # Also clear renderables here (unlike _clear_render_caches): a component-style
-        # change could in principle alter how CellFormatter output resolves under a new
-        # theme, so we invalidate defensively.
         self._cell_renderable_cache.clear()
+        self._clear_render_caches()
         self.refresh()
 
     def _on_resize(self, _: events.Resize) -> None:
@@ -950,12 +747,7 @@ class ArrowTable(ScrollView, can_focus=True):
             # When we re-enable the cursor, apply highlighting and
             # post the appropriate [Row|Column|Cell]Highlighted event.
             self._scroll_cursor_into_view(animate=False)
-            if self.cursor_type == "cell":
-                self._highlight_coordinate(self.cursor_coordinate)
-            elif self.cursor_type == "row":
-                self._highlight_row(self.cursor_row)
-            elif self.cursor_type == "column":
-                self._highlight_column(self.cursor_column)
+            self._highlight_cursor()
 
     def watch_show_header(self, show: bool) -> None:
         """Update table dimensions and rendering when header visibility changes."""
@@ -1043,23 +835,7 @@ class ArrowTable(ScrollView, can_focus=True):
         animate: bool = False,
         scroll: bool = True,
     ) -> None:
-        """Move the cursor to the given position.
-
-        Example:
-            ```python
-            arrowtable = app.query_one(ArrowTable)
-            arrowtable.move_cursor(row=4, column=6)
-            # arrowtable.cursor_coordinate == Coordinate(4, 6)
-            arrowtable.move_cursor(row=3)
-            # arrowtable.cursor_coordinate == Coordinate(3, 6)
-            ```
-
-        Args:
-            row: The new row to move the cursor to.
-            column: The new column to move the cursor to.
-            animate: Whether to animate the change of coordinates.
-            scroll: Scroll the cursor into view after moving.
-        """
+        """Move selected axes, clamp to data bounds, and optionally scroll into view."""
         cursor_row, cursor_column = self.cursor_coordinate
         if row is not None:
             cursor_row = row
@@ -1198,13 +974,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return Region(x, 0, width, height)
 
     async def _on_idle(self, event: events.Idle) -> None:
-        """Runs when the message pump is empty.
-
-        We use this for some expensive calculations like re-computing dimensions of the
-        whole ArrowTable and re-computing column widths after some cells
-        have been updated. This is more efficient in the case of high
-        frequency updates, ensuring we only do expensive computations once.
-        """
+        """Coalesce pending dimension changes into one recalculation before repaint."""
         _ = event
 
         if self._require_update_dimensions:
@@ -1212,14 +982,7 @@ class ArrowTable(ScrollView, can_focus=True):
             self._update_dimensions()
 
     def refresh_coordinate(self, coordinate: Coordinate) -> Self:
-        """Refresh the cell at a coordinate.
-
-        Args:
-            coordinate: The coordinate to refresh.
-
-        Returns:
-            The `ArrowTable` instance.
-        """
+        """Refresh a visible data cell and return the table."""
         if not self.is_valid_coordinate(coordinate):
             return self
         region = self._get_cell_region(coordinate)
@@ -1227,14 +990,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return self
 
     def refresh_row(self, row_index: int) -> Self:
-        """Refresh the row at the given index.
-
-        Args:
-            row_index: The index of the row to refresh.
-
-        Returns:
-            The `ArrowTable` instance.
-        """
+        """Refresh the visible part of a data row and return the table."""
         if not self.is_valid_row_index(row_index):
             return self
 
@@ -1243,14 +999,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return self
 
     def refresh_column(self, column_index: int) -> Self:
-        """Refresh the column at the given index.
-
-        Args:
-            column_index: The index of the column to refresh.
-
-        Returns:
-            The `ArrowTable` instance.
-        """
+        """Refresh the visible part of a data column and return the table."""
         if not self.is_valid_column_index(column_index):
             return self
 
@@ -1259,13 +1008,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return self
 
     def _refresh_region(self, region: Region) -> Self:
-        """Refresh a region of the ArrowTable, if it's visible within the window.
-
-        This method will translate the region to account for scrolling.
-
-        Returns:
-            The `ArrowTable` instance.
-        """
+        """Refresh the visible intersection of a region in virtual table coordinates."""
         # Refresh regions are expressed in virtual table coordinates. Column refreshes
         # can cover the full table height, and after scrolling that would translate
         # into a very large negative-y dirty region. Clip to the visible window first
@@ -1279,36 +1022,15 @@ class ArrowTable(ScrollView, can_focus=True):
         return self
 
     def is_valid_row_index(self, row_index: int) -> bool:
-        """Return a boolean indicating whether the row_index is within table bounds.
-
-        Args:
-            row_index: The row index to check.
-
-        Returns:
-            True if the row index is within the bounds of the table.
-        """
+        """Return whether the row index is within the data bounds."""
         return 0 <= row_index < self.row_count
 
     def is_valid_column_index(self, column_index: int) -> bool:
-        """Return a boolean indicating whether the column_index is within table bounds.
-
-        Args:
-            column_index: The column index to check.
-
-        Returns:
-            True if the column index is within the bounds of the table.
-        """
+        """Return whether the column index is within the data bounds."""
         return 0 <= column_index < self.column_count
 
     def is_valid_coordinate(self, coordinate: Coordinate) -> bool:
-        """Return a boolean indicating whether the given coordinate is valid.
-
-        Args:
-            coordinate: The coordinate to validate.
-
-        Returns:
-            True if the coordinate is within the bounds of the table.
-        """
+        """Return whether the coordinate is within the data bounds."""
         row_index, column_index = coordinate
         return self.is_valid_row_index(row_index) and self.is_valid_column_index(
             column_index
@@ -1317,18 +1039,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _normalize_cache_coordinate(
         self, coordinate: Coordinate, visible: bool
     ) -> Coordinate:
-        """Reduce a cursor coordinate to the parts that can affect rendering.
-
-        Args:
-            coordinate: The raw cursor or hover coordinate.
-            visible: Whether the cursor represented by this coordinate is currently
-                visible and can affect rendered output.
-
-        Returns:
-            A coordinate suitable for cache keys. Irrelevant axes are replaced with
-            `-1` based on the active `cursor_type`, and `Coordinate(-1, -1)` is used
-            when the cursor is hidden or cursor rendering is disabled.
-        """
+        """Keep only axes that affect this cursor mode; use -1 for hidden axes."""
         if not visible or self.cursor_type == "none":
             return Coordinate(-1, -1)
         if self.cursor_type == "row":
@@ -1366,20 +1077,8 @@ class ArrowTable(ScrollView, can_focus=True):
         width: int,
         cursor: bool = False,
         hover: bool = False,
-    ) -> list[list[Segment]]:
-        """Render the given cell.
-
-        Args:
-            row_index: Index of the row.
-            column_index: Index of the column.
-            base_style: Style to apply.
-            width: Width of the cell.
-            cursor: Whether this cell is affected by cursor highlighting.
-            hover: Whether this cell is affected by hover cursor highlighting.
-
-        Returns:
-            A list of segments per line.
-        """
+    ) -> list[Segment]:
+        """Render one padded, ellipsized line with cell metadata and highlighting."""
         is_header_cell = row_index == self._header_row_index
         is_row_index_cell = column_index == self._index_column_index
 
@@ -1397,8 +1096,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
         # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
         # Use get() here so cell cache hit/miss stats stay accurate.
-        if (lines := self._cell_render_cache.get(cache_key)) is not None:
-            return lines
+        if (segments := self._cell_render_cache.get(cache_key)) is not None:
+            return segments
 
         try:
             console = self.app.console  # pyright: ignore
@@ -1409,64 +1108,36 @@ class ArrowTable(ScrollView, can_focus=True):
         cell = self._get_cell_renderable(row_index, column_index)
 
         component_style, post_style = self._get_styles_to_render_cell(
-            is_header_cell,
-            is_row_index_cell,
-            effective_hover,
-            effective_cursor,
-            self.show_cursor,
-            self._show_hover_cursor,
-            self.cursor_foreground_priority == "css",
-            self.cursor_background_priority == "css",
+            is_header=is_header_cell or is_row_index_cell,
+            hover=effective_hover,
+            cursor=effective_cursor,
         )
 
         options = console.options.update_dimensions(width, 1).update(
             no_wrap=True, overflow="ellipsis"
         )
 
-        lines = console.render_lines(
+        segments = console.render_lines(
             Styled(
                 Padding(cell, (0, self.cell_padding)),
                 pre_style=base_style + component_style,
                 post_style=post_style,
             ),
             options,
-        )
+        )[0]  # Every table cell occupies exactly one terminal line.
 
-        self._cell_render_cache[cache_key] = lines
-        return lines
+        self._cell_render_cache[cache_key] = segments
+        return segments
 
     def _get_styles_to_render_cell(
-        self,
-        is_header_cell: bool,
-        is_row_index_cell: bool,
-        hover: bool,
-        cursor: bool,
-        show_cursor: bool,
-        show_hover_cursor: bool,
-        has_css_foreground_priority: bool,
-        has_css_background_priority: bool,
+        self, *, is_header: bool, hover: bool, cursor: bool
     ) -> tuple[Style, Style]:
-        """Auxiliary method to compute styles used to render a given cell.
-
-        Args:
-            is_header_cell: Is this a cell from a header?
-            is_row_index_cell: Is this the label of any given row?
-            hover: Does this cell have the hover pseudo class?
-            cursor: Is this cell covered by the cursor?
-            show_cursor: Do we want to show the cursor in the data table?
-            show_hover_cursor: Do we want to show the mouse hover when using the keyboard
-                to move the cursor?
-            has_css_foreground_priority: `self.cursor_foreground_priority == "css"`?
-            has_css_background_priority: `self.cursor_background_priority == "css"`?
-
-        Returns:
-            A pair of styles to apply before and after rendering the cell content.
-        """
+        """Resolve styles around cell content; cursor flags are already visibility-filtered."""
         component_style = Style()
 
-        if hover and show_cursor and show_hover_cursor:
+        if hover:
             component_style += self.get_component_rich_style("arrowtable--hover")
-            if is_header_cell or is_row_index_cell:
+            if is_header:
                 # Apply subtle variation in style for the header/label (blue
                 # background by default) rows and columns affected by the cursor, to
                 # ensure we can still differentiate between the indices and the data.
@@ -1474,51 +1145,37 @@ class ArrowTable(ScrollView, can_focus=True):
                     "arrowtable--header-hover"
                 )
 
-        if cursor and show_cursor:
+        if cursor:
             cursor_style = self.get_component_rich_style("arrowtable--cursor")
             component_style += cursor_style
-            if is_header_cell or is_row_index_cell:
+            if is_header:
                 component_style += self.get_component_rich_style(
                     "arrowtable--header-cursor"
                 )
 
         post_foreground = (
             Style.from_color(color=component_style.color)
-            if has_css_foreground_priority
+            if self.cursor_foreground_priority == "css"
             else Style.null()
         )
         post_background = (
             Style.from_color(bgcolor=component_style.bgcolor)
-            if has_css_background_priority
+            if self.cursor_background_priority == "css"
             else Style.null()
         )
 
         return component_style, post_foreground + post_background
 
-    def _render_line_in_row(
+    def _render_row(
         self,
         row_index: int,
         base_style: Style,
         cursor_location: Coordinate,
         hover_location: Coordinate,
-        column1: int,
-        column2: int,
-    ) -> tuple[list[list[Segment]], list[list[Segment]]]:
-        """Render a single line from a row in the ArrowTable.
-
-        Args:
-            row_index: The 0-based index for this row.
-            base_style: Base style of row.
-            cursor_location: The location of the cursor in the ArrowTable.
-            hover_location: The location of the hover cursor in the ArrowTable.
-            column1: Index of the first data column to render (inclusive). Computed
-                from the horizontal scroll offset via `_visible_column_range`.
-            column2: Index just past the last data column to render (exclusive).
-                Columns outside `[column1, column2)` are skipped entirely.
-
-        Returns:
-            Lines for fixed cells, and Lines for scrollable cells.
-        """
+        start_column: int,
+        stop_column: int,
+    ) -> RenderedRow:
+        """Render fixed index cells and data columns in [start_column, stop_column)."""
         cursor_type = self.cursor_type
         show_cursor = self.show_cursor
 
@@ -1538,8 +1195,8 @@ class ArrowTable(ScrollView, can_focus=True):
             self._show_hover_cursor,
             self._update_count,
             self._pseudo_class_state,
-            column1,
-            column2,
+            start_column,
+            stop_column,
         )
 
         # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
@@ -1549,13 +1206,12 @@ class ArrowTable(ScrollView, can_focus=True):
 
         header_style = self.get_component_styles("arrowtable--header").rich_style
 
-        # If the row has a index, add it to fixed_row here with correct style.
-        fixed_row: list[list[Segment]] = []
+        # Keep the row-index column outside the horizontally scrollable segments.
+        fixed_segments: list[Segment] = []
 
         if self.show_row_index:
-            # The width of the row index is updated again on idle
             cell_location = Coordinate(row_index, self._index_column_index)
-            index_cell_lines = self._render_cell(
+            fixed_segments = self._render_cell(
                 row_index,
                 self._index_column_index,
                 header_style,
@@ -1566,17 +1222,16 @@ class ArrowTable(ScrollView, can_focus=True):
                 hover=self._should_highlight(
                     hover_location, cell_location, cursor_type
                 ),
-            )[0]  # Only single line for a cell.
-            fixed_row.append(index_cell_lines)
+            )
 
         row_style = self._get_row_style(row_index, base_style)
 
-        scrollable_row: list[list[Segment]] = []
+        scrollable_segments: list[Segment] = []
 
-        for column_index in range(column1, column2):
+        for column_index in range(start_column, stop_column):
             column = self.columns[column_index]
             cell_location = Coordinate(row_index, column_index)
-            cell_lines = self._render_cell(
+            cell_segments = self._render_cell(
                 row_index,
                 column_index,
                 row_style,
@@ -1587,31 +1242,21 @@ class ArrowTable(ScrollView, can_focus=True):
                 hover=self._should_highlight(
                     hover_location, cell_location, cursor_type
                 ),
-            )[0]
-            scrollable_row.append(cell_lines)
+            )
+            scrollable_segments.extend(cell_segments)
 
-        row_pair = (fixed_row, scrollable_row)
+        row_pair = RenderedRow(fixed_segments, scrollable_segments)
         self._row_render_cache[cache_key] = row_pair
         return row_pair
 
     def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
-        """Render a (possibly cropped) line into a Strip.
-
-        Strip is like an immutable list of segments representing a horizontal line.
-
-        Args:
-            y: Y coordinate of line relative to virtual table top.
-            x1: X start crop.
-            x2: X end crop (exclusive).
-            base_style: Style to apply to line.
-
-        Returns:
-            The Strip which represents this cropped line.
-        """
+        """Crop a virtual table row into a viewport-width strip, keeping the index fixed."""
         width = self.size.width
         fixed_width = self._index_column_width
         visible_scrollable_width = max(0, width - fixed_width)
-        column1, column2 = self._visible_column_range(x1, visible_scrollable_width)
+        start_column, stop_column = self._visible_column_range(
+            x1, visible_scrollable_width
+        )
 
         header_lines = 1 if self.show_header else 0
         row_index = (
@@ -1648,29 +1293,28 @@ class ArrowTable(ScrollView, can_focus=True):
         if (strip := self._line_cache.get(cache_key)) is not None:
             return strip
 
-        fixed, scrollable = self._render_line_in_row(
+        row = self._render_row(
             row_index,
             base_style,
             cursor_location=self.cursor_coordinate,
             hover_location=self.hover_coordinate,
-            column1=column1,
-            column2=column2,
+            start_column=start_column,
+            stop_column=stop_column,
         )
 
-        fixed_line: list[Segment] = list(chain.from_iterable(fixed)) if fixed else []
-        scrollable_line: list[Segment] = list(chain.from_iterable(scrollable))
-
-        # The virtual left starting point of the scrollable_line is offsets[column1] (not 0).
+        # Cropping is relative to the first rendered column, not the whole table.
         offsets = self._get_column_offsets()
-        virtual_left = offsets[column1] if column1 < len(offsets) else 0
+        virtual_left = offsets[start_column] if start_column < len(offsets) else 0
         crop_start = max(0, x1 - virtual_left)
         crop_end = crop_start + visible_scrollable_width
         visible_cols_total = (
-            (offsets[column2] - offsets[column1]) if column2 > column1 else 0
+            (offsets[stop_column] - offsets[start_column])
+            if stop_column > start_column
+            else 0
         )
 
-        segments = fixed_line + list(
-            Strip(scrollable_line, visible_cols_total).crop(crop_start, crop_end)
+        segments = row.fixed + list(
+            Strip(row.scrollable, visible_cols_total).crop(crop_start, crop_end)
         )
         strip = Strip(segments).adjust_cell_length(width, base_style).simplify()
 
@@ -1678,26 +1322,12 @@ class ArrowTable(ScrollView, can_focus=True):
         return strip
 
     def render_lines(self, crop: Region) -> list[Strip]:
-        """Render the widget into lines.
-
-        Args:
-            crop: Region within visible area to render.
-
-        Returns:
-            A list of list of segments.
-        """
+        """Capture focus/hover state before rendering viewport lines."""
         self._pseudo_class_state = self.get_pseudo_class_state()
         return super().render_lines(crop)
 
     def render_line(self, y: int) -> Strip:
-        """Render a line of content.
-
-        Args:
-            y: Y Coordinate of line relative to widget's visible area top.
-
-        Returns:
-            A rendered line.
-        """
+        """Render the screen row at y, accounting for scrolling and the pinned header."""
         width, _ = self.size
         # Horizontal and vertical offset into the scrollable table body.
         scroll_x, scroll_y = self.scroll_offset
@@ -1711,19 +1341,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _should_highlight(
         self, cursor: Coordinate, target_cell: Coordinate, type_of_cursor: CursorType
     ) -> bool:
-        """Determine if the given cell should be highlighted because of the cursor.
-
-        This auxiliary method takes the cursor position and type into account when
-        determining whether the cell should be highlighted.
-
-        Args:
-            cursor: The current position of the cursor.
-            target_cell: The cell we're checking for the need to highlight.
-            type_of_cursor: The type of cursor that is currently active.
-
-        Returns:
-            Whether or not the given cell should be highlighted.
-        """
+        """Return whether the active cursor covers the target cell."""
         if type_of_cursor == "cell":
             return cursor == target_cell
         if type_of_cursor == "row":
@@ -1737,15 +1355,7 @@ class ArrowTable(ScrollView, can_focus=True):
         return False
 
     def _get_row_style(self, row_index: int, base_style: Style) -> Style:
-        """Gets the Style that should be applied to the row at the given index.
-
-        Args:
-            row_index: The index of the row to style.
-            base_style: The base style to use by default.
-
-        Returns:
-            The appropriate style.
-        """
+        """Resolve header or zebra styles, falling back to the table style."""
         if row_index == self._header_row_index:
             return self.get_component_styles("arrowtable--header").rich_style
 
