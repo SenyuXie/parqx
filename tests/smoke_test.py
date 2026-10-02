@@ -29,10 +29,12 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.query",
     "parqx.query.engine",
     "parqx.tui.app",
+    "parqx.tui.screens",
+    "parqx.tui.screens.query",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
     "parqx.tui.widgets.file_loading",
-    "parqx.tui.widgets.query_panel",
+    "parqx.tui.widgets.result_pane",
 )
 
 

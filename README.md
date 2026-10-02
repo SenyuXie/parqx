@@ -22,15 +22,15 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
-Press `Ctrl+P` and choose **SQL query** to show or hide the SQL editor.
-The current file is available as the `data` view. Hiding the editor preserves its
-text and the displayed results.
+The file opens in its own tab. Press `Ctrl+P` and choose **SQL query** to open
+a centered SQL editor. The original file is available as the `data` view.
+Press `Enter` to run the complete SQL query, or `Shift+Enter` to insert a newline.
+Press `Esc` to close the editor and cancel any running query. Reopening the
+editor preserves its text, selection, and undo history.
 
-Start with a query instead of loading the original table:
-
-```bash
-parqx data/weather.parquet --query 'SELECT count(*) AS rows FROM data'
-```
+Successful queries open in new tabs. Errors remain in the editor so you can
+correct the SQL and try again. Cancellation and errors leave existing tabs
+available.
 
 Queries support a single `SELECT` statement, including `WITH` queries. Results
 are previews of up to 10,000 rows or approximately 32 MiB of Arrow data; a single
@@ -38,9 +38,14 @@ oversized row may exceed the byte budget. These limits apply to the output,
 so aggregates still use all matching input rows. Query execution and decoding
 use additional memory.
 
-The status line indicates when a preview is truncated and its total row count
-is unknown. Refine the SQL to inspect other rows. Cancellation and errors keep
-the displayed results available; `F3` returns to the original file's values.
+Each result tab shows its row count and execution time. Its status line indicates
+when a preview is truncated and the total row count is unknown. Refine the SQL
+to inspect other rows.
+
+Press `Ctrl+W` to close the current tab. The footer shows this shortcut and
+disables it when only one tab remains. The original file tab can also be closed
+while other tabs are open; SQL queries still use the original file through
+`data`. Each tab preserves its own table position and display settings.
 
 ## Keyboard control
 
@@ -59,23 +64,26 @@ the displayed results available; `F3` returns to the original file's values.
 
 ### Table View
 
+These shortcuts apply to the active tab.
+
 | Key | Action                                         |
 | --- | ---                                            |
 | `H` | Toggle the column header row                   |
 | `I` | Toggle the row-index column                    |
 | `Z` | Toggle zebra striping                          |
 | `C` | Cycle cursor type (cell → row → column → none) |
+| `Ctrl+W` | Close the current tab, keeping at least one tab open |
 
 ### SQL query
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+P` → **SQL query** | Show / hide the SQL editor |
-| `F1` | Run the complete SQL query |
-| `F2` | Cancel the running query |
-| `F3` | Browse the original file |
-| `Escape` / `Shift+Tab` | Leave SQL input without cancelling |
-| `Tab` | Indent SQL; enter SQL input from the table |
+| `Ctrl+P` → **SQL query** | Open the centered SQL editor |
+| `Enter` | Run the complete SQL query |
+| `Shift+Enter` | Insert a newline |
+| `Esc` | Close the editor and cancel any running query |
+| `Tab` | Indent SQL |
+| `Ctrl+W` | Delete the previous word in the SQL editor |
 | `F6` / `F7` | Select the current SQL line / all SQL |
 
 ## License
