@@ -12,8 +12,9 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.coordinate import Coordinate
 
+from parqx.data.view import DataPage, TableData
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.widgets.arrow_table import ArrowTable
+from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
 
 
 def _column_width_peak_memory(table: pa.Table) -> int:
@@ -160,3 +161,38 @@ def test_replace_table_invalidates_content_schema_and_layout() -> None:
     widget.replace_table(pa.table({"empty": pa.array([], type=pa.int64())}))
     assert widget.row_count == 0
     assert widget.columns[0].name == "empty"
+
+
+def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -> None:
+    page = pa.table({"value": pa.array([None, 12345], type=pa.int64())})
+    widget = ArrowTable(TableData(page.schema, 10_000))
+    assert widget.row_count == 10_000
+    assert widget.columns[0].content_width == 0
+    with pytest.raises(CellNotLoadedError):
+        widget.get_cell_at(Coordinate(0, 0))
+    assert widget._get_cell_renderable(0, 0).plain == "…"
+    assert Coordinate(0, 0) not in widget._cell_renderable_cache
+
+    widget.accept_page(DataPage(0, page))
+    assert not widget.get_cell_at(Coordinate(0, 0)).is_valid
+    assert widget._get_cell_renderable(0, 0).plain == "null"
+    assert widget._get_cell_renderable(1, 0).plain == "12345"
+    assert widget.columns[0].content_width == 5
+    assert widget.row_count == 10_000
+
+
+def test_replacing_window_data_discards_cached_cells_and_pending_requests() -> None:
+    page = pa.table({"old": ["before"]})
+    data = TableData(page.schema, 1_000)
+    widget = ArrowTable(data)
+    widget.accept_page(DataPage(0, page))
+    assert widget._get_cell_renderable(0, 0).plain == "before"
+    widget.fail_window()
+
+    widget.replace_data(TableData.from_table(pa.table({"new": ["after"]})))
+    assert widget.data is not data
+    assert widget._get_cell_renderable(0, 0).plain == "after"
+    assert widget.columns[0].name == "new"
+    assert widget.row_count == 1
+    assert not widget._window_failed
+    assert widget._requested_window is None

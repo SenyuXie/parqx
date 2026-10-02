@@ -13,3 +13,19 @@ def bounded_prefix(batch: pa.RecordBatch, budget: int, *, allow_one: bool) -> in
         else:
             high = middle - 1
     return max(low, 1 if allow_one and batch.num_rows else 0)
+
+
+def compact_batch(batch: pa.RecordBatch) -> pa.RecordBatch:
+    """Copy a selected batch without retaining discarded backing buffers."""
+    try:
+        return batch.take(pa.array(range(batch.num_rows), type=pa.int64()))
+    except pa.ArrowNotImplementedError:
+        # View types lack take kernels. Arrow Scalars preserve nested types and
+        # nanosecond values when rebuilding, unlike conversion to Python values.
+        return pa.RecordBatch.from_arrays(
+            [
+                pa.array(list(batch.column(index)), type=field.type)
+                for index, field in enumerate(batch.schema)
+            ],
+            schema=batch.schema,
+        )

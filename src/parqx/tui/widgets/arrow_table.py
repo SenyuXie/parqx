@@ -39,6 +39,7 @@ from textual.strip import Strip
 from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
 
+from parqx.data.view import DataPage, TableData
 from parqx.tui.cell_formatter import CellFormatter
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,10 @@ class CellNotExistError(Exception):
     """
 
 
+class CellNotLoadedError(CellNotExistError):
+    """The coordinate exists but its data window has not arrived yet."""
+
+
 class RowNotExistError(Exception):
     """The row index was invalid.
 
@@ -172,6 +177,24 @@ def _sample_row_indices(total_rows: int, target_count: int = 256) -> tuple[int, 
 
 class ArrowTable(ScrollView, can_focus=True):
     """Arrow-backed data table widget."""
+
+    class WindowRequested(Message):
+        """Request background data after coalescing render-time cache misses."""
+
+        def __init__(
+            self, table: ArrowTable, data: TableData, start: int, stop: int
+        ) -> None:
+            """Identify the table and data so replaced views can reject old reads."""
+            self.arrow_table = table
+            self.data = data
+            self.start_row = start
+            self.stop_row = stop
+            super().__init__()
+
+        @property
+        def control(self) -> ArrowTable:
+            """The table requesting this window."""
+            return self.arrow_table
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "select_cursor", "Select", show=False),
@@ -565,7 +588,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def __init__(
         self,
-        table: pa.Table,
+        table: pa.Table | TableData,
         show_header: bool = True,
         show_row_index: bool = True,
         zebra_stripes: bool = False,
@@ -583,7 +606,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """Initialize a widget to display Arrow-backed tabular data.
 
         Args:
-            table: Arrow table used as the backing data source.
+            table: An Arrow table or a metadata view with a bounded window cache.
             show_header: Whether the table header should be visible or not.
             show_row_index: Whether zero-based row numbers should be shown or not.
             zebra_stripes: Enables or disables a zebra effect applied to the background
@@ -609,8 +632,13 @@ class ArrowTable(ScrollView, can_focus=True):
         """
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
 
-        self._table = table
-        """Arrow table used as the backing data source."""
+        self.data = (
+            table if isinstance(table, TableData) else TableData.from_table(table)
+        )
+        """Cache-only access; file reads belong to background workers."""
+        self._missing_rows: set[int] = set()
+        self._requested_window: tuple[int, int] | None = None
+        self._window_failed = False
         self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
         self._column_offsets: tuple[int, ...] | None = None
@@ -697,7 +725,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def row_count(self) -> int:
         """The total number of rows currently present in the ArrowTable."""
-        return self._table.num_rows
+        return self.data.row_count
 
     @property
     def _total_row_height(self) -> int:
@@ -707,7 +735,7 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def column_count(self) -> int:
         """The total number of columns currently present in the ArrowTable."""
-        return self._table.num_columns
+        return len(self.data.schema)
 
     def _measure_content_width(
         self,
@@ -758,7 +786,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if self._columns is not None:
             return self._columns
 
-        sample_indices = _sample_row_indices(self.row_count)
+        sample_indices = _sample_row_indices(self.data.sample.num_rows)
 
         self._columns = tuple(
             Column(
@@ -767,7 +795,7 @@ class ArrowTable(ScrollView, can_focus=True):
                 auto_width=True,
             )
             for name, column in zip(
-                self._table.column_names, self._table.columns, strict=True
+                self.data.schema.names, self.data.sample.columns, strict=True
             )
         )
         return self._columns
@@ -840,14 +868,77 @@ class ArrowTable(ScrollView, can_focus=True):
             The value of the cell at the coordinate.
 
         Raises:
-            IndexError: If there is no cell with the given coordinate.
+            CellNotExistError: If there is no cell with the given coordinate.
+            CellNotLoadedError: If the cell's window has not been loaded yet.
         """
         row, column = coordinate.row, coordinate.column
 
         if not self.is_valid_coordinate(coordinate):
             raise CellNotExistError(coordinate)
 
-        return self._table.column(column)[row]
+        value = self.data.peek(row, column)
+        if value is None:
+            self._queue_window(row)
+            raise CellNotLoadedError(coordinate)
+        return value
+
+    def _queue_window(self, row: int) -> None:
+        if not self.is_mounted or self._window_failed:
+            return
+        if self._requested_window is not None:
+            start, stop = self._requested_window
+            if start <= row < stop:
+                return
+        if not self._missing_rows:
+            self.call_next(self._request_missing_window)
+        self._missing_rows.add(row)
+
+    def _request_missing_window(self) -> None:
+        if not self._missing_rows or self._window_failed:
+            return
+        # A cursor jump can leave misses from the old viewport in the same frame.
+        # Prefer the rows now on screen rather than scanning the gap between them.
+        top = round(self.scroll_y)
+        visible = [
+            row for row in self._missing_rows if top <= row < top + self.size.height
+        ]
+        start = min(visible or self._missing_rows)
+        stop = min(self.row_count, start + 256)
+        self._missing_rows.clear()
+        self._requested_window = (start, stop)
+        self.post_message(self.WindowRequested(self, self.data, start, stop))
+
+    def accept_page(self, page: DataPage) -> None:
+        """Cache a completed window without resetting the table's navigation."""
+        sample_changed = self.data.add_page(page)
+        self._requested_window = None
+        self._window_failed = False
+        if sample_changed:
+            self._columns = None
+            self._column_offsets = None
+            self._require_update_dimensions = True
+        self._update_count += 1
+        self._clear_render_caches()
+        self.refresh(layout=sample_changed)
+        if page.start <= self.cursor_row < page.stop:
+            self._highlight_cursor()
+
+    def fail_window(self) -> None:
+        """End a failed read; navigation may retry without a repaint retry loop."""
+        self._requested_window = None
+        self._missing_rows.clear()
+        self._window_failed = True
+
+    def _retry_window(self) -> None:
+        if self._window_failed:
+            self._window_failed = False
+            self._clear_render_caches()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Retry failed windows after vertical navigation."""
+        if round(old_value) != round(new_value):
+            self._retry_window()
+        super().watch_scroll_y(old_value, new_value)
 
     def replace_table(self, table: pa.Table) -> None:
         """Replace the backing table and reset navigation to the first cell.
@@ -858,7 +949,14 @@ class ArrowTable(ScrollView, can_focus=True):
         Args:
             table: Arrow table to display, which may have a different schema.
         """
-        self._table = table
+        self.replace_data(TableData.from_table(table))
+
+    def replace_data(self, data: TableData) -> None:
+        """Replace the data view and discard old windows, requests, and rendering."""
+        self.data = data
+        self._missing_rows.clear()
+        self._requested_window = None
+        self._window_failed = False
         self._columns = None
         self._column_offsets = None
         self._index_column = None
@@ -969,6 +1067,7 @@ class ArrowTable(ScrollView, can_focus=True):
     ) -> None:
         """Refresh cursor highlighting when the cursor coordinate changes."""
         if old_coordinate != new_coordinate:
+            self._retry_window()
             # Refresh the old and the new cell, and post the appropriate
             # message to tell users of the newly highlighted row/cell/column.
             if self.cursor_type == "cell":
@@ -1312,7 +1411,10 @@ class ArrowTable(ScrollView, can_focus=True):
         elif column_index == self._index_column_index:
             renderable = Text(str(row_index), style="dim")
         else:
-            renderable = self._cell_formatter(self.get_cell_at(coordinate))
+            try:
+                renderable = self._cell_formatter(self.get_cell_at(coordinate))
+            except CellNotLoadedError:
+                return Text("…", style="dim")
         self._cell_renderable_cache[coordinate] = renderable
         return renderable
 
@@ -1950,12 +2052,12 @@ class ArrowTable(ScrollView, can_focus=True):
         if self.row_count == 0:
             return
         if cursor_type == "cell":
+            try:
+                value = self.get_cell_at(cursor_coordinate)
+            except CellNotLoadedError:
+                return
             self.post_message(
-                ArrowTable.CellSelected(
-                    self,
-                    self.get_cell_at(cursor_coordinate),
-                    coordinate=cursor_coordinate,
-                )
+                ArrowTable.CellSelected(self, value, coordinate=cursor_coordinate)
             )
         elif cursor_type == "row":
             row_index, _ = cursor_coordinate

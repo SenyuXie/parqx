@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from threading import Event
 from typing import Any, ClassVar
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
 
+from parqx.data.parquet import ParquetSource, ReadCancelledError
+from parqx.data.view import DataPage, TableData
 from parqx.query.engine import QueryLimits
 from parqx.tui.screens.query import QueryResult, QueryScreen
 from parqx.tui.widgets import ArrowTable, ResultPane
@@ -62,6 +65,9 @@ class ParqxApp(App[Any]):
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
         self._load_request_id = 0
+        self._source: ParquetSource | None = None
+        self._page_request = 0
+        self._page_cancelled = Event()
         # Textual's registration signature omits the screen's generic result type.
         self.install_screen(  # pyright: ignore[reportUnknownMemberType]
             QueryScreen(path, query_limits=query_limits), "query"
@@ -146,21 +152,25 @@ class ParqxApp(App[Any]):
     @work(thread=True, group="load", exclusive=True, exit_on_error=False)
     def _load_table(self, request_id: int) -> None:
         try:
-            table: pa.Table = pq.read_table(self._path)
+            source = ParquetSource(self._path)
         except (OSError, pa.ArrowException, MemoryError) as exc:
             logger.exception("Failed to read parquet file: %s", self._path)
             self._publish(self._on_load_error, str(exc), request_id)
             return
-        self._publish(self._on_load_ok, table, request_id)
+        self._publish(self._on_load_ok, source, request_id)
 
-    async def _on_load_ok(self, table: pa.Table, request_id: int) -> None:
+    async def _on_load_ok(self, source: ParquetSource, request_id: int) -> None:
         async with self._tab_lock:
             if request_id != self._load_request_id:
                 return
             pane = self._panes.get("source")
             if pane is None:
                 return
-            await pane.show_table(table, f"{table.num_rows:,} rows · original values")
+            self._source = source
+            await pane.show_table(
+                TableData(source.schema, source.row_count),
+                f"{source.row_count:,} rows · original values",
+            )
             if self._tabs.active == "source":
                 self._focus_active_table()
 
@@ -168,6 +178,92 @@ class ParqxApp(App[Any]):
         if request_id == self._load_request_id and "source" in self._panes:
             self.load_error = message
             self.exit(return_code=1)
+
+    @on(ArrowTable.WindowRequested)
+    def _on_window_requested(self, event: ArrowTable.WindowRequested) -> None:
+        """Read source windows on workers without changing the active result tab."""
+        pane = self._panes.get("source")
+        if (
+            self._source is None
+            or pane is None
+            or pane.table is None
+            or pane.table is not event.control
+            or pane.table.data is not event.data
+        ):
+            return
+        self._page_cancelled.set()
+        self._page_cancelled = cancelled = Event()
+        self._page_request += 1
+        self._read_page(
+            self._source,
+            weakref.ref(event.data),
+            event.start_row,
+            event.stop_row,
+            self._page_request,
+            cancelled,
+        )
+
+    @work(thread=True, group="page", exclusive=True, exit_on_error=False)
+    def _read_page(
+        self,
+        source: ParquetSource,
+        data: weakref.ReferenceType[TableData],
+        start: int,
+        stop: int,
+        request: int,
+        cancelled: Event,
+    ) -> None:
+        # A closed pane can release its cache while this bounded read finishes.
+        try:
+            page = source.read_window(start, stop, cancelled)
+        except ReadCancelledError:
+            return
+        except (OSError, pa.ArrowException, MemoryError) as exc:
+            if not cancelled.is_set():
+                self._publish(self._on_page_error, data, request, str(exc))
+            return
+        if not cancelled.is_set():
+            self._publish(self._on_page_loaded, data, request, page)
+
+    def _current_source_pane(
+        self, data: weakref.ReferenceType[TableData], request: int
+    ) -> ResultPane | None:
+        pane = self._panes.get("source")
+        if (
+            request != self._page_request
+            or self._source is None
+            or pane is None
+            or pane.table is None
+            or pane.table.data is not data()
+        ):
+            return None
+        return pane
+
+    def _on_page_loaded(
+        self, data: weakref.ReferenceType[TableData], request: int, page: DataPage
+    ) -> None:
+        pane = self._current_source_pane(data, request)
+        if pane is not None and pane.table is not None:
+            pane.table.accept_page(page)
+            pane.update_status(f"{pane.table.row_count:,} rows · original values")
+
+    def _on_page_error(
+        self, data: weakref.ReferenceType[TableData], request: int, message: str
+    ) -> None:
+        pane = self._current_source_pane(data, request)
+        if pane is not None and pane.table is not None:
+            pane.table.fail_window()
+            pane.update_status(f"Read error: {message}")
+
+    def _cancel_source_read(self) -> None:
+        self._load_request_id += 1
+        self._page_request += 1
+        self._page_cancelled.set()
+        self._source = None
+
+    def on_unmount(self) -> None:
+        """Invalidate source callbacks and cancel any in-flight window read."""
+        self._cancel_source_read()
 
     def action_open_query(self) -> None:
         """Open the reusable SQL editor without replacing the current tab."""
@@ -207,7 +303,7 @@ class ParqxApp(App[Any]):
             if pane_id not in self._panes:
                 return
             if pane_id == "source":
-                self._load_request_id += 1
+                self._cancel_source_read()
             await self._tabs.remove_pane(pane_id)
             del self._panes[pane_id]
             self._refresh_tab_bindings()

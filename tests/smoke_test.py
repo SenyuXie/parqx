@@ -26,6 +26,8 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.logger",
     "parqx.data",
     "parqx.data.batch",
+    "parqx.data.parquet",
+    "parqx.data.view",
     "parqx.query",
     "parqx.query.engine",
     "parqx.tui.app",
