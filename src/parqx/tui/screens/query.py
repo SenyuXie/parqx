@@ -16,7 +16,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Label, LoadingIndicator, TextArea
+from textual.widgets import Footer, Label, LoadingIndicator, TextArea
 
 from parqx.query.engine import (
     QueryCancelledError,
@@ -73,9 +73,15 @@ class QueryScreen(ModalScreen[QueryResult]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("enter", "run_query", "Run", show=False, priority=True),
-        Binding("shift+enter", "newline", "New line", show=False, priority=True),
-        Binding("escape", "close", "Close", show=False, priority=True),
+        Binding("enter", "run_query", "Run SQL", priority=True),
+        Binding("shift+enter", "newline", "New line", priority=True),
+        Binding(
+            "escape",
+            "close",
+            "Close",
+            priority=True,
+            tooltip="Close the editor and cancel any running query",
+        ),
     ]
 
     def __init__(self, path: Path, query_limits: QueryLimits | None = None) -> None:
@@ -87,9 +93,6 @@ class QueryScreen(ModalScreen[QueryResult]):
             "SELECT * FROM data", language="sql", id="sql-query"
         )
         self._status = Label("", id="query-status", markup=False)
-        self._hints = Label(
-            "enter Run · shift+enter New line · esc Close", markup=False
-        )
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._request_id = 0
@@ -100,14 +103,20 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.error: str | None = None
 
     def compose(self) -> ComposeResult:
-        """Yield the centered editor, execution status and keyboard hints."""
+        """Yield the centered editor, execution status and native shortcut footer."""
         dialog = Vertical(id="query-dialog")
         dialog.border_title = "SQL query"
         with dialog:
             yield self.editor
             yield self._loading
             yield self._status
-            yield self._hints
+            yield Footer(show_command_palette=False)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Keep unavailable editor actions visible but dimmed during execution."""
+        if self.running and action in {"run_query", "newline"}:
+            return None
+        return super().check_action(action, parameters)
 
     def on_screen_resume(self) -> None:
         """Focus the existing editor without resetting its selection or history."""
@@ -120,9 +129,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.running = running
         self.editor.read_only = running
         self._loading.display = running
-        self._hints.update(
-            "esc Cancel" if running else "enter Run · shift+enter New line · esc Close"
-        )
+        self.refresh_bindings()
 
     def action_newline(self) -> None:
         """Insert a newline through the editor's undoable selection operation."""
