@@ -75,13 +75,7 @@ class QueryScreen(ModalScreen[QueryResult]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "run_query", "Run SQL", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
-        Binding(
-            "escape",
-            "close",
-            "Close",
-            priority=True,
-            tooltip="Close the editor and cancel any running query",
-        ),
+        Binding("escape", "close", "Close", priority=True),
     ]
 
     def __init__(self, path: Path, query_limits: QueryLimits | None = None) -> None:
@@ -89,9 +83,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         super().__init__()
         self._path = path
         self._query_limits = query_limits or QueryLimits()
-        self.editor = TextArea.code_editor(
-            "SELECT * FROM data", language="sql", id="sql-query"
-        )
+        self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._status = Label("", id="query-status", markup=False)
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
