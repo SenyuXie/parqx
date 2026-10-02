@@ -169,7 +169,7 @@ def test_window_does_not_retain_discarded_decode_buffers(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("kind", ["string", "binary", "list", "nested"])
 @pytest.mark.parametrize("prefix_length", [5, 1000], ids=["inline", "long"])
-def test_view_windows_and_samples_preserve_schema_and_compact_buffers(
+def test_view_windows_preserve_schema_and_compact_buffers(
     tmp_path: Path, kind: str, prefix_length: int
 ) -> None:
     short = "x" * prefix_length
@@ -209,19 +209,18 @@ def test_view_windows_and_samples_preserve_schema_and_compact_buffers(
     assert page.table.get_total_buffer_size() < prefix_length + 512
 
     data = TableData(source.schema, source.row_count)
-    assert data.add_page(page)
-    assert data.sample.schema.equals(source.schema, check_metadata=True)
-    assert data.sample.column(0)[0] == original[0]
-    assert data.sample.nbytes <= 2048
-    assert data.sample.get_total_buffer_size() < prefix_length + 512
+    data.add_page(page)
+    assert data.schema.equals(source.schema, check_metadata=True)
+    assert data.peek(0, 0) == original[0]
+    assert data.cache_bytes == page.table.nbytes
 
 
 def test_cache_distinguishes_null_and_miss_and_evicts_least_recently_used() -> None:
     table = pa.table({"n": [1, None]})
     data = TableData(table.schema, 100, cache_bytes=2 * table.nbytes)
     assert data.peek(0, 0) is None
-    assert data.add_page(DataPage(0, table))
-    assert not data.add_page(DataPage(10, table))
+    data.add_page(DataPage(0, table))
+    data.add_page(DataPage(10, table))
     scalar = data.peek(1, 0)
     assert scalar is not None
     assert not scalar.is_valid
@@ -249,51 +248,6 @@ def test_cache_replacement_page_limit_and_oversized_page_exception() -> None:
     assert data.peek(0, 0) is None
     assert data.peek(1, 0) is not None
     assert data.cache_bytes == table.nbytes
-
-
-def test_width_sample_is_bounded_and_detached_from_large_pages() -> None:
-    table = pa.table({"text": pa.chunked_array([["small"] * 256, ["x" * 2_000_000]])})
-    data = TableData(table.schema, 1000, cache_bytes=1)
-    assert data.add_page(DataPage(0, table))
-    data.add_page(DataPage(500, pa.table({"text": ["new"]})))
-    assert data.peek(0, 0) is None
-    assert data.sample.num_rows == 256
-    assert data.sample.get_total_buffer_size() < 4096
-
-    wide = pa.table({"text": ["x" * 4096] * 256})
-    data = TableData(wide.schema, 256)
-    assert data.add_page(DataPage(0, wide))
-    assert 0 < data.sample.num_rows <= 256
-    assert data.sample.nbytes <= 256 * 1024
-    assert data.sample.get_total_buffer_size() < 256 * 1024
-
-
-def test_width_sampling_does_not_combine_the_entire_chunked_page() -> None:
-    chunk = pa.array(["x" * 16_000] * 16)
-    table = pa.table({"text": pa.chunked_array([chunk] * 16)})
-    data = TableData(table.schema, table.num_rows)
-    original_pool = pa.default_memory_pool()
-    pool = pa.proxy_memory_pool(original_pool)
-    try:
-        pa.set_memory_pool(pool)
-        assert data.add_page(DataPage(0, table))
-        peak = pool.max_memory()
-    finally:
-        pa.set_memory_pool(original_pool)
-        # Release the sample before destroying the allocator that owns it.
-        del data
-    assert pool.bytes_allocated() == 0
-    assert peak is not None
-    assert peak < 512 * 1024
-
-
-def test_width_sample_can_wait_until_a_small_enough_page() -> None:
-    table = pa.table({"text": ["x" * (256 * 1024)]})
-    data = TableData(table.schema, 2)
-    assert not data.add_page(DataPage(0, table))
-    assert data.sample.num_rows == 0
-    assert data.add_page(DataPage(1, pa.table({"text": ["small"]})))
-    assert data.sample.column(0)[0].as_py() == "small"
 
 
 def test_loaded_table_adapter_preserves_data_and_sample() -> None:

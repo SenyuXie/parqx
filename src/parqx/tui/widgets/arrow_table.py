@@ -641,6 +641,8 @@ class ArrowTable(ScrollView, can_focus=True):
         self._window_failed = False
         self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
+        self._widths_measured = bool(self.data.sample.num_rows)
+        """Whether content is available for widths, independent of header metadata."""
         self._column_offsets: tuple[int, ...] | None = None
         """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
         length = column_count + 1; offsets[0] == 0; offsets[-1] == total scrollable width."""
@@ -780,24 +782,23 @@ class ArrowTable(ScrollView, can_focus=True):
         percentile_width = sorted(widths)[index]
         return max(null_width, percentile_width)
 
-    @property
-    def columns(self) -> tuple[Column, ...]:
-        """Metadata about the columns of the arrow."""
-        if self._columns is not None:
-            return self._columns
-
-        sample_indices = _sample_row_indices(self.data.sample.num_rows)
-
-        self._columns = tuple(
+    def _measure_columns(self, table: pa.Table) -> tuple[Column, ...]:
+        """Keep only width estimates from a bounded set of formatted scalars."""
+        sample_indices = _sample_row_indices(table.num_rows)
+        return tuple(
             Column(
                 name,
                 content_width=self._measure_content_width(column, sample_indices),
                 auto_width=True,
             )
-            for name, column in zip(
-                self.data.schema.names, self.data.sample.columns, strict=True
-            )
+            for name, column in zip(table.column_names, table.columns, strict=True)
         )
+
+    @property
+    def columns(self) -> tuple[Column, ...]:
+        """Metadata about the columns of the arrow."""
+        if self._columns is None:
+            self._columns = self._measure_columns(self.data.sample)
         return self._columns
 
     def _get_column_render_width(self, column: Column) -> int:
@@ -910,16 +911,20 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def accept_page(self, page: DataPage) -> None:
         """Cache a completed window without resetting the table's navigation."""
-        sample_changed = self.data.add_page(page)
+        self.data.add_page(page)
         self._requested_window = None
         self._window_failed = False
-        if sample_changed:
-            self._columns = None
+        widths_changed = not self._widths_measured and bool(page.table.num_rows)
+        if widths_changed:
+            # Measure bounded previews even when a raw row exceeds the cache budget.
+            # Retain only widths, so evicting this page also releases its Arrow data.
+            self._columns = self._measure_columns(page.table)
+            self._widths_measured = True
             self._column_offsets = None
             self._require_update_dimensions = True
         self._update_count += 1
         self._clear_render_caches()
-        self.refresh(layout=sample_changed)
+        self.refresh(layout=widths_changed)
         if page.start <= self.cursor_row < page.stop:
             self._highlight_cursor()
 
@@ -958,6 +963,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self._requested_window = None
         self._window_failed = False
         self._columns = None
+        self._widths_measured = bool(data.sample.num_rows)
         self._column_offsets = None
         self._index_column = None
         self._update_count += 1

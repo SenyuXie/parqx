@@ -21,6 +21,23 @@ from parqx.tui.widgets import ArrowTable
 from tests.test_query_app import open_query, run_query, select_tab, wait_for
 
 
+@pytest.mark.parametrize(
+    "payload", ["hello " * 50_000, b"x" * 300_000], ids=["text", "binary"]
+)
+async def test_large_field_does_not_hide_neighboring_column(
+    tmp_path: Path, payload: str | bytes
+) -> None:
+    path = tmp_path / "large-field.parquet"
+    pq.write_table(pa.table({"id": [123456789], "payload": [payload]}), path)
+    app = ParqxApp(path)
+    async with app.run_test(size=(80, 12)) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        table = app.query_one(ArrowTable)
+        await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+        assert table.columns[0].content_width == 9
+        assert "123456789" in table.render_line(1).text
+
+
 async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> None:
     path = tmp_path / "large.parquet"
     pq.write_table(pa.table({"n": range(100_000)}), path, row_group_size=10_000)

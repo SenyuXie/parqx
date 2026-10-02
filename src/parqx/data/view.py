@@ -7,8 +7,6 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 
-from parqx.data.batch import compact_batch
-
 
 @dataclass(frozen=True)
 class DataPage:
@@ -26,8 +24,8 @@ class DataPage:
 class TableData:
     """UI-owned metadata and a bounded Arrow page cache, without I/O on lookup.
 
-    A missing cell returns None, distinct from an Arrow null scalar. The separate
-    width sample retains at most 256 rows and 256 KiB of logical Arrow data.
+    A missing cell returns None, distinct from an Arrow null scalar. Lazy views
+    keep an empty width sample; the widget measures pages as they arrive.
     Already loaded tables keep their existing buffers through from_table.
     """
 
@@ -65,14 +63,14 @@ class TableData:
                 return page.table.column(column)[row - page.start]
         return None
 
-    def add_page(self, page: DataPage) -> bool:
-        """Cache a completed window and report whether its width sample changed.
+    def add_page(self, page: DataPage) -> None:
+        """Cache a completed window.
 
         Keep at most 128 pages within the logical byte budget. A single oversized
         page is admitted so a cell larger than the budget can still be inspected.
         """
         if not page.table.num_rows:
-            return False
+            return
         if old := self._pages.pop(page.start, None):
             self.cache_bytes -= old.table.nbytes
         self._pages[page.start] = page
@@ -82,18 +80,3 @@ class TableData:
         ):
             _, removed = self._pages.popitem(last=False)
             self.cache_bytes -= removed.table.nbytes
-        if self.sample.num_rows:
-            return False
-        count = min(256, page.table.num_rows)
-        while count and page.table.slice(0, count).nbytes > 256 * 1024:
-            count //= 2
-        if not count:
-            return False
-        # Copy each selected batch: Table.take could first combine the full page.
-        batches = [
-            compact_batch(batch)
-            for batch in page.table.slice(0, count).to_batches()
-            if batch.num_rows
-        ]
-        self.sample = pa.Table.from_batches(batches, schema=self.schema)
-        return True

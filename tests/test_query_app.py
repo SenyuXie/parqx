@@ -319,7 +319,7 @@ async def test_query_cancellation_and_shutdown_finish_worker(
 
 
 @pytest.mark.parametrize("pane_id", ["source", "query-1"])
-async def test_closing_tab_releases_its_arrow_table(
+async def test_closing_tab_releases_its_cached_data(
     small_parquet: Path, pane_id: str
 ) -> None:
     app = ParqxApp(small_parquet)
@@ -328,7 +328,7 @@ async def test_closing_tab_releases_its_arrow_table(
         tabs = app.query_one(TabbedContent)
         await run_query(app, pilot, "SELECT 42 AS answer")
         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
-        data = weakref.ref(tabs.get_pane(pane_id).query_one(ArrowTable).data.sample)
+        data = weakref.ref(tabs.get_pane(pane_id).query_one(ArrowTable).data)
         await select_tab(tabs, pane_id, pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: not tabs.query(f"#{pane_id}"), pilot)
