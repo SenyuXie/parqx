@@ -12,7 +12,7 @@ from typing import Self
 import duckdb
 import pyarrow as pa
 
-from parqx.data.batch import bounded_prefix
+from parqx.data.batch import bounded_prefix, compact_batch
 
 
 class QueryCancelledError(Exception):
@@ -194,11 +194,7 @@ class QuerySession:
             )
             if keep:
                 # A slice could retain all the discarded rows' backing buffers.
-                prefix = (
-                    batch
-                    if keep == batch.num_rows
-                    else batch.take(pa.array(range(keep), type=pa.int64()))
-                )
+                prefix = compact_batch(batch.slice(0, keep), copy=keep < batch.num_rows)
                 batches.append(prefix)
                 rows += keep
                 size += prefix.nbytes

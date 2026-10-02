@@ -1,6 +1,7 @@
 # Inspect render internals to enforce the viewport work budget.
 # pyright: reportPrivateUsage=false
 
+import weakref
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -12,8 +13,9 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.coordinate import Coordinate
 
+from parqx.data.view import DataPage, TableData
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.widgets.arrow_table import ArrowTable
+from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
 
 
 def _column_width_peak_memory(table: pa.Table) -> int:
@@ -160,3 +162,110 @@ def test_replace_table_invalidates_content_schema_and_layout() -> None:
     widget.replace_table(pa.table({"empty": pa.array([], type=pa.int64())}))
     assert widget.row_count == 0
     assert widget.columns[0].name == "empty"
+
+
+def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -> None:
+    page = pa.table({"value": pa.array([None, 12345], type=pa.int64())})
+    widget = ArrowTable(TableData(page.schema, 10_000))
+    assert widget.row_count == 10_000
+    assert widget.columns[0].content_width == 0
+    with pytest.raises(CellNotLoadedError):
+        widget.get_cell_at(Coordinate(0, 0))
+    assert widget._get_cell_renderable(0, 0).plain == "…"
+    assert Coordinate(0, 0) not in widget._cell_renderable_cache
+
+    widget.accept_page(DataPage(0, page))
+    assert not widget.get_cell_at(Coordinate(0, 0)).is_valid
+    assert widget._get_cell_renderable(0, 0).plain == "null"
+    assert widget._get_cell_renderable(1, 0).plain == "12345"
+    assert widget.columns[0].content_width == 5
+    assert widget.row_count == 10_000
+
+
+def test_replacing_window_data_discards_cached_cells_and_pending_requests() -> None:
+    page = pa.table({"old": ["before"]})
+    data = TableData(page.schema, 1_000)
+    widget = ArrowTable(data)
+    widget.accept_page(DataPage(0, page))
+    assert widget._get_cell_renderable(0, 0).plain == "before"
+    widget.fail_window()
+
+    widget.replace_data(TableData.from_table(pa.table({"new": ["after"]})))
+    assert widget.data is not data
+    assert widget._get_cell_renderable(0, 0).plain == "after"
+    assert widget.columns[0].name == "new"
+    assert widget.row_count == 1
+    assert not widget._window_failed
+    assert widget._requested_window is None
+
+
+def test_page_widths_match_loaded_data_and_refresh_cached_layout() -> None:
+    table = pa.table(
+        {
+            "id": [123456789, None],
+            "text": ["界e\u0301", "你好你好"],
+            "time": pa.array([123456789, None], type=pa.timestamp("ns", tz="UTC")),
+            "null": [None, None],
+            "flag": [False, None],
+            "payload": ["hello " * 50_000, "x" * 300_000],
+        }
+    )
+    widget = ArrowTable(TableData(table.schema, table.num_rows))
+    old_offsets = widget._get_column_offsets()
+    widget.accept_page(DataPage(0, table))
+
+    assert widget.columns == ArrowTable(table).columns
+    assert widget.columns[0].content_width == 9
+    assert widget._get_column_offsets() != old_offsets
+
+
+def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -> None:
+    # A large multi-chunk page must not be combined or copied just for widths.
+    chunk = pa.array(["hello " * 50_000])
+    table = pa.table({"text": pa.chunked_array([chunk] * 512)})
+    widget = ArrowTable(TableData(table.schema, 1024, cache_bytes=1))
+    reference = weakref.ref(table)
+    next_page = DataPage(512, pa.table({"text": ["next"]}))
+    calls = 0
+    original_format = CellFormatter.__call__
+
+    def count_format(formatter: CellFormatter, scalar: pa.Scalar) -> Text:
+        nonlocal calls
+        calls += 1
+        return original_format(formatter, scalar)
+
+    original_pool = pa.default_memory_pool()
+    pool = pa.proxy_memory_pool(original_pool)
+    try:
+        pa.set_memory_pool(pool)
+        with patch.object(CellFormatter, "__call__", count_format):
+            widget.accept_page(DataPage(0, table))
+            assert calls == 256
+            widths = widget.columns
+            widget.accept_page(next_page)
+            assert calls == 256
+        assert widget.columns == widths
+        peak = pool.max_memory()
+        del table
+        assert reference() is None
+        assert widget.data.peek(0, 0) is None
+    finally:
+        pa.set_memory_pool(original_pool)
+    assert pool.bytes_allocated() == 0
+    assert peak is not None
+    assert peak < 64 * 1024
+
+
+def test_empty_page_and_replacement_allow_first_content_width_measurement() -> None:
+    table = pa.table({"n": [12345]})
+    widget = ArrowTable(TableData(table.schema, 1))
+    widget.accept_page(DataPage(0, table.slice(0, 0)))
+    assert widget.columns[0].content_width == 0
+    widget.accept_page(DataPage(0, table))
+    assert widget.columns[0].content_width == 5
+
+    replacement = pa.table({"n": [123456789]})
+    widget.replace_data(TableData(replacement.schema, 1))
+    assert widget.columns[0].content_width == 0
+    widget.accept_page(DataPage(0, replacement))
+    assert widget.columns[0].content_width == 9

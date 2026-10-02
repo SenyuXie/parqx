@@ -5,6 +5,7 @@ from textual.app import ComposeResult
 from textual.content import Content
 from textual.widgets import Label, TabPane
 
+from parqx.data.view import TableData
 from parqx.tui.widgets.arrow_table import ArrowTable
 
 
@@ -40,13 +41,17 @@ class ResultPane(TabPane):
             yield self.table
         yield self._status
 
-    async def show_table(self, table: pa.Table, status: str) -> None:
-        """Mount the completed source table before dismissing the loading cover."""
+    async def show_table(self, table: pa.Table | TableData, status: str) -> None:
+        """Mount source metadata before letting rendering request missing windows."""
         self.table = ArrowTable(table)
         await self.mount(self.table, before=self._status)
-        self._status.update(status)
-        self._status.display = True
+        self.update_status(status)
         self.loading = False
+
+    def update_status(self, status: str) -> None:
+        """Update this result's status without moving focus or changing tabs."""
+        self._status.update(status)
+        self._status.display = bool(status)
 
     def on_unmount(self) -> None:
         """Release Arrow buffers even if Textual briefly retains the closed widget."""

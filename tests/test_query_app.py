@@ -10,13 +10,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import Footer, Label, TabbedContent, Tabs
 from textual.widgets._footer import FooterKey
 
+from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryLimits, QueryPreview, QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
@@ -244,19 +244,24 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
                 release.set()
 
 
-async def test_file_read_cannot_recreate_closed_source_tab(small_parquet: Path) -> None:
+@pytest.mark.parametrize("stale_error", [False, True])
+async def test_file_read_cannot_recreate_closed_source_tab(
+    small_parquet: Path, stale_error: bool
+) -> None:
     started, release, returned = Event(), Event(), Event()
-    original_read = pq.read_table
 
-    def delayed_read(path: Path) -> pa.Table:
+    def delayed_read(path: Path) -> ParquetSource:
         started.set()
         release.wait(timeout=5)
-        result = original_read(path)
-        returned.set()
-        return result
+        try:
+            if stale_error:
+                raise OSError("obsolete metadata read failed")
+            return ParquetSource(path)
+        finally:
+            returned.set()
 
     app = ParqxApp(small_parquet)
-    with patch("parqx.tui.app.pq.read_table", delayed_read):
+    with patch("parqx.tui.app.ParquetSource", delayed_read):
         async with app.run_test() as pilot:
             try:
                 await wait_for(started.is_set, pilot)
@@ -314,7 +319,7 @@ async def test_query_cancellation_and_shutdown_finish_worker(
 
 
 @pytest.mark.parametrize("pane_id", ["source", "query-1"])
-async def test_closing_tab_releases_its_arrow_table(
+async def test_closing_tab_releases_its_cached_data(
     small_parquet: Path, pane_id: str
 ) -> None:
     app = ParqxApp(small_parquet)
@@ -323,9 +328,7 @@ async def test_closing_tab_releases_its_arrow_table(
         tabs = app.query_one(TabbedContent)
         await run_query(app, pilot, "SELECT 42 AS answer")
         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
-        data = weakref.ref(
-            tabs.get_pane(pane_id).query_one(ArrowTable)._table  # pyright: ignore[reportPrivateUsage]
-        )
+        data = weakref.ref(tabs.get_pane(pane_id).query_one(ArrowTable).data)
         await select_tab(tabs, pane_id, pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: not tabs.query(f"#{pane_id}"), pilot)
