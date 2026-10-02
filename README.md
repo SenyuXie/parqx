@@ -24,10 +24,6 @@ parqx data/weather.parquet
 
 Press `ctrl+p` → **SQL query** to query the file as `data`. Results open in new tabs.
 
-Queries accept one `SELECT` statement, including `WITH`. Previews show up to
-10,000 rows or about 32 MiB of Arrow data; a single oversized row may exceed
-the byte limit.
-
 ## Keyboard control
 
 ### Navigation
@@ -63,8 +59,6 @@ These shortcuts apply to the active tab.
 | `enter`                  | Run the complete SQL query                    |
 | `shift+enter`            | Insert a newline                              |
 | `esc`                    | Close the editor and cancel any running query |
-| `ctrl+w`                 | Delete the previous word in the SQL editor    |
-| `f6` / `f7`              | Select the current SQL line / all SQL         |
 
 ## License
 
