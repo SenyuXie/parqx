@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from parqx.cli import app
@@ -19,8 +20,9 @@ def test_version_flag_prints_version_and_exits() -> None:
 def test_help_lists_path_argument() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "PATH" in result.stdout
-    assert "--query" in result.stdout
+    output = unstyle(result.stdout)
+    assert "PATH" in output
+    assert "--query" in output
 
 
 def test_nonexistent_path_exits_nonzero(tmp_path: Path) -> None:

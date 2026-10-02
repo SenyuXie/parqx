@@ -1,9 +1,7 @@
 from pathlib import Path
-from sys import setprofile
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from time import monotonic
-from types import FrameType
 
 import duckdb
 import pyarrow as pa
@@ -184,22 +182,24 @@ def test_cancel_during_preview_and_after_close(
     control.cancel()
 
 
-def test_cancel_interrupts_native_query(small_parquet: Path) -> None:
+def test_cancel_interrupts_native_query(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     query_started = Event()
     query_finished = Event()
     errors: list[BaseException] = []
+    original_reader = duckdb.DuckDBPyRelation.to_arrow_reader
 
-    def native_call(_frame: FrameType, event: str, function: object) -> None:
-        if (
-            event == "c_call"
-            and getattr(function, "__name__", None) == "to_arrow_reader"
-        ):
-            query_started.set()
+    def start_reader(
+        relation: duckdb.DuckDBPyRelation, batch_rows: int
+    ) -> pa.RecordBatchReader:
+        query_started.set()
+        return original_reader(relation, batch_rows)
 
+    monkeypatch.setattr(duckdb.DuckDBPyRelation, "to_arrow_reader", start_reader)
     control = QueryControl()
 
     def query() -> None:
-        setprofile(native_call)
         try:
             with QuerySession(
                 small_parquet, "SELECT sum(sin(i)) FROM range(1000000000) t(i)", control
@@ -208,7 +208,6 @@ def test_cancel_interrupts_native_query(small_parquet: Path) -> None:
         except BaseException as exc:
             errors.append(exc)
         finally:
-            setprofile(None)
             query_finished.set()
 
     worker = Thread(target=query, daemon=True)
@@ -216,8 +215,8 @@ def test_cancel_interrupts_native_query(small_parquet: Path) -> None:
     try:
         assert query_started.wait(timeout=10), "DuckDB did not start executing"
         assert worker.is_alive(), "The query finished before cancellation"
-        # c_call precedes native entry by a few instructions. Reissue interrupts
-        # until the query exits so an interrupt before entry cannot be lost.
+        # The wrapper signals immediately before the real native call. Reissue
+        # interrupts so one arriving before native entry cannot be lost.
         deadline = monotonic() + 5
         while not query_finished.is_set() and monotonic() < deadline:
             control.cancel()
