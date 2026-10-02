@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
-from textual.widgets import Footer, Label, TabbedContent
+from textual.widgets import Footer, Label, TabbedContent, Tabs
 from textual.widgets._footer import FooterKey
 
 from parqx.query.engine import QueryLimits, QueryPreview, QuerySession
@@ -56,6 +56,19 @@ async def run_query(app: ParqxApp, pilot: Pilot[Any], sql: str) -> ArrowTable:
     assert table is not None
     await wait_for(lambda: table.has_focus, pilot)
     return table
+
+
+async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> None:
+    """Switch through native input, including its focus and activation messages."""
+    assert await pilot.click(tabs.get_tab(pane_id))
+    await wait_for(
+        lambda: (
+            tabs.active == pane_id
+            and tabs.get_pane(pane_id).display
+            and tabs.query_one(Tabs).has_focus
+        ),
+        pilot,
+    )
 
 
 async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -> None:
@@ -133,8 +146,7 @@ async def test_tabs_preserve_independent_table_state(small_parquet: Path) -> Non
         assert second.show_row_index
         assert not second.zebra_stripes
         assert second.cursor_type == "cell"
-        tabs.active = "query-1"
-        await wait_for(lambda: tabs.get_pane("query-1").display, pilot)
+        await select_tab(tabs, "query-1", pilot)
         assert (
             first.show_header,
             first.show_row_index,
@@ -166,8 +178,7 @@ async def test_close_tab_footer_and_last_tab_guard(small_parquet: Path) -> None:
             lambda: bool(close_keys()) and not close_keys()[0].has_class("-disabled"),
             pilot,
         )
-        tabs.active = "source"
-        await wait_for(lambda: tabs.active == "source", pilot)
+        await select_tab(tabs, "source", pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "query-1", pilot)
         assert not tabs.query("#source")
@@ -252,7 +263,7 @@ async def test_file_read_cannot_recreate_closed_source_tab(small_parquet: Path) 
                 tabs = app.query_one(TabbedContent)
                 assert tabs.get_pane("source").query(FileLoading)
                 table = await run_query(app, pilot, "SELECT 42 AS answer")
-                tabs.active = "source"
+                await select_tab(tabs, "source", pilot)
                 await pilot.press("ctrl+w")
                 await wait_for(lambda: not tabs.query("#source"), pilot)
                 release.set()
@@ -313,7 +324,7 @@ async def test_closing_tab_releases_its_arrow_table(
         data = weakref.ref(
             tabs.get_pane(pane_id).query_one(ArrowTable)._table  # pyright: ignore[reportPrivateUsage]
         )
-        tabs.active = pane_id
+        await select_tab(tabs, pane_id, pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: not tabs.query(f"#{pane_id}"), pilot)
 
