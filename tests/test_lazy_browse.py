@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 from textual.command import CommandPalette
 from textual.coordinate import Coordinate
+from textual.widget import Widget
 from textual.widgets import Input, Label, TabbedContent
 
 from parqx.data.parquet import ParquetSource
@@ -88,6 +89,7 @@ async def test_pending_source_window_keeps_modal_focus(
                 assert table.data.peek(0, 0) is None
                 await pilot.press("down", "right", "enter")
                 assert table.cursor_coordinate == Coordinate(1, 1)
+                focused: Widget
                 if overlay == "query":
                     query = await open_query(app, pilot)
                     focused = query.editor

@@ -174,6 +174,7 @@ def test_view_windows_and_samples_preserve_schema_and_compact_buffers(
 ) -> None:
     short = "x" * prefix_length
     tail = "y" * 2_000_000
+    data_type: pa.DataType
     values: list[object]
     if kind == "nested":
         data_type = pa.struct(
