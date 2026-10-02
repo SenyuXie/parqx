@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from types import TracebackType
 from typing import Self
 
@@ -48,12 +48,33 @@ class QueryControl:
         self.finished = Event()
         self._lock = Lock()
         self._connection: duckdb.DuckDBPyConnection | None = None
+        self._interrupt_stop = Event()
+        self._interrupt_thread: Thread | None = None
 
     def cancel(self) -> None:
-        """Signal cancellation and interrupt a currently executing query."""
+        """Record cancellation and interrupt until the connection detaches."""
         self.cancelled.set()
         with self._lock:
             if self._connection is not None:
+                self._connection.interrupt()
+                if self._interrupt_thread is None:
+                    thread = Thread(
+                        target=self._repeat_interrupt,
+                        name="parqx-query-cancel",
+                        daemon=True,
+                    )
+                    # Start under the lock so detach cannot join an unstarted
+                    # thread; only retain it if starting succeeds.
+                    thread.start()
+                    self._interrupt_thread = thread
+
+    def _repeat_interrupt(self) -> None:
+        # DuckDB clears early interrupts when starting a query. Keep retrying
+        # across native entry until the worker detaches its connection.
+        while not self._interrupt_stop.wait(0.01):
+            with self._lock:
+                if self._connection is None:
+                    return
                 self._connection.interrupt()
 
     def check(self) -> None:
@@ -68,9 +89,14 @@ class QueryControl:
             self._connection = connection
 
     def detach(self) -> None:
-        """Prevent interruption racing with connection cleanup."""
+        """Stop interrupts before the worker closes its connection."""
         with self._lock:
             self._connection = None
+            self._interrupt_stop.set()
+            thread = self._interrupt_thread
+        # The retry thread may need the lock before it can finish.
+        if thread is not None:
+            thread.join()
 
 
 @dataclass(frozen=True)

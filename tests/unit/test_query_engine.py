@@ -1,7 +1,9 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from time import monotonic
+from typing import cast
+from unittest.mock import patch
 
 import duckdb
 import pyarrow as pa
@@ -182,10 +184,14 @@ def test_cancel_during_preview_and_after_close(
     control.cancel()
 
 
+@pytest.mark.parametrize(
+    "before_native", [True, False], ids=["before-native", "unpaused-entry"]
+)
 def test_cancel_interrupts_native_query(
-    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, before_native: bool
 ) -> None:
-    query_started = Event()
+    ready_to_cancel = Event()
+    enter_native = Event()
     query_finished = Event()
     errors: list[BaseException] = []
     original_reader = duckdb.DuckDBPyRelation.to_arrow_reader
@@ -193,7 +199,9 @@ def test_cancel_interrupts_native_query(
     def start_reader(
         relation: duckdb.DuckDBPyRelation, batch_rows: int
     ) -> pa.RecordBatchReader:
-        query_started.set()
+        ready_to_cancel.set()
+        if before_native:
+            assert enter_native.wait(timeout=10), "Native-entry gate was not released"
         return original_reader(relation, batch_rows)
 
     monkeypatch.setattr(duckdb.DuckDBPyRelation, "to_arrow_reader", start_reader)
@@ -213,24 +221,81 @@ def test_cancel_interrupts_native_query(
     worker = Thread(target=query, daemon=True)
     worker.start()
     try:
-        assert query_started.wait(timeout=10), "DuckDB did not start executing"
+        assert ready_to_cancel.wait(timeout=10), (
+            "DuckDB did not reach cancellation point"
+        )
         assert worker.is_alive(), "The query finished before cancellation"
-        # The wrapper signals immediately before the real native call. Reissue
-        # interrupts so one arriving before native entry cannot be lost.
-        deadline = monotonic() + 5
-        while not query_finished.is_set() and monotonic() < deadline:
-            control.cancel()
-            query_finished.wait(timeout=0.01)
+        control.cancel()
+        enter_native.set()
+        assert query_finished.wait(timeout=5), (
+            "DuckDB did not stop after one cancellation"
+        )
         worker.join(timeout=1)
-        assert not worker.is_alive(), "DuckDB did not stop after interruption"
+        assert not worker.is_alive(), "Query worker did not exit"
         assert len(errors) == 1
         assert isinstance(errors[0], duckdb.InterruptException)
     finally:
-        control.cancel()
-        worker.join(timeout=5)
+        # Cleanup happens only after the single-cancel assertion has passed or
+        # failed. A second interrupt here cannot make a lost-cancel test pass.
+        enter_native.set()
+        deadline = monotonic() + 5
+        while worker.is_alive() and monotonic() < deadline:
+            control.cancel()
+            worker.join(timeout=0.01)
 
     with QuerySession(small_parquet, "SELECT 42", QueryControl()) as session:
         assert session.preview().table.column(0)[0].as_py() == 42
+
+
+def test_completed_query_does_not_start_interrupt_thread(small_parquet: Path) -> None:
+    with patch.object(engine, "Thread", wraps=Thread) as create_thread:
+        control = QueryControl()
+        with QuerySession(small_parquet, "SELECT 42", control) as session:
+            assert session.preview().table.column(0)[0].as_py() == 42
+        control.cancel()
+        create_thread.assert_not_called()
+
+
+def test_repeated_cancel_uses_one_thread_and_detach_joins_it() -> None:
+    caller = current_thread()
+    retried = Event()
+    interrupts: list[Thread] = []
+
+    class Connection:
+        closed = False
+
+        def interrupt(self) -> None:
+            assert not self.closed, "An interrupt reached the closed connection"
+            thread = current_thread()
+            interrupts.append(thread)
+            if thread is not caller:
+                retried.set()
+
+    connection = Connection()
+    control = QueryControl()
+    control.attach(cast(duckdb.DuckDBPyConnection, connection))
+    with patch.object(engine, "Thread", wraps=Thread) as create_thread:
+        try:
+            control.cancel()
+            retry_thread = control._interrupt_thread  # pyright: ignore[reportPrivateUsage]
+            assert retry_thread is not None
+            assert retried.wait(timeout=2), "Cancellation did not retry interruption"
+            control.cancel()
+            control.cancel()
+            create_thread.assert_called_once()
+            assert control._interrupt_thread is retry_thread  # pyright: ignore[reportPrivateUsage]
+            with patch.object(retry_thread, "join", wraps=retry_thread.join) as join:
+                control.detach()
+                join.assert_called_once()
+            assert not retry_thread.is_alive()
+
+            connection.closed = True
+            count = len(interrupts)
+            control.cancel()
+            assert len(interrupts) == count
+            create_thread.assert_called_once()
+        finally:
+            control.detach()
 
 
 @pytest.mark.parametrize("sql", ["SELECT * FROM data", "SELECT missing FROM data"])
