@@ -37,6 +37,7 @@ async def test_initial_sql_bypasses_full_read_and_bounds_preview(
     with patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")):
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            await wait_for(lambda: not app.query(FileLoading), pilot)
             table = app.query_one(ArrowTable)
             assert (table.row_count, table.column_count) == (2, 1)
             assert table.columns[0].name == "name"
@@ -63,6 +64,7 @@ async def test_query_replace_error_empty_and_browse(
         await pilot.press("f1")
         await wait_for(lambda: not app.query_running, pilot)
         assert (table.row_count, table.column_count) == (2, 1)
+        await wait_for(lambda: table.has_focus, pilot)
         assert table.has_focus
 
         editor.load_text("SELECT missing FROM data")
@@ -70,6 +72,7 @@ async def test_query_replace_error_empty_and_browse(
         await pilot.press("f1")
         await wait_for(lambda: app.query_error is not None, pilot)
         assert table.row_count == 2
+        await wait_for(lambda: editor.has_focus, pilot)
         assert editor.has_focus
 
         editor.load_text("SELECT name FROM data WHERE false")
@@ -84,6 +87,7 @@ async def test_query_replace_error_empty_and_browse(
         await pilot.press("f3")
         await wait_for(lambda: table.row_count == 5, pilot)
         assert table.column_count == 3
+        await wait_for(lambda: table.has_focus, pilot)
         assert table.has_focus
 
 
@@ -94,6 +98,8 @@ async def test_initial_query_error_replaces_loader_with_empty_table(
     async with app.run_test() as pilot:
         await wait_for(lambda: app.query_error is not None, pilot)
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await wait_for(lambda: not app.query(FileLoading), pilot)
+        await wait_for(lambda: app.query_one(TextArea).has_focus, pilot)
         assert app.query_one(ArrowTable).row_count == 0
         assert not app.query(FileLoading)
         assert not app.query_running
@@ -193,6 +199,7 @@ async def test_initial_query_cancellation_and_shutdown_finish_worker(
             if cancel_explicitly:
                 await pilot.press("f2")
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+                await wait_for(lambda: not app.query(FileLoading), pilot)
                 assert app.query_one(ArrowTable).row_count == 0
                 assert not app.query(FileLoading)
                 assert not app.query_running
