@@ -88,7 +88,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         )
         self._status = Label("", id="query-status", markup=False)
         self._hints = Label(
-            "Enter Run · Shift+Enter New line · Esc Close", markup=False
+            "enter Run · shift+enter New line · esc Close", markup=False
         )
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
@@ -121,7 +121,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.editor.read_only = running
         self._loading.display = running
         self._hints.update(
-            "Esc Cancel" if running else "Enter Run · Shift+Enter New line · Esc Close"
+            "esc Cancel" if running else "enter Run · shift+enter New line · esc Close"
         )
 
     def action_newline(self) -> None:

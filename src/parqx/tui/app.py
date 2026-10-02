@@ -32,7 +32,7 @@ class ParqxApp(App[Any]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+w", "close_tab", "Close tab", key_display="Ctrl+W"),
+        Binding("ctrl+w", "close_tab", "Close tab"),
         Binding("h", "toggle_header", "Header"),
         Binding("i", "toggle_row_index", "Index"),
         Binding("z", "toggle_zebra", "Zebra"),
