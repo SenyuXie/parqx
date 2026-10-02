@@ -1,8 +1,6 @@
 # Parqx
 
-Parqx is a lightweight terminal UI for inspecting Apache Parquet files and running SQL queries, built on top of [Textual](https://github.com/Textualize/textual), [PyArrow](https://arrow.apache.org/docs/python/), and [DuckDB](https://github.com/duckdb/duckdb).
-
-Parqx opens local Parquet files directly in the terminal and displays them with ArrowTable, an interactive, scrollable, Arrow-backed widget purpose-built for inspecting Parquet data rather than wrapping Textual's general-purpose [DataTable](https://textual.textualize.io/widget_gallery/#datatable).
+Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
 
 ![Parqx app screenshot](https://github.com/user-attachments/assets/2df09bca-9ee6-423d-a4dd-dac0e9297cc6)
 
