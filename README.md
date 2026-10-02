@@ -1,6 +1,6 @@
 # Parqx
 
-Parqx is a lightweight terminal UI for inspecting Apache Parquet files, built on top of [Textual](https://github.com/Textualize/textual) and [PyArrow](https://arrow.apache.org/docs/python/).
+Parqx is a lightweight terminal UI for inspecting Apache Parquet files and running SQL queries, built on top of [Textual](https://github.com/Textualize/textual), [PyArrow](https://arrow.apache.org/docs/python/), and [DuckDB](https://github.com/duckdb/duckdb).
 
 Parqx opens local Parquet files directly in the terminal and displays them with ArrowTable, an interactive, scrollable, Arrow-backed widget purpose-built for inspecting Parquet data rather than wrapping Textual's general-purpose [DataTable](https://textual.textualize.io/widget_gallery/#datatable).
 
@@ -22,6 +22,8 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
+Press `ctrl+p` → **SQL query** to query the file as `data`. Results open in new tabs.
+
 ## Keyboard control
 
 ### Navigation
@@ -30,21 +32,33 @@ parqx data/weather.parquet
 | ---                   | ---                           |
 | `↑` / `↓`             | Move the cursor up or down    |
 | `←` / `→`             | Move the cursor left or right |
-| `PageUp` / `PageDown` | Move one page up or down      |
-| `Home`                | Move to the leftmost column   |
-| `End`                 | Move to the rightmost column  |
-| `Ctrl+Home`           | Move to the first row         |
-| `Ctrl+End`            | Move to the last row          |
-| `Enter`               | Select the current cell       |
+| `pageUp` / `pageDown` | Move one page up or down      |
+| `home`                | Move to the leftmost column   |
+| `end`                 | Move to the rightmost column  |
+| `ctrl+home`           | Move to the first row         |
+| `ctrl+end`            | Move to the last row          |
+| `enter`               | Select the current cell       |
 
 ### Table View
 
-| Key | Action                                         |
-| --- | ---                                            |
-| `H` | Toggle the column header row                   |
-| `I` | Toggle the row-index column                    |
-| `Z` | Toggle zebra striping                          |
-| `C` | Cycle cursor type (cell → row → column → none) |
+These shortcuts apply to the active tab.
+
+| Key      | Action                                               |
+| ---      | ---                                                  |
+| `h`      | Toggle the column header row                         |
+| `i`      | Toggle the row-index column                          |
+| `z`      | Toggle zebra striping                                |
+| `c`      | Cycle cursor type (cell → row → column → none)       |
+| `ctrl+w` | Close the current tab, keeping at least one tab open |
+
+### SQL query
+
+| Key                      | Action                                        |
+| ---                      | ---                                           |
+| `ctrl+p` → **SQL query** | Open the centered SQL editor                  |
+| `enter`                  | Run the complete SQL query                    |
+| `shift+enter`            | Insert a newline                              |
+| `esc`                    | Close the editor and cancel any running query |
 
 ## License
 

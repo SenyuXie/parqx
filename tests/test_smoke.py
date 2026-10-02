@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from textual.pilot import Pilot
+from textual.widgets import TabPane
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
@@ -27,9 +28,10 @@ async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
     """Boot the app, wait for async load, drive the cursor, quit cleanly."""
     app = ParqxApp(path=small_parquet)
     async with app.run_test() as pilot:
-        # Loader runs in a @work(thread=True) worker; wait for it to swap
-        # FileLoading for ArrowTable in the DOM.
-        await _wait_until(lambda: bool(app.query(ArrowTable)), pilot)
+        # The background read mounts the table before clearing native loading.
+        source = app.query_one("#source", TabPane)
+        await _wait_until(lambda: not source.loading, pilot)
+        await _wait_until(lambda: bool(source.query(ArrowTable)), pilot)
 
         table = app.query_one(ArrowTable)
         assert table.row_count == 5
