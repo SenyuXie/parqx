@@ -712,7 +712,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _measure_content_width(
         self,
         column: pa.ChunkedArray,
-        sample_indices: pa.Array,
+        sample_indices: tuple[int, ...],
         percentile: float = 0.95,
     ) -> int:
         """Estimate the display width of a column's formatted cell content.
@@ -739,9 +739,10 @@ class ArrowTable(ScrollView, can_focus=True):
             return 5  # "false"
         if pa.types.is_null(data_type):
             return 4  # "null"
+        # Scalar indexing avoids take() combining all chunks into a full-column copy.
         widths: list[int] = [
-            cell_len(self._cell_formatter(scalar).plain)
-            for scalar in column.take(sample_indices)
+            cell_len(self._cell_formatter(column[index]).plain)
+            for index in sample_indices
         ]
 
         if not widths:
@@ -757,8 +758,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if self._columns is not None:
             return self._columns
 
-        row_indices = _sample_row_indices(self.row_count)
-        sample_indices = pa.array(row_indices, type=pa.int64())
+        sample_indices = _sample_row_indices(self.row_count)
 
         self._columns = tuple(
             Column(
