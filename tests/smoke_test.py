@@ -33,7 +33,6 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.tui.screens.query",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
-    "parqx.tui.widgets.file_loading",
     "parqx.tui.widgets.result_pane",
 )
 

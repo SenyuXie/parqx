@@ -20,7 +20,7 @@ from textual.widgets._footer import FooterKey
 from parqx.query.engine import QueryLimits, QueryPreview, QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
-from parqx.tui.widgets import ArrowTable, FileLoading
+from parqx.tui.widgets import ArrowTable
 
 
 async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:
@@ -76,7 +76,7 @@ async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -
     async with app.run_test() as pilot:
         tabs = app.query_one("#results", TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
-        await wait_for(lambda: not tabs.query(FileLoading), pilot)
+        await wait_for(lambda: not tabs.get_pane("source").loading, pilot)
         assert tabs.tab_count == 1
         assert tabs.active == "source"
         assert str(tabs.get_tab("source").label) == small_parquet.name
@@ -261,7 +261,9 @@ async def test_file_read_cannot_recreate_closed_source_tab(small_parquet: Path) 
             try:
                 await wait_for(started.is_set, pilot)
                 tabs = app.query_one(TabbedContent)
-                assert tabs.get_pane("source").query(FileLoading)
+                source = tabs.get_pane("source")
+                assert source.loading
+                assert not source.query(ArrowTable)
                 table = await run_query(app, pilot, "SELECT 42 AS answer")
                 await select_tab(tabs, "source", pilot)
                 await pilot.press("ctrl+w")

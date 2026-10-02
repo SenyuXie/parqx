@@ -57,7 +57,7 @@ class ParqxApp(App[Any]):
         super().__init__()
         self._path = path
         self._tabs = TabbedContent(id="results")
-        self._panes = {"source": ResultPane(path.name, id="source", loading_path=path)}
+        self._panes = {"source": ResultPane(path.name, id="source")}
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
