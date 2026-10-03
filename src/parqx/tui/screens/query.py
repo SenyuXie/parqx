@@ -94,7 +94,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._query_control: QueryControl | None = None
         self._query_controls: list[QueryControl] = []
         self.running = False
-        self.error: str | None = None
 
     def compose(self) -> ComposeResult:
         """Yield the centered editor, loading indicator and native shortcut footer."""
@@ -113,7 +112,6 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def on_screen_resume(self) -> None:
         """Focus the existing editor without resetting its selection or history."""
-        self.error = None
         self.editor.focus()
 
     def on_resize(self, event: Resize) -> None:
@@ -144,7 +142,6 @@ class QueryScreen(ModalScreen[QueryResult]):
             item for item in self._query_controls if not item.finished.is_set()
         ]
         self._query_controls.append(control)
-        self.error = None
         sources = self._catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
@@ -230,7 +227,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         if not self._is_current(request_id):
             return
         self._set_running(False)
-        self.error = message
         self.notify(
             message, title="SQL error", severity="error", timeout=4, markup=False
         )

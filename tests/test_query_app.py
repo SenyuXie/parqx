@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pyarrow as pa
 import pytest
@@ -28,6 +28,20 @@ async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:
     async with asyncio.timeout(5):
         while not predicate():
             await pilot.pause()
+
+
+async def wait_for_query_error(
+    notify: Mock, query: QueryScreen, pilot: Pilot[Any]
+) -> str:
+    """Observe the SQL error delivered to users after execution finishes."""
+    await wait_for(lambda: notify.called and not query.running, pilot)
+    assert notify.call_args is not None
+    message = notify.call_args.args[0]
+    assert isinstance(message, str)
+    notify.assert_called_once_with(
+        message, title="SQL error", severity="error", timeout=4, markup=False
+    )
+    return message
 
 
 async def open_query(app: ParqxApp, pilot: Pilot[Any]) -> QueryScreen:
@@ -108,20 +122,13 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
         with patch.object(app, "notify", wraps=app.notify) as notify:
             query.editor.load_text('SELECT "missing [bold]汉字[/bold]" FROM smoke')
             await pilot.press("enter")
-            await wait_for(lambda: query.error is not None, pilot)
+            message = await wait_for_query_error(notify, query, pilot)
             await wait_for(lambda: query.editor.has_focus, pilot)
             assert app.screen is query
             assert not query.running
             assert tabs.tab_count == 2
             assert table.row_count == 2
-            assert "missing [bold]汉字[/bold]" in (query.error or "")
-            notify.assert_called_once_with(
-                query.error,
-                title="SQL error",
-                severity="error",
-                timeout=4,
-                markup=False,
-            )
+            assert "missing [bold]汉字[/bold]" in message
 
             query.editor.load_text("SELECT name FROM smoke WHERE false")
             await pilot.press("enter")
@@ -131,7 +138,6 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
             empty = tabs.get_pane("query-2").query_one(ArrowTable)
             assert empty.row_count == 0
             assert empty.columns[0].name == "name"
-            assert query.error is None
             assert notify.call_count == 1
 
 
@@ -223,7 +229,7 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
             release.wait(timeout=5)
             if stale_error:
                 raise ValueError("obsolete query failed")
-            return QueryPreview(pa.table({"obsolete": [1]}), truncated=False)
+            return QueryPreview(pa.table({"obsolete": [1]}))
         return original_preview(session)
 
     app = ParqxApp([small_parquet])
@@ -251,7 +257,6 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
                 await wait_for(control.finished.is_set, pilot)
                 await query.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                 assert app.screen is query
-                assert query.error is None
                 assert not query.running
                 assert tabs.tab_count == 2
                 assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
@@ -339,7 +344,6 @@ async def test_query_cancellation_and_shutdown_finish_worker(
                 await wait_for(control.finished.is_set, pilot)
                 assert tabs.tab_count == 1
                 assert not query.running
-                assert query.error is None
     assert control.cancelled.is_set()
     assert control.finished.is_set()
     notify.assert_not_called()
@@ -374,9 +378,10 @@ async def test_filename_sql_replaces_implicit_data_alias(small_parquet: Path) ->
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM data")
-        await pilot.press("enter")
-        await wait_for(lambda: query.error is not None, pilot)
-        assert "data" in (query.error or "")
+        with patch.object(app, "notify", wraps=app.notify) as notify:
+            await pilot.press("enter")
+            message = await wait_for_query_error(notify, query, pilot)
+        assert "data" in message
         query.editor.load_text('SELECT count(*) FROM "smoke"')
         await pilot.press("enter")
         await wait_for(lambda: app.screen is not query, pilot)
@@ -401,16 +406,9 @@ async def test_unavailable_source_warning_and_error_recover(
         query.editor.load_text("SELECT * FROM smoke")
         with patch.object(app, "notify", wraps=app.notify) as notify:
             await pilot.press("enter")
-            await wait_for(lambda: query.error is not None, pilot)
-            notify.assert_called_once_with(
-                query.error,
-                title="SQL error",
-                severity="error",
-                timeout=4,
-                markup=False,
-            )
-        assert "Unavailable sources" in (query.error or "")
-        assert str(small_parquet) in (query.error or "")
+            message = await wait_for_query_error(notify, query, pilot)
+        assert "Unavailable sources" in message
+        assert str(small_parquet) in message
         small_parquet.write_bytes(contents)
         query.editor.load_text("SELECT count(*) FROM smoke")
         await pilot.press("enter")
@@ -428,7 +426,10 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
         return original_enter(session)
 
     app = ParqxApp([small_parquet])
-    with patch.object(QuerySession, "__enter__", delayed_enter):
+    with (
+        patch.object(QuerySession, "__enter__", delayed_enter),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test() as pilot:
             try:
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -445,8 +446,8 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
                 assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
                 await open_query(app, pilot)
                 await pilot.press("enter")
-                await wait_for(lambda: query.error is not None, pilot)
-                assert "Temporarily unavailable" in (query.error or "")
+                message = await wait_for_query_error(notify, query, pilot)
+                assert "Temporarily unavailable" in message
             finally:
                 release.set()
 

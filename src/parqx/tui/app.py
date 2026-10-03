@@ -8,7 +8,6 @@ import weakref
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from pathlib import Path
 from stat import S_ISREG
 from threading import Event
@@ -21,6 +20,9 @@ from textual.binding import Binding, BindingType
 from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
+from textual.worker import (
+    get_current_worker,  # pyright: ignore[reportUnknownVariableType]
+)
 
 from parqx.data.catalog import SourceCatalog, SourceIssue
 from parqx.data.parquet import ParquetSource, ReadCancelledError
@@ -31,15 +33,6 @@ from parqx.tui.widgets import ArrowTable, ResultPane
 from parqx.tui.widgets.arrow_table import CursorType
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SourceViewState:
-    """Per-view paging state, independent of the retained SQL source catalog."""
-
-    source: ParquetSource | None = None
-    page_request: int = 0
-    page_cancelled: Event = field(default_factory=Event)
 
 
 def _open_source(path: Path) -> ParquetSource:
@@ -101,7 +94,8 @@ class ParqxApp(App[Any]):
             )
             for entry in self.catalog.entries
         }
-        self._source_views = {source_id: SourceViewState() for source_id in self._panes}
+        # Only open browsing views retain source metadata; SQL uses the catalog.
+        self._source_views: dict[str, ParquetSource | None] = dict.fromkeys(self._panes)
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
@@ -218,10 +212,9 @@ class ParqxApp(App[Any]):
                 return
             self.catalog.mark_ready(source_id)
             pane = self._panes.get(source_id)
-            state = self._source_views.get(source_id)
-            if pane is None or state is None:
+            if pane is None or source_id not in self._source_views:
                 return
-            state.source = source
+            self._source_views[source_id] = source
             await pane.show_table(TableData(source.schema, source.row_count))
             if self._tabs.active == source_id:
                 self._focus_active_table()
@@ -247,29 +240,23 @@ class ParqxApp(App[Any]):
         if not isinstance(pane, ResultPane) or pane.id is None:
             return
         source_id = pane.id
-        state = self._source_views.get(source_id)
+        source = self._source_views.get(source_id)
         if (
             self._shutting_down
-            or state is None
-            or state.source is None
+            or source is None
             or self._panes.get(source_id) is not pane
             or pane.table is None
             or pane.table is not event.control
             or pane.table.data is not event.data
         ):
             return
-        state.page_cancelled.set()
-        state.page_cancelled = cancelled = Event()
-        state.page_request += 1
         self.run_worker(
             self._read_page(
                 source_id,
-                state.source,
+                source,
                 weakref.ref(event.data),
                 event.start_row,
                 event.stop_row,
-                state.page_request,
-                cancelled,
             ),
             group=f"page:{source_id}",
             exclusive=True,
@@ -283,9 +270,9 @@ class ParqxApp(App[Any]):
         data: weakref.ReferenceType[TableData],
         start: int,
         stop: int,
-        request: int,
-        cancelled: Event,
     ) -> None:
+        # One worker signal cancels both awaiting the result and native batches.
+        cancelled = get_current_worker().cancelled_event
         # Native work receives no strong references to the widget or its cache.
         if self._shutting_down or cancelled.is_set():
             return
@@ -297,21 +284,19 @@ class ParqxApp(App[Any]):
             return
         except (OSError, pa.ArrowException, MemoryError) as exc:
             if not cancelled.is_set():
-                self._on_page_error(source_id, data, request, str(exc))
+                self._on_page_error(source_id, data, cancelled, str(exc))
             return
         if not cancelled.is_set():
-            self._on_page_loaded(source_id, data, request, page)
+            self._on_page_loaded(source_id, data, cancelled, page)
 
     def _current_source_pane(
-        self, source_id: str, data: weakref.ReferenceType[TableData], request: int
+        self, source_id: str, data: weakref.ReferenceType[TableData], cancelled: Event
     ) -> ResultPane | None:
         pane = self._panes.get(source_id)
-        state = self._source_views.get(source_id)
         if (
             self._shutting_down
-            or state is None
-            or request != state.page_request
-            or state.source is None
+            or cancelled.is_set()
+            or self._source_views.get(source_id) is None
             or pane is None
             or pane.table is None
             or pane.table.data is not data()
@@ -323,10 +308,10 @@ class ParqxApp(App[Any]):
         self,
         source_id: str,
         data: weakref.ReferenceType[TableData],
-        request: int,
+        cancelled: Event,
         page: DataPage,
     ) -> None:
-        pane = self._current_source_pane(source_id, data, request)
+        pane = self._current_source_pane(source_id, data, cancelled)
         if pane is not None and pane.table is not None:
             pane.table.accept_page(page)
 
@@ -334,10 +319,10 @@ class ParqxApp(App[Any]):
         self,
         source_id: str,
         data: weakref.ReferenceType[TableData],
-        request: int,
+        cancelled: Event,
         message: str,
     ) -> None:
-        pane = self._current_source_pane(source_id, data, request)
+        pane = self._current_source_pane(source_id, data, cancelled)
         if pane is not None and pane.table is not None:
             pane.table.fail_window()
             self.notify(
@@ -348,10 +333,9 @@ class ParqxApp(App[Any]):
             )
 
     def _cancel_source_read(self, source_id: str) -> None:
-        state = self._source_views.pop(source_id, None)
-        if state is not None:
-            state.page_request += 1
-            state.page_cancelled.set()
+        # Preserve metadata loading for the retained SQL source catalog.
+        self.workers.cancel_group(self, f"page:{source_id}")  # pyright: ignore[reportUnknownMemberType]
+        self._source_views.pop(source_id, None)
 
     def on_unmount(self) -> None:
         """Stop source work and prevent all late UI updates during shutdown."""
@@ -409,7 +393,6 @@ class ParqxApp(App[Any]):
             if pane_id not in self._panes:
                 return
             if pane_id in self._source_views:
-                self.catalog.mark_closed(pane_id)
                 self._cancel_source_read(pane_id)
             await self._tabs.remove_pane(pane_id)
             del self._panes[pane_id]

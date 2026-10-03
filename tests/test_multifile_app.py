@@ -1,5 +1,7 @@
 """Multiple file tabs, shared SQL sources and isolated background reads."""
 
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, Lock
 from unittest.mock import patch
@@ -220,6 +222,75 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 second_release.set()
 
 
+async def test_closing_source_cancels_queued_page_without_reading_it(
+    tmp_path: Path,
+) -> None:
+    paths = [tmp_path / f"file-{index}.parquet" for index in range(5)]
+    for path in paths:
+        pq.write_table(pa.table({"n": [1, 2, 3]}), path)
+    release, queued = Event(), Event()
+    started = {path.resolve(): Event() for path in paths}
+    cancellations: list[Event] = []
+    queued_cancelled: list[Callable[[], bool]] = []
+    original_read = ParquetSource.read_window
+    original_submit = ThreadPoolExecutor.submit
+
+    def delayed_read(
+        source: ParquetSource, start: int, stop: int, cancelled: Event
+    ) -> DataPage:
+        cancellations.append(cancelled)
+        started[source.path].set()
+        assert release.wait(timeout=15)
+        return original_read(source, start, stop, cancelled)
+
+    def track_submit[T, **P](
+        executor: ThreadPoolExecutor,
+        fn: Callable[P, T],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> Future[T]:
+        future = original_submit(executor, fn, *args, **kwargs)
+        source = getattr(fn, "__self__", None)
+        if isinstance(source, ParquetSource) and source.path == paths[-1].resolve():
+            queued_cancelled.append(future.cancelled)
+            queued.set()
+        return future
+
+    app = ParqxApp(paths)
+    with (
+        patch.object(ParquetSource, "read_window", delayed_read),
+        patch.object(ThreadPoolExecutor, "submit", track_submit),
+    ):
+        async with app.run_test(size=(140, 20)) as pilot:
+            try:
+                await wait_for(lambda: len(app.catalog.snapshot()) == 5, pilot)
+                tabs = app.query_one(TabbedContent)
+                await wait_for(started[paths[0].resolve()].is_set, pilot)
+                # Occupy every source-reading thread before requesting the last tab.
+                for index in range(1, 4):
+                    await select_tab(tabs, f"source-{index + 1}", pilot)
+                    await wait_for(started[paths[index].resolve()].is_set, pilot)
+                await select_tab(tabs, "source-5", pilot)
+                await wait_for(queued.is_set, pilot)
+                assert not started[paths[-1].resolve()].is_set()
+                assert not any(is_cancelled() for is_cancelled in queued_cancelled)
+
+                await pilot.press("ctrl+w")
+                await wait_for(lambda: not tabs.query("#source-5"), pilot)
+                await wait_for(
+                    lambda: all(is_cancelled() for is_cancelled in queued_cancelled),
+                    pilot,
+                )
+                assert not any(event.is_set() for event in cancellations)
+                release.set()
+                await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
+                assert not started[paths[-1].resolve()].is_set()
+                assert tabs.tab_count == 4
+            finally:
+                release.set()
+
+
 async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -> None:
     paths = [tmp_path / f"file-{index}.parquet" for index in range(8)]
     for path in paths:
@@ -289,7 +360,6 @@ async def test_query_sources_survive_after_all_file_tabs_close(tmp_path: Path) -
             await wait_for(source_closed, pilot)
         assert tabs.tab_count == 1
         assert tabs.active == "query-1"
-        assert all(not entry.is_open for entry in app.catalog.entries)
         assert len(app.catalog.snapshot()) == 2
 
         result = await run_query(

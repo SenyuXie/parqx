@@ -42,12 +42,11 @@ class SourceIssue:
 
 @dataclass(frozen=True)
 class SourceEntry:
-    """Current loading state and browsing visibility of a source."""
+    """Current loading state of a source."""
 
     spec: SourceSpec
     state: Literal["loading", "ready", "failed"] = "loading"
     issue: SourceIssue | None = None
-    is_open: bool = True
 
 
 class SourceCatalog:
@@ -115,10 +114,6 @@ class SourceCatalog:
         self._entries[source_id] = replace(
             entry, state="failed", issue=SourceIssue(entry.spec, message)
         )
-
-    def mark_closed(self, source_id: str) -> None:
-        """Close a browsing view while retaining its SQL source."""
-        self._entries[source_id] = replace(self.get(source_id), is_open=False)
 
     def snapshot(self) -> tuple[SourceSpec, ...]:
         """Freeze the sources available to one query in input order."""

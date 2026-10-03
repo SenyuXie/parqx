@@ -115,7 +115,7 @@ def test_names_preserve_file_stem(
     assert quote_identifier(name) == quoted
 
 
-def test_ready_failed_and_closed_sources_keep_stable_identity(tmp_path: Path) -> None:
+def test_ready_and_failed_sources_keep_stable_identity(tmp_path: Path) -> None:
     catalog = SourceCatalog(
         [tmp_path / "a" / "same.parquet", tmp_path / "b" / "same.parquet"]
     )
@@ -131,8 +131,6 @@ def test_ready_failed_and_closed_sources_keep_stable_identity(tmp_path: Path) ->
     assert failed.issue is not None
     assert failed.issue.source is first
     assert str(failed.issue) == f'"same" ({first.path}): Not a Parquet file'
-    catalog.mark_closed(second.source_id)
-    assert not catalog.get(second.source_id).is_open
     assert catalog.snapshot() == (second,)
 
     catalog.mark_ready(first.source_id)
@@ -141,14 +139,6 @@ def test_ready_failed_and_closed_sources_keep_stable_identity(tmp_path: Path) ->
     assert snapshot == (second,)
     assert [entry.state for entry in initial] == ["loading", "loading"]
     assert [entry.spec.table_name for entry in catalog.entries] == ["same", "same_2"]
-
-
-def test_loading_source_can_finish_after_its_view_closes(tmp_path: Path) -> None:
-    catalog = SourceCatalog([tmp_path / "pending.parquet"])
-    catalog.mark_closed("source-1")
-    catalog.mark_ready("source-1")
-    assert not catalog.get("source-1").is_open
-    assert catalog.snapshot() == (catalog.get("source-1").spec,)
 
 
 @pytest.mark.parametrize(
