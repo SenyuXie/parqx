@@ -14,10 +14,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
-from textual.content import Content
 from textual.events import Resize
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Label, LoadingIndicator, TextArea
+from textual.widgets import Footer, LoadingIndicator, TextArea
 
 from parqx.data.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.query.engine import (
@@ -64,19 +63,10 @@ class QueryScreen(ModalScreen[QueryResult]):
             }
 
             & > #query-loading { height: 1; }
-            & > Label {
-                width: 1fr;
-                height: auto;
-                max-height: 4;
-                color: $text-muted;
-            }
-
-            & > #query-status.error { color: $error; }
         }
 
         &.compact > #query-dialog {
             height: 90%;
-            & > #query-status { max-height: 1; }
         }
     }
     """
@@ -102,8 +92,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._catalog = catalog
         self._query_limits = query_limits or QueryLimits()
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
-        self._status = Label("", id="query-status", markup=False)
-        self._status.display = False
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._footer = Footer(show_command_palette=False)
@@ -115,13 +103,12 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.error: str | None = None
 
     def compose(self) -> ComposeResult:
-        """Yield the centered editor, execution status and native shortcut footer."""
+        """Yield the centered editor, loading indicator and native shortcut footer."""
         dialog = Vertical(id="query-dialog")
         dialog.border_title = "SQL query"
         with dialog:
             yield self.editor
             yield self._loading
-            yield self._status
             yield self._footer
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -133,10 +120,6 @@ class QueryScreen(ModalScreen[QueryResult]):
     def on_screen_resume(self) -> None:
         """Focus the existing editor without resetting its selection or history."""
         self.error = None
-        self._status.update("")
-        self._status.display = False
-        self._status.tooltip = None
-        self._status.remove_class("error")
         self.editor.focus()
 
     def on_resize(self, event: Resize) -> None:
@@ -168,10 +151,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         ]
         self._query_controls.append(control)
         self.error = None
-        self._status.remove_class("error")
-        self._status.update("Running SQL…")
-        self._status.display = True
-        self._status.tooltip = None
         sources = self._catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
@@ -258,10 +237,9 @@ class QueryScreen(ModalScreen[QueryResult]):
             return
         self._set_running(False)
         self.error = message
-        self._status.update(f"SQL error: {message}")
-        self._status.display = True
-        self._status.tooltip = Content(message)
-        self._status.add_class("error")
+        self.notify(
+            message, title="SQL error", severity="error", timeout=4, markup=False
+        )
         self.editor.focus()
 
     def _cancel_request(self) -> None:

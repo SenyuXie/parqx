@@ -13,7 +13,7 @@ import pyarrow as pa
 import pytest
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
-from textual.widgets import Footer, Label, TabbedContent, Tabs
+from textual.widgets import Footer, TabbedContent, Tabs
 from textual.widgets._footer import FooterKey
 
 from parqx.data.parquet import ParquetSource
@@ -100,27 +100,39 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
     small_parquet: Path,
 ) -> None:
     app = ParqxApp([small_parquet])
-    async with app.run_test() as pilot:
+    async with app.run_test(notifications=True) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
         table = await run_query(app, pilot, "SELECT id FROM smoke WHERE id > 3")
         query = await open_query(app, pilot)
-        query.editor.load_text("SELECT missing FROM smoke")
-        await pilot.press("enter")
-        await wait_for(lambda: query.error is not None, pilot)
-        await wait_for(lambda: query.editor.has_focus, pilot)
-        assert app.screen is query
-        assert not query.running
-        assert tabs.tab_count == 2
-        assert table.row_count == 2
+        with patch.object(app, "notify", wraps=app.notify) as notify:
+            query.editor.load_text('SELECT "missing [bold]汉字[/bold]" FROM smoke')
+            await pilot.press("enter")
+            await wait_for(lambda: query.error is not None, pilot)
+            await wait_for(lambda: query.editor.has_focus, pilot)
+            assert app.screen is query
+            assert not query.running
+            assert tabs.tab_count == 2
+            assert table.row_count == 2
+            assert "missing [bold]汉字[/bold]" in (query.error or "")
+            notify.assert_called_once_with(
+                query.error,
+                title="SQL error",
+                severity="error",
+                timeout=4,
+                markup=False,
+            )
 
-        query.editor.load_text("SELECT name FROM smoke WHERE false")
-        await pilot.press("enter")
-        await wait_for(lambda: app.screen is not query and tabs.tab_count == 3, pilot)
-        empty = tabs.get_pane("query-2").query_one(ArrowTable)
-        assert empty.row_count == 0
-        assert empty.columns[0].name == "name"
-        assert query.error is None
+            query.editor.load_text("SELECT name FROM smoke WHERE false")
+            await pilot.press("enter")
+            await wait_for(
+                lambda: app.screen is not query and tabs.tab_count == 3, pilot
+            )
+            empty = tabs.get_pane("query-2").query_one(ArrowTable)
+            assert empty.row_count == 0
+            assert empty.columns[0].name == "name"
+            assert query.error is None
+            assert notify.call_count == 1
 
 
 async def test_tabs_preserve_independent_table_state(small_parquet: Path) -> None:
@@ -215,7 +227,10 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
         return original_preview(session)
 
     app = ParqxApp([small_parquet])
-    with patch.object(QuerySession, "preview", delayed_preview):
+    with (
+        patch.object(QuerySession, "preview", delayed_preview),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test() as pilot:
             try:
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -240,6 +255,7 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
                 assert not query.running
                 assert tabs.tab_count == 2
                 assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
+                notify.assert_not_called()
             finally:
                 release.set()
 
@@ -304,7 +320,10 @@ async def test_query_cancellation_and_shutdown_finish_worker(
         return original_enter(session)
 
     app = ParqxApp([small_parquet])
-    with patch.object(QuerySession, "__enter__", wait_for_cancel):
+    with (
+        patch.object(QuerySession, "__enter__", wait_for_cancel),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             tabs = app.query_one(TabbedContent)
@@ -323,6 +342,7 @@ async def test_query_cancellation_and_shutdown_finish_worker(
                 assert query.error is None
     assert control.cancelled.is_set()
     assert control.finished.is_set()
+    notify.assert_not_called()
 
 
 @pytest.mark.parametrize("pane_id", ["source-1", "query-1"])
@@ -379,13 +399,18 @@ async def test_unavailable_source_warning_and_error_recover(
         assert '"smoke"' in tooltip
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
-        await pilot.press("enter")
-        await wait_for(lambda: query.error is not None, pilot)
+        with patch.object(app, "notify", wraps=app.notify) as notify:
+            await pilot.press("enter")
+            await wait_for(lambda: query.error is not None, pilot)
+            notify.assert_called_once_with(
+                query.error,
+                title="SQL error",
+                severity="error",
+                timeout=4,
+                markup=False,
+            )
         assert "Unavailable sources" in (query.error or "")
         assert str(small_parquet) in (query.error or "")
-        assert str(small_parquet) in str(
-            query.query_one("#query-status", Label).tooltip
-        )
         small_parquet.write_bytes(contents)
         query.editor.load_text("SELECT count(*) FROM smoke")
         await pilot.press("enter")
