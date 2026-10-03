@@ -26,14 +26,21 @@ class ResultPane(TabPane):
     """
 
     def __init__(
-        self, title: str, *, id: str, table: pa.Table | None = None, status: str = ""
+        self,
+        title: str,
+        *,
+        id: str,
+        table: pa.Table | None = None,
+        status: str = "",
+        sql_name: str | None = None,
     ) -> None:
         """Initialize a populated result or a placeholder for the source read."""
         super().__init__(Content(title), id=id)
         self.table = ArrowTable(table) if table is not None else None
         self.loading = table is None
-        self._status = Label(status, classes="result-status", markup=False)
-        self._status.display = bool(status)
+        self._sql_name = sql_name
+        self._status = Label("", classes="result-status", markup=False)
+        self.update_status(status)
 
     def compose(self) -> ComposeResult:
         """Yield the available table and its status beneath the loading cover."""
@@ -50,6 +57,8 @@ class ResultPane(TabPane):
 
     def update_status(self, status: str) -> None:
         """Update this result's status without moving focus or changing tabs."""
+        if self._sql_name is not None:
+            status = f"SQL: {self._sql_name}" + (f" · {status}" if status else "")
         self._status.update(status)
         self._status.display = bool(status)
 
@@ -57,7 +66,7 @@ class ResultPane(TabPane):
         """Replace a source's loading cover with its individual failure."""
         self.loading = False
         self.update_status(f"Open error: {message}")
-        self._status.tooltip = message
+        self._status.tooltip = Content(message)
 
     def on_unmount(self) -> None:
         """Release Arrow buffers even if Textual briefly retains the closed widget."""

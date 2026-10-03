@@ -13,11 +13,13 @@ import pyarrow as pa
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
+from textual.content import Content
+from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Label, LoadingIndicator, TextArea
 
-from parqx.data.catalog import SourceCatalog, SourceIssue, SourceSpec
+from parqx.data.catalog import SourceCatalog, SourceEntry, SourceIssue, SourceSpec
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -57,11 +59,21 @@ class QueryScreen(ModalScreen[QueryResult]):
 
             & > TextArea {
                 height: 1fr;
+                min-height: 2;
                 border: none;
             }
 
             & > #query-loading { height: 1; }
-            & > #query-sources { height: 1; }
+            & > #query-sources-scroll {
+                height: auto;
+                max-height: 3;
+                scrollbar-size: 1 1;
+                & > #query-sources {
+                    width: 1fr;
+                    height: auto;
+                    color: $text-muted;
+                }
+            }
 
             & > Label {
                 width: 1fr;
@@ -72,12 +84,25 @@ class QueryScreen(ModalScreen[QueryResult]):
 
             & > #query-status.error { color: $error; }
         }
+
+        &.compact > #query-dialog {
+            height: 90%;
+            & > #query-sources-scroll { height: 1; max-height: 1; }
+            & > #query-status { max-height: 1; }
+        }
     }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "run_query", "Run SQL", priority=True),
-        Binding("shift+enter", "newline", "New line", priority=True),
+        Binding(
+            "shift+enter",
+            "newline",
+            "New line",
+            priority=True,
+            key_display="⇧⏎",
+            tooltip="Shift+Enter: insert a new line",
+        ),
         Binding("escape", "close", "Close", priority=True),
     ]
 
@@ -90,9 +115,12 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._query_limits = query_limits or QueryLimits()
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._status = Label("", id="query-status", markup=False)
+        self._status.display = False
         self._sources_label = Label("", id="query-sources", markup=False)
+        self._source_snapshot: tuple[SourceEntry, ...] | None = None
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
+        self._footer = Footer(show_command_palette=False)
         self._request_id = 0
         """Only the current request may dismiss the modal or update its state."""
         self._query_control: QueryControl | None = None
@@ -105,11 +133,12 @@ class QueryScreen(ModalScreen[QueryResult]):
         dialog = Vertical(id="query-dialog")
         dialog.border_title = "SQL query"
         with dialog:
-            yield self._sources_label
+            with VerticalScroll(id="query-sources-scroll"):
+                yield self._sources_label
             yield self.editor
             yield self._loading
             yield self._status
-            yield Footer(show_command_palette=False)
+            yield self._footer
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Keep unavailable editor actions visible but dimmed during execution."""
@@ -121,26 +150,39 @@ class QueryScreen(ModalScreen[QueryResult]):
         """Focus the existing editor without resetting its selection or history."""
         self.error = None
         self._status.update("")
+        self._status.display = False
         self._status.tooltip = None
         self._status.remove_class("error")
         self.refresh_sources()
         self.editor.focus()
 
+    def on_resize(self, event: Resize) -> None:
+        """Reserve room for editing and shortcuts on a small terminal."""
+        self.set_class(event.size.height < 18 or event.size.width < 60, "compact")
+        self._footer.compact = event.size.width < 60
+
     def refresh_sources(self) -> None:
         """Refresh source discovery without changing a running query's context."""
-        if self.running:
-            return
-        entries = self._catalog.entries
+        entries = (
+            self._source_snapshot
+            if self.running and self._source_snapshot is not None
+            else self._catalog.entries
+        )
         self._sources_label.update(
-            "Tables: "
-            + ", ".join(
+            "\n".join(
                 entry.spec.quoted_name
-                + (f" ({entry.state})" if entry.state != "ready" else "")
+                + f" · {entry.state}"
+                + (" · tab closed" if not entry.is_open else "")
                 for entry in entries
             )
         )
-        self._sources_label.tooltip = "\n".join(
-            f"{entry.spec.quoted_name} → {entry.spec.path}" for entry in entries
+        self._sources_label.tooltip = Content(
+            "\n".join(
+                f"{entry.spec.quoted_name} → {entry.spec.path}"
+                + (f"\n{entry.issue.message}" if entry.issue is not None else "")
+                for entry in entries
+            )
+            + "\n\nShift+Tab: browse tables with arrows. Tab: return to SQL."
         )
 
     def _set_running(self, running: bool) -> None:
@@ -148,7 +190,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.editor.read_only = running
         self._loading.display = running
         if not running:
-            self.refresh_sources()
+            self._source_snapshot = None
+        self.refresh_sources()
         self.refresh_bindings()
 
     def action_newline(self) -> None:
@@ -171,6 +214,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.error = None
         self._status.remove_class("error")
         self._status.update("Running SQL…")
+        self._status.display = True
         self._status.tooltip = None
         sources = self._catalog.snapshot()
         unavailable = tuple(
@@ -178,7 +222,7 @@ class QueryScreen(ModalScreen[QueryResult]):
             for entry in self._catalog.entries
             if entry.state != "ready"
         )
-        self.refresh_sources()
+        self._source_snapshot = self._catalog.entries
         self._set_running(True)
         self._run_query(sources, sql, self._request_id, control, unavailable)
 
@@ -235,6 +279,10 @@ class QueryScreen(ModalScreen[QueryResult]):
                 message = str(exc)
                 if issues := unavailable + session.issues:
                     message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
+                if sources:
+                    message += "\nQuery sources:\n" + "\n".join(
+                        f"{source.quoted_name} → {source.path}" for source in sources
+                    )
                 self._publish(self._on_query_error, request_id, message)
         except QueryCancelledError:
             return
@@ -256,7 +304,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._set_running(False)
         self.error = message
         self._status.update(f"SQL error: {message}")
-        self._status.tooltip = message
+        self._status.display = True
+        self._status.tooltip = Content(message)
         self._status.add_class("error")
         self.editor.focus()
 

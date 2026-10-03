@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ import pyarrow as pa
 from textual import on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
 
@@ -84,9 +86,19 @@ class ParqxApp(App[Any]):
         super().__init__()
         self.catalog = SourceCatalog(paths)
         self._tabs = TabbedContent(id="results")
+        name_counts = Counter(
+            entry.spec.display_name.casefold() for entry in self.catalog.entries
+        )
         self._panes = {
             entry.spec.source_id: ResultPane(
-                entry.spec.display_name, id=entry.spec.source_id
+                entry.spec.display_name
+                + (
+                    f" · {entry.spec.quoted_name}"
+                    if name_counts[entry.spec.display_name.casefold()] > 1
+                    else ""
+                ),
+                id=entry.spec.source_id,
+                sql_name=entry.spec.quoted_name,
             )
             for entry in self.catalog.entries
         }
@@ -121,6 +133,10 @@ class ParqxApp(App[Any]):
         async with self._tab_lock:
             for pane in tuple(self._panes.values()):
                 await self._tabs.add_pane(pane)
+            for entry in self.catalog.entries:
+                self._tabs.get_tab(entry.spec.source_id).tooltip = Content(
+                    str(entry.spec.path)
+                )
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_bindings()
         for entry in self.catalog.entries:
@@ -384,7 +400,7 @@ class ParqxApp(App[Any]):
                     details += "\n\nUnavailable sources:\n" + "\n".join(
                         map(str, result.issues)
                     )
-                self._tabs.get_tab(pane_id).tooltip = details
+                self._tabs.get_tab(pane_id).tooltip = Content(details)
                 self._tabs.active = pane_id
                 self._refresh_tab_bindings()
         self.call_after_refresh(self._focus_active_table)
