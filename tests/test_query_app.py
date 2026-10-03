@@ -353,7 +353,6 @@ async def test_filename_sql_replaces_implicit_data_alias(small_parquet: Path) ->
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
-        assert '"smoke"' in str(query.query_one("#query-sources", Label).content)
         query.editor.load_text("SELECT * FROM data")
         await pilot.press("enter")
         await wait_for(lambda: query.error is not None, pilot)

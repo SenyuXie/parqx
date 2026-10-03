@@ -1,4 +1,4 @@
-"""Discoverable SQL sources and usable multi-file dialogs in small terminals."""
+"""File SQL references and usable multi-file dialogs in small terminals."""
 
 from pathlib import Path
 from threading import Event
@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from textual.containers import VerticalScroll
 from textual.coordinate import Coordinate
 from textual.widgets import Footer, Label, TabbedContent
 
@@ -58,71 +57,7 @@ async def test_duplicate_names_expose_exact_sql_references_and_full_paths(
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 6
 
 
-async def test_source_list_shows_states_and_scrolls_without_taking_editor_focus(
-    tmp_path: Path,
-) -> None:
-    paths = [tmp_path / f"file-{index}.parquet" for index in range(7)]
-    for path in paths:
-        pq.write_table(pa.table({"n": [1]}), path)
-    paths[3].write_text("invalid parquet", encoding="utf-8")
-    started, release = Event(), Event()
-
-    def delayed_metadata(path: Path) -> ParquetSource:
-        if path == paths[2].resolve():
-            started.set()
-            assert release.wait(timeout=15)
-        return ParquetSource(path)
-
-    app = ParqxApp(paths)
-    with patch("parqx.tui.app.ParquetSource", delayed_metadata):
-        async with app.run_test(size=(100, 30)) as pilot:
-            try:
-                await wait_for(started.is_set, pilot)
-                await wait_for(
-                    lambda: all(
-                        entry.state != "loading"
-                        for entry in app.catalog.entries
-                        if entry.spec.source_id != "source-3"
-                    ),
-                    pilot,
-                )
-                tabs = app.query_one(TabbedContent)
-                await select_tab(tabs, "source-2", pilot)
-                await pilot.press("ctrl+w")
-                await wait_for(lambda: not tabs.query("#source-2"), pilot)
-                query = await open_query(app, pilot)
-                label = query.query_one("#query-sources", Label)
-                sources = query.query_one("#query-sources-scroll", VerticalScroll)
-                await wait_for(lambda: sources.max_scroll_y > 0, pilot)
-                rows = str(label.content).splitlines()
-                for spec, state in zip(
-                    (entry.spec for entry in app.catalog.entries),
-                    ("ready", "closed", "loading", "failed", "ready", "ready", "ready"),
-                    strict=True,
-                ):
-                    matching = [row for row in rows if spec.quoted_name in row]
-                    assert len(matching) == 1
-                    assert state in matching[0]
-                    assert str(spec.path) in str(label.tooltip)
-                assert 1 <= sources.region.height <= 3
-                await pilot.press("shift+tab")
-                await wait_for(lambda: sources.has_focus, pilot)
-                await pilot.press("end")
-                await wait_for(lambda: sources.scroll_y > 0, pilot)
-                await pilot.press("tab")
-                await wait_for(lambda: query.editor.has_focus, pilot)
-                assert query.editor.has_focus
-                release.set()
-                await wait_for(
-                    lambda: app.catalog.get("source-3").state == "ready", pilot
-                )
-                await wait_for(lambda: "loading" not in str(label.content), pilot)
-                assert query.editor.has_focus
-            finally:
-                release.set()
-
-
-async def test_running_source_list_freezes_then_refreshes_after_error(
+async def test_running_query_uses_frozen_sources_until_retried(
     small_parquet: Path,
 ) -> None:
     pending = small_parquet.with_name("pending.parquet")
@@ -154,9 +89,6 @@ async def test_running_source_list_freezes_then_refreshes_after_error(
                     lambda: app.catalog.get("source-1").state == "ready", pilot
                 )
                 query = await open_query(app, pilot)
-                label = query.query_one("#query-sources", Label)
-                before = (str(label.content), str(label.tooltip))
-                assert "loading" in before[0]
                 query.editor.load_text('SELECT count(*) FROM "pending"')
                 await pilot.press("enter")
                 await wait_for(query_started.is_set, pilot)
@@ -166,11 +98,10 @@ async def test_running_source_list_freezes_then_refreshes_after_error(
                 )
                 assert query.running
                 assert query.editor.has_focus
-                assert (str(label.content), str(label.tooltip)) == before
                 query_release.set()
                 await wait_for(lambda: query.error is not None, pilot)
                 assert "pending" in (query.error or "")
-                assert "loading" not in str(label.content)
+                assert "Still loading" in (query.error or "")
                 assert query.editor.has_focus
                 await pilot.press("enter")
                 await wait_for(lambda: app.screen is not query, pilot)
@@ -187,8 +118,6 @@ def assert_compact_controls_visible(query: QueryScreen) -> None:
     assert 0 <= dialog.region.y < dialog.region.bottom <= 12
     assert query.editor.region.height >= 2
     assert dialog.region.contains_region(query.editor.region)
-    sources = query.query_one("#query-sources-scroll", VerticalScroll)
-    assert sources.region.height == 1
     footer = query.query_one(Footer)
     assert footer.region.height == 1
     assert dialog.region.contains_region(footer.region)
@@ -224,12 +153,6 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
                 await pilot.pause()
                 assert_compact_controls_visible(query)
                 assert query.editor.has_focus
-                sources = query.query_one("#query-sources-scroll", VerticalScroll)
-                await pilot.press("shift+tab", "end")
-                await wait_for(lambda: sources.scroll_y > 0, pilot)
-                assert sources.has_focus
-                await pilot.press("tab")
-                await wait_for(lambda: query.editor.has_focus, pilot)
                 query.editor.load_text("SELECT missing_column")
                 await pilot.press("enter")
                 await wait_for(lambda: query.error is not None, pilot)
