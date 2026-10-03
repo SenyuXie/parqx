@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from textual.coordinate import Coordinate
-from textual.widgets import Label, TabbedContent
+from textual.widgets import Static, TabbedContent
 
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
@@ -124,9 +124,10 @@ async def test_partial_failures_remain_visible_and_healthy_source_is_queryable(
             pane = tabs.get_pane(issue.source.source_id)
             assert not pane.loading
             assert not pane.query(ArrowTable)
-            status = str(pane.query_one(Label).content)
-            assert str(issue.source.path) in status
-            assert issue.message in status
+            error = pane.query_one(".source-error", Static)
+            assert error.display
+            assert str(issue.source.path) in str(error.content)
+            assert issue.message in str(error.content)
         result = await run_query(app, pilot, 'SELECT count(*) FROM "smoke"')
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
 

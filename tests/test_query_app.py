@@ -89,10 +89,10 @@ async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -
         assert (table.row_count, table.column_count) == (2, 1)
         assert table.columns[0].name == "name"
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
-        status = str(tabs.get_pane("query-1").query_one(Label).content)
-        assert "2 rows" in status
-        assert "preview" in status
-        assert "total unknown" in status
+        tooltip = str(tabs.get_tab("query-1").tooltip)
+        assert "2 rows" in tooltip
+        assert "preview" in tooltip
+        assert "total unknown" in tooltip
         assert source.row_count == 5
 
 
@@ -373,7 +373,7 @@ async def test_unavailable_source_warning_and_error_recover(
         small_parquet.unlink()
         await run_query(app, pilot, "SELECT 42 AS answer")
         tabs = app.query_one(TabbedContent)
-        assert "warning" in str(tabs.get_pane("query-1").query_one(Label).content)
+        assert "warning" in str(tabs.get_tab("query-1").tooltip)
         tooltip = str(tabs.get_tab("query-1").tooltip)
         assert str(small_parquet) in tooltip
         assert '"smoke"' in tooltip
@@ -390,7 +390,7 @@ async def test_unavailable_source_warning_and_error_recover(
         query.editor.load_text("SELECT count(*) FROM smoke")
         await pilot.press("enter")
         await wait_for(lambda: app.screen is not query and tabs.tab_count == 3, pilot)
-        assert "warning" not in str(tabs.get_pane("query-2").query_one(Label).content)
+        assert "warning" not in str(tabs.get_tab("query-2").tooltip)
 
 
 async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -> None:
@@ -435,5 +435,5 @@ async def test_success_reports_sources_excluded_from_catalog(
         app.catalog.mark_failed("source-1", "Could not open this source")
         await run_query(app, pilot, "SELECT 42 AS answer")
         tabs = app.query_one(TabbedContent)
-        assert "warning" in str(tabs.get_pane("query-1").query_one(Label).content)
+        assert "warning" in str(tabs.get_tab("query-1").tooltip)
         assert "Could not open this source" in str(tabs.get_tab("query-1").tooltip)

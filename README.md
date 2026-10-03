@@ -33,7 +33,7 @@ Your shell expands the wildcard. Tabs follow argument order, and repeated paths 
 
 ### Query across files
 
-The file status bar shows its quoted SQL name. For `users.parquet` and `orders.parquet`, for example:
+Hover over a file tab to see its quoted SQL name. For `users.parquet` and `orders.parquet`, for example:
 
 ```sql
 SELECT u.name, sum(o.amount) AS total
@@ -43,7 +43,7 @@ GROUP BY u.name
 ORDER BY total DESC
 ```
 
-Run one `SELECT` statement at a time; CTEs (`WITH`) and `UNION` are supported. Queries read the complete files, independently of which rows you have browsed. The result preview is limited to 10,000 rows or 32 MiB, with an exception for a single oversized row; this does not limit the input to joins or aggregations. Result tabs are not added as SQL tables.
+Run one `SELECT` statement at a time; CTEs (`WITH`) and `UNION` are supported. Queries read the complete files, independently of which rows you have browsed. The result preview is limited to 10,000 rows or 32 MiB, with an exception for a single oversized row; this does not limit the input to joins or aggregations. Hover over a result tab to see its row count, preview limit, execution time and source warnings. Result tabs are not added as SQL tables.
 
 Table names keep the filename without its final extension. Use double quotes for names containing spaces, dots, keywords or other special characters, and double any embedded quote:
 
@@ -55,7 +55,7 @@ Table names keep the filename without its final extension. Use double quotes for
 | `a"b.parquet` | `"a""b"` |
 | `select.parquet` | `"select"` |
 
-Names that differ only in ASCII letter case conflict. Files with conflicting names receive `_2`, `_3`, and so on, skipping names already assigned. For example, opening `east/sales.parquet` then `west/sales.parquet` creates `"sales"` and `"sales_2"`. Names are assigned in argument order and stay fixed even if loading fails or a tab closes. File status bars show the exact names to use.
+Names that differ only in ASCII letter case conflict. Files with conflicting names receive `_2`, `_3`, and so on, skipping names already assigned. For example, opening `east/sales.parquet` then `west/sales.parquet` creates `"sales"` and `"sales_2"`. Names are assigned in argument order and stay fixed even if loading fails or a tab closes. File tab tooltips show the exact names to use.
 
 **Migration:** the automatic `data` alias has been removed, including for single-file sessions. Replace `FROM data` with the displayed filename-based table name. A file actually named `data.parquet` still uses `"data"`.
 
