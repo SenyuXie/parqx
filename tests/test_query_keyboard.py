@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from textual import events
+from textual._xterm_parser import XTermParser
 from textual.coordinate import Coordinate
 from textual.widgets import Footer, TabbedContent
 from textual.widgets._footer import FooterKey
@@ -14,6 +15,13 @@ from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from tests.test_query_app import open_query, wait_for
+
+SHIFT_ENTER_SEQUENCE = "\x1b[13;2u"
+
+
+def post_terminal_input(app: ParqxApp, sequence: str) -> None:
+    for message in XTermParser().feed(sequence):
+        app.post_message(message)
 
 
 def footer_keys(footer: Footer) -> dict[str, FooterKey]:
@@ -136,6 +144,38 @@ async def test_enter_runs_entire_sql_even_with_selection(small_parquet: Path) ->
         assert table.columns[0].name == "answer"
 
 
+async def test_terminal_shift_enter_edits_selection_and_preserves_enter(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        tabs = app.query_one(TabbedContent)
+        query = await open_query(app, pilot)
+        editor = query.editor
+        sql = "SELECT 42 AS answer"
+        editor.load_text(sql)
+        editor.move_cursor((0, 9))
+        await pilot.press("shift+right")
+        assert editor.selected_text == " "
+
+        post_terminal_input(app, SHIFT_ENTER_SEQUENCE)
+        await wait_for(lambda: editor.text == "SELECT 42\nAS answer", pilot)
+        assert editor.cursor_location == (1, 0)
+        assert editor.has_focus
+        assert app.screen is query
+        assert not query.running
+        assert tabs.tab_count == 1
+
+        await pilot.press("ctrl+z")
+        assert editor.text == sql
+        assert editor.has_focus
+        post_terminal_input(app, "\r")
+        await wait_for(lambda: app.screen is not query and tabs.tab_count == 2, pilot)
+        table = tabs.get_pane("query-1").query_one(ArrowTable)
+        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
+
+
 async def test_blank_sql_and_old_query_keys_do_not_execute(small_parquet: Path) -> None:
     app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
@@ -212,6 +252,8 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 assert await pilot.click(footer_keys(footer)["run_query"])
                 assert await pilot.click(footer_keys(footer)["newline"])
                 await pilot.press("enter", "enter", "x", "shift+enter", "backspace")
+                post_terminal_input(app, SHIFT_ENTER_SEQUENCE)
+                await pilot.pause()
                 assert calls == 1
                 assert query.running
                 assert query.editor.text == "SELECT 42"

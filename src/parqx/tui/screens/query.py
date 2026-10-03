@@ -73,14 +73,7 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "run_query", "Run SQL", priority=True),
-        Binding(
-            "shift+enter",
-            "newline",
-            "New line",
-            priority=True,
-            key_display="⇧⏎",
-            tooltip="Shift+Enter: insert a new line",
-        ),
+        Binding("shift+enter", "newline", "New line", priority=True),
         Binding("escape", "close", "Close", priority=True),
     ]
 
