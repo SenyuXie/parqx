@@ -13,13 +13,13 @@ import pyarrow as pa
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical
 from textual.content import Content
 from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Label, LoadingIndicator, TextArea
 
-from parqx.data.catalog import SourceCatalog, SourceEntry, SourceIssue, SourceSpec
+from parqx.data.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -64,17 +64,6 @@ class QueryScreen(ModalScreen[QueryResult]):
             }
 
             & > #query-loading { height: 1; }
-            & > #query-sources-scroll {
-                height: auto;
-                max-height: 3;
-                scrollbar-size: 1 1;
-                & > #query-sources {
-                    width: 1fr;
-                    height: auto;
-                    color: $text-muted;
-                }
-            }
-
             & > Label {
                 width: 1fr;
                 height: auto;
@@ -87,7 +76,6 @@ class QueryScreen(ModalScreen[QueryResult]):
 
         &.compact > #query-dialog {
             height: 90%;
-            & > #query-sources-scroll { height: 1; max-height: 1; }
             & > #query-status { max-height: 1; }
         }
     }
@@ -116,8 +104,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._status = Label("", id="query-status", markup=False)
         self._status.display = False
-        self._sources_label = Label("", id="query-sources", markup=False)
-        self._source_snapshot: tuple[SourceEntry, ...] | None = None
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._footer = Footer(show_command_palette=False)
@@ -133,8 +119,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         dialog = Vertical(id="query-dialog")
         dialog.border_title = "SQL query"
         with dialog:
-            with VerticalScroll(id="query-sources-scroll"):
-                yield self._sources_label
             yield self.editor
             yield self._loading
             yield self._status
@@ -153,7 +137,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._status.display = False
         self._status.tooltip = None
         self._status.remove_class("error")
-        self.refresh_sources()
         self.editor.focus()
 
     def on_resize(self, event: Resize) -> None:
@@ -161,37 +144,10 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.set_class(event.size.height < 18 or event.size.width < 60, "compact")
         self._footer.compact = event.size.width < 60
 
-    def refresh_sources(self) -> None:
-        """Refresh source discovery without changing a running query's context."""
-        entries = (
-            self._source_snapshot
-            if self.running and self._source_snapshot is not None
-            else self._catalog.entries
-        )
-        self._sources_label.update(
-            "\n".join(
-                entry.spec.quoted_name
-                + f" · {entry.state}"
-                + (" · tab closed" if not entry.is_open else "")
-                for entry in entries
-            )
-        )
-        self._sources_label.tooltip = Content(
-            "\n".join(
-                f"{entry.spec.quoted_name} → {entry.spec.path}"
-                + (f"\n{entry.issue.message}" if entry.issue is not None else "")
-                for entry in entries
-            )
-            + "\n\nShift+Tab: browse tables with arrows. Tab: return to SQL."
-        )
-
     def _set_running(self, running: bool) -> None:
         self.running = running
         self.editor.read_only = running
         self._loading.display = running
-        if not running:
-            self._source_snapshot = None
-        self.refresh_sources()
         self.refresh_bindings()
 
     def action_newline(self) -> None:
@@ -222,7 +178,6 @@ class QueryScreen(ModalScreen[QueryResult]):
             for entry in self._catalog.entries
             if entry.state != "ready"
         )
-        self._source_snapshot = self._catalog.entries
         self._set_running(True)
         self._run_query(sources, sql, self._request_id, control, unavailable)
 

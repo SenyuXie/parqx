@@ -33,7 +33,7 @@ Your shell expands the wildcard. Tabs follow argument order, and repeated paths 
 
 ### Query across files
 
-The SQL editor lists the available table names and loading states. The file status bar also shows its quoted SQL name. For `users.parquet` and `orders.parquet`, for example:
+The file status bar shows its quoted SQL name. For `users.parquet` and `orders.parquet`, for example:
 
 ```sql
 SELECT u.name, sum(o.amount) AS total
@@ -55,13 +55,13 @@ Table names keep the filename without its final extension. Use double quotes for
 | `a"b.parquet` | `"a""b"` |
 | `select.parquet` | `"select"` |
 
-Names that differ only in ASCII letter case conflict. Files with conflicting names receive `_2`, `_3`, and so on, skipping names already assigned. For example, opening `east/sales.parquet` then `west/sales.parquet` creates `"sales"` and `"sales_2"`. Names are assigned in argument order and stay fixed even if loading fails or a tab closes. The source list shows the exact names to use.
+Names that differ only in ASCII letter case conflict. Files with conflicting names receive `_2`, `_3`, and so on, skipping names already assigned. For example, opening `east/sales.parquet` then `west/sales.parquet` creates `"sales"` and `"sales_2"`. Names are assigned in argument order and stay fixed even if loading fails or a tab closes. File status bars show the exact names to use.
 
 **Migration:** the automatic `data` alias has been removed, including for single-file sessions. Replace `FROM data` with the displayed filename-based table name. A file actually named `data.parquet` still uses `"data"`.
 
 ### Loading and closing files
 
-Each query captures the sources that have finished loading when you press `enter`. Loading or failed sources are excluded and reported as source warnings. The list stays fixed while the query runs, then refreshes for the next query. Even with no ready sources, expressions such as `SELECT 42` work.
+Each query captures the sources that have finished loading when you press `enter`. Loading or failed sources are excluded and reported as source warnings. Sources that finish loading during a query are available on the next run. Even with no ready sources, expressions such as `SELECT 42` work.
 
 If a previously loaded file becomes unreadable, queries that do not depend on it can still succeed with a warning. Restore the file and run the query again to retry. A read error during execution produces an error instead of a partial result.
 
@@ -105,9 +105,6 @@ These shortcuts apply to the active tab.
 | `ctrl+p` → **SQL query** | Open the centered SQL editor                  |
 | `enter`                  | Run the complete SQL query                    |
 | `shift+enter`            | Insert a newline                              |
-| `shift+tab` (editor)     | Focus the source list                         |
-| `tab` (source list)      | Return focus to the editor                    |
-| `↑` / `↓` (source list)  | Scroll the available sources                  |
 | `esc`                    | Close the editor and cancel any running query |
 
 ## License

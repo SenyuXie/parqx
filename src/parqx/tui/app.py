@@ -218,7 +218,6 @@ class ParqxApp(App[Any]):
             if self._shutting_down:
                 return
             self.catalog.mark_ready(source_id)
-            self._refresh_query_sources()
             pane = self._panes.get(source_id)
             state = self._source_views.get(source_id)
             if pane is None or state is None:
@@ -235,7 +234,6 @@ class ParqxApp(App[Any]):
         if self._shutting_down:
             return
         self.catalog.mark_failed(source_id, message)
-        self._refresh_query_sources()
         pane = self._panes.get(source_id)
         if pane is not None:
             issue = self.catalog.get(source_id).issue
@@ -245,10 +243,6 @@ class ParqxApp(App[Any]):
     def _exit_if_all_failed(self) -> None:
         if all(entry.state == "failed" for entry in self.catalog.entries):
             self.exit(return_code=1)
-
-    def _refresh_query_sources(self) -> None:
-        query = self.get_screen("query", QueryScreen)  # pyright: ignore[reportUnknownMemberType]
-        query.refresh_sources()
 
     @on(ArrowTable.WindowRequested)
     def _on_window_requested(self, event: ArrowTable.WindowRequested) -> None:
@@ -416,7 +410,6 @@ class ParqxApp(App[Any]):
             if pane_id in self._source_views:
                 self.catalog.mark_closed(pane_id)
                 self._cancel_source_read(pane_id)
-                self._refresh_query_sources()
             await self._tabs.remove_pane(pane_id)
             del self._panes[pane_id]
             self._refresh_tab_bindings()
