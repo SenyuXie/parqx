@@ -26,7 +26,7 @@ from textual.worker import (
     get_current_worker,  # pyright: ignore[reportUnknownVariableType]
 )
 
-from parqx.data.catalog import SourceCatalog, SourceIssue
+from parqx.catalog import SourceCatalog, SourceIssue
 from parqx.data.parquet import ParquetSource, ReadCancelledError
 from parqx.data.view import DataPage, TableData
 from parqx.query.engine import QueryLimits

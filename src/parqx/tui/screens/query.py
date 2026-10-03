@@ -18,7 +18,7 @@ from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Footer, LoadingIndicator, TextArea
 
-from parqx.data.catalog import SourceCatalog, SourceIssue, SourceSpec
+from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,

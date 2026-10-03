@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from parqx.data.catalog import SourceCatalog
+from parqx.catalog import SourceCatalog
 from parqx.query.engine import QueryCancelledError, QueryControl, QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen

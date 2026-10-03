@@ -25,7 +25,7 @@ from tempfile import TemporaryDirectory
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from parqx.data.catalog import SourceCatalog
+from parqx.catalog import SourceCatalog
 from parqx.query.engine import QueryControl, QueryLimits, QuerySession
 
 EXPECTED_MODULES: tuple[str, ...] = (

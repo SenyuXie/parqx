@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from parqx.data.catalog import SourceCatalog, quote_identifier
+from parqx.catalog import SourceCatalog, quote_identifier
 
 
 def test_input_order_and_duplicate_paths(

@@ -12,8 +12,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from parqx.catalog import SourceCatalog, SourceSpec
 from parqx.data.batch import bounded_prefix
-from parqx.data.catalog import SourceCatalog, SourceSpec
 from parqx.query import engine
 from parqx.query.engine import (
     QueryCancelledError,

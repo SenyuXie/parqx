@@ -12,8 +12,8 @@ from typing import Self
 import duckdb
 import pyarrow as pa
 
+from parqx.catalog import SourceIssue, SourceSpec
 from parqx.data.batch import bounded_prefix, compact_batch
-from parqx.data.catalog import SourceIssue, SourceSpec
 
 
 class QueryCancelledError(Exception):

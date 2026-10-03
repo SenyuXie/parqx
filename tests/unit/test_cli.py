@@ -7,8 +7,8 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner
 
+from parqx.catalog import SourceCatalog, SourceIssue
 from parqx.cli import app
-from parqx.data.catalog import SourceCatalog, SourceIssue
 
 runner = CliRunner()
 

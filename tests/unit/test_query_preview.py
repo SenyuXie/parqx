@@ -5,7 +5,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
-from parqx.data.catalog import SourceCatalog, SourceSpec
+from parqx.catalog import SourceCatalog, SourceSpec
 from parqx.query.engine import QueryControl, QueryLimits, QuerySession
 
 
