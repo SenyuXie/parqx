@@ -38,7 +38,7 @@ async def open_sql_query(pilot: Pilot[Any]) -> QueryScreen:
 async def test_palette_open_preserves_editor_selection_and_history(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -70,7 +70,7 @@ async def test_palette_open_preserves_editor_selection_and_history(
 
 
 async def test_palette_cannot_stack_above_query_dialog(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         query = await open_sql_query(pilot)
         await pilot.press("ctrl+p")

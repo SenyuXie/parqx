@@ -29,7 +29,7 @@ async def test_large_field_does_not_hide_neighboring_column(
 ) -> None:
     path = tmp_path / "large-field.parquet"
     pq.write_table(pa.table({"id": [123456789], "payload": [payload]}), path)
-    app = ParqxApp(path)
+    app = ParqxApp([path])
     async with app.run_test(size=(80, 12)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         table = app.query_one(ArrowTable)
@@ -52,7 +52,7 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
         reads.append((start, stop))
         return original_read(source, start, stop, cancelled)
 
-    app = ParqxApp(path)
+    app = ParqxApp([path])
     with (
         patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")),
         patch.object(ParquetSource, "read_window", record_read),
@@ -74,7 +74,7 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
             state = (table.cursor_coordinate, table.scroll_y, table.cursor_type)
             await run_query(app, pilot, "SELECT 42 AS answer")
             tabs = app.query_one(TabbedContent)
-            await select_tab(tabs, "source", pilot)
+            await select_tab(tabs, "source-1", pilot)
             assert (table.cursor_coordinate, table.scroll_y, table.cursor_type) == state
             assert table.zebra_stripes
             table.focus()
@@ -97,7 +97,7 @@ async def test_pending_source_window_keeps_modal_focus(
         release.wait(timeout=5)
         return original_read(source, start, stop, cancelled)
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(ParquetSource, "read_window", delayed_read):
         async with app.run_test() as pilot:
             try:
@@ -146,7 +146,7 @@ async def test_closed_source_cancels_window_and_releases_cache(
         finally:
             returned.set()
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(ParquetSource, "read_window", delayed_read):
         async with app.run_test() as pilot:
             try:
@@ -155,9 +155,9 @@ async def test_closed_source_cancels_window_and_releases_cache(
                 cached = weakref.ref(source_table.data)
                 tabs = app.query_one(TabbedContent)
                 result = await run_query(app, pilot, "SELECT 42 AS answer")
-                await select_tab(tabs, "source", pilot)
+                await select_tab(tabs, "source-1", pilot)
                 await pilot.press("ctrl+w")
-                await wait_for(lambda: not tabs.query("#source"), pilot)
+                await wait_for(lambda: not tabs.query("#source-1"), pilot)
                 assert all(event.is_set() for event in cancellation)
 
                 def released() -> bool:
@@ -171,7 +171,7 @@ async def test_closed_source_cancels_window_and_releases_cache(
                 assert tabs.tab_count == 1
                 assert tabs.active == "query-1"
                 assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
-                assert app.load_error is None
+                assert not app.load_errors
             finally:
                 release.set()
 
@@ -191,19 +191,19 @@ async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) ->
             raise OSError("window temporarily unavailable")
         return original_read(source, start, stop, cancelled)
 
-    app = ParqxApp(path)
+    app = ParqxApp([path])
     with patch.object(ParquetSource, "read_window", fail_first_read):
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             table = app.query_one(ArrowTable)
-            status = app.query_one("#source").query_one(Label)
+            status = app.query_one("#source-1").query_one(Label)
             await wait_for(
                 lambda: "temporarily unavailable" in str(status.content), pilot
             )
             table.refresh()
             await pilot.pause()
             assert calls == 1
-            assert app.load_error is None
+            assert not app.load_errors
             await pilot.press("ctrl+end")
             await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
             assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
@@ -226,7 +226,7 @@ async def test_shutdown_cancels_pending_source_window(small_parquet: Path) -> No
         finally:
             finished.set()
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(ParquetSource, "read_window", wait_for_cancel):
         async with app.run_test() as pilot:
             await wait_for(started.is_set, pilot)
