@@ -227,6 +227,43 @@ async def test_new_window_cancels_old_read_and_discards_late_result(
                 release.set()
 
 
+async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
+    tmp_path: Path, recwarn: pytest.WarningsRecorder
+) -> None:
+    path = tmp_path / "rapid.parquet"
+    pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)
+    reads: list[int] = []
+    original_read = ParquetSource.read_window
+
+    def record_read(
+        source: ParquetSource, start: int, stop: int, cancelled: Event
+    ) -> DataPage:
+        reads.append(start)
+        return original_read(source, start, stop, cancelled)
+
+    app = ParqxApp([path])
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        table = app.query_one(ArrowTable)
+        await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+        with patch.object(ParquetSource, "read_window", record_read):
+            # Deliver multiple requests before any new worker can start.
+            for start in (300, 600, 900):
+                app._on_window_requested(  # pyright: ignore[reportPrivateUsage]
+                    ArrowTable.WindowRequested(table, table.data, start, start + 100)
+                )
+            await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
+            assert reads == [900]
+            assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
+            await pilot.pause()
+    gc.collect()
+    assert not any(
+        issubclass(warning.category, RuntimeWarning)
+        and "was never awaited" in str(warning.message)
+        for warning in recwarn
+    )
+
+
 async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) -> None:
     path = tmp_path / "retry.parquet"
     pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)

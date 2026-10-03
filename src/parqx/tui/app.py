@@ -8,6 +8,7 @@ import weakref
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from stat import S_ISREG
 from threading import Event
@@ -21,6 +22,7 @@ from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
 from textual.worker import (
+    Worker,
     get_current_worker,  # pyright: ignore[reportUnknownVariableType]
 )
 
@@ -137,8 +139,8 @@ class ParqxApp(App[Any]):
             if entry.issue is not None:
                 self._panes[source_id].show_error(str(entry.issue))
             else:
-                self.run_worker(
-                    self._load_table(source_id),
+                _worker: Worker[None] = self.run_worker(
+                    partial(self._load_table, source_id),
                     group=f"load:{source_id}",
                     exclusive=True,
                     exit_on_error=False,
@@ -250,8 +252,10 @@ class ParqxApp(App[Any]):
             or pane.table.data is not event.data
         ):
             return
-        self.run_worker(
-            self._read_page(
+        # Superseded workers may never start, so create their coroutine lazily.
+        _worker: Worker[None] = self.run_worker(
+            partial(
+                self._read_page,
                 source_id,
                 source,
                 weakref.ref(event.data),
