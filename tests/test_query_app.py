@@ -83,7 +83,7 @@ async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -
         source = tabs.get_pane("source").query_one(ArrowTable)
         assert (source.row_count, source.column_count) == (5, 3)
 
-        table = await run_query(app, pilot, "SELECT name FROM data ORDER BY id")
+        table = await run_query(app, pilot, "SELECT name FROM smoke ORDER BY id")
         assert tabs.active == "query-1"
         assert str(tabs.get_tab("query-1").label) == "Query 1"
         assert (table.row_count, table.column_count) == (2, 1)
@@ -103,9 +103,9 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
-        table = await run_query(app, pilot, "SELECT id FROM data WHERE id > 3")
+        table = await run_query(app, pilot, "SELECT id FROM smoke WHERE id > 3")
         query = await open_query(app, pilot)
-        query.editor.load_text("SELECT missing FROM data")
+        query.editor.load_text("SELECT missing FROM smoke")
         await pilot.press("enter")
         await wait_for(lambda: query.error is not None, pilot)
         await wait_for(lambda: query.editor.has_focus, pilot)
@@ -114,7 +114,7 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
         assert tabs.tab_count == 2
         assert table.row_count == 2
 
-        query.editor.load_text("SELECT name FROM data WHERE false")
+        query.editor.load_text("SELECT name FROM smoke WHERE false")
         await pilot.press("enter")
         await wait_for(lambda: app.screen is not query and tabs.tab_count == 3, pilot)
         empty = tabs.get_pane("query-2").query_one(ArrowTable)
@@ -191,7 +191,7 @@ async def test_close_tab_footer_and_last_tab_guard(small_parquet: Path) -> None:
         assert tabs.active == "query-1"
 
         # Closing the source tab does not remove the engine's file-backed view.
-        await run_query(app, pilot, "SELECT count(*) AS total FROM data")
+        await run_query(app, pilot, "SELECT count(*) AS total FROM smoke")
         await run_query(app, pilot, "SELECT 3 AS value")
         await pilot.press("ctrl+w", "ctrl+w", "ctrl+w", "ctrl+w")
         await wait_for(lambda: tabs.tab_count == 1, pilot)
@@ -280,6 +280,9 @@ async def test_file_read_cannot_recreate_closed_source_tab(
                 assert tabs.active == "query-1"
                 assert table.columns[0].name == "answer"
                 assert app.load_error is None
+                if not stale_error:
+                    count = await run_query(app, pilot, "SELECT count(*) FROM smoke")
+                    assert count.get_cell_at(Coordinate(0, 0)).as_py() == 5
             finally:
                 release.set()
 
@@ -339,3 +342,78 @@ async def test_closing_tab_releases_its_cached_data(
 
         await wait_for(released, pilot)
         assert tabs.tab_count == 1
+
+
+async def test_filename_sql_replaces_implicit_data_alias(small_parquet: Path) -> None:
+    app = ParqxApp(small_parquet)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        assert '"smoke"' in str(query.query_one("#query-sources", Label).content)
+        query.editor.load_text("SELECT * FROM data")
+        await pilot.press("enter")
+        await wait_for(lambda: query.error is not None, pilot)
+        assert "data" in (query.error or "")
+        query.editor.load_text('SELECT count(*) FROM "smoke"')
+        await pilot.press("enter")
+        await wait_for(lambda: app.screen is not query, pilot)
+
+
+async def test_unavailable_source_warning_and_error_recover(
+    small_parquet: Path,
+) -> None:
+    contents = small_parquet.read_bytes()
+    app = ParqxApp(small_parquet)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
+        small_parquet.unlink()
+        await run_query(app, pilot, "SELECT 42 AS answer")
+        tabs = app.query_one(TabbedContent)
+        assert "warning" in str(tabs.get_pane("query-1").query_one(Label).content)
+        tooltip = str(tabs.get_tab("query-1").tooltip)
+        assert str(small_parquet) in tooltip
+        assert '"smoke"' in tooltip
+        query = await open_query(app, pilot)
+        query.editor.load_text("SELECT * FROM smoke")
+        await pilot.press("enter")
+        await wait_for(lambda: query.error is not None, pilot)
+        assert "Unavailable sources" in (query.error or "")
+        assert str(small_parquet) in (query.error or "")
+        small_parquet.write_bytes(contents)
+        query.editor.load_text("SELECT count(*) FROM smoke")
+        await pilot.press("enter")
+        await wait_for(lambda: app.screen is not query and tabs.tab_count == 3, pilot)
+        assert "warning" not in str(tabs.get_pane("query-2").query_one(Label).content)
+
+
+async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -> None:
+    started, release = Event(), Event()
+    original_enter = QuerySession.__enter__
+
+    def delayed_enter(session: QuerySession) -> QuerySession:
+        started.set()
+        release.wait(timeout=5)
+        return original_enter(session)
+
+    app = ParqxApp(small_parquet)
+    with patch.object(QuerySession, "__enter__", delayed_enter):
+        async with app.run_test() as pilot:
+            try:
+                await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+                query = await open_query(app, pilot)
+                query.editor.load_text("SELECT count(*) FROM smoke")
+                await pilot.press("enter")
+                await wait_for(started.is_set, pilot)
+                app.catalog.mark_failed("source-1", "Temporarily unavailable")
+                release.set()
+                await wait_for(lambda: app.screen is not query, pilot)
+                tabs = app.query_one(TabbedContent)
+                table = tabs.get_pane("query-1").query_one(ArrowTable)
+                assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
+                await open_query(app, pilot)
+                await pilot.press("enter")
+                await wait_for(lambda: query.error is not None, pilot)
+                assert "Temporarily unavailable" in (query.error or "")
+            finally:
+                release.set()

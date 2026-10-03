@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock, Thread
 from types import TracebackType
@@ -13,6 +12,7 @@ import duckdb
 import pyarrow as pa
 
 from parqx.data.batch import bounded_prefix, compact_batch
+from parqx.data.catalog import SourceIssue, SourceSpec
 
 
 class QueryCancelledError(Exception):
@@ -117,13 +117,14 @@ class QuerySession:
 
     def __init__(
         self,
-        path: Path,
+        sources: tuple[SourceSpec, ...],
         sql: str,
         control: QueryControl,
         limits: QueryLimits | None = None,
     ) -> None:
         """Record the source and SQL without performing I/O."""
-        self.path = path
+        self.sources = sources
+        self.issues: tuple[SourceIssue, ...] = ()
         self.sql = sql
         self.control = control
         self.limits = limits or QueryLimits()
@@ -141,6 +142,7 @@ class QuerySession:
                     "threads": self.limits.threads,
                     "memory_limit": self.limits.memory_limit,
                     "temp_directory": self._temporary.name,
+                    "python_enable_replacements": False,
                 }
             )
             self._connection = connection
@@ -151,7 +153,22 @@ class QuerySession:
                 or statements[0].type != duckdb.StatementType.SELECT
             ):
                 raise ValueError("Enter one SELECT query (WITH is supported).")
-            connection.read_parquet(str(self.path.resolve())).create_view("data")
+            for source in self.sources:
+                self.control.check()
+                try:
+                    relation = connection.read_parquet(str(source.path))
+                except (
+                    duckdb.IOException,
+                    duckdb.InvalidInputException,
+                    duckdb.PermissionException,
+                    OSError,
+                ) as exc:
+                    self.control.check()
+                    self.issues += (SourceIssue(source, str(exc)),)
+                    continue
+                self.control.check()
+                relation.create_view(source.table_name, replace=False)
+                self.control.check()
             self.control.check()
             relation = connection.sql(self.sql)
             self._reader = relation.to_arrow_reader(self.limits.batch_rows)

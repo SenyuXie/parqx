@@ -46,7 +46,7 @@ def test_path_is_forwarded_to_app(small_parquet: Path) -> None:
 @pytest.mark.parametrize("option", ["--query", "-q"])
 def test_query_option_is_rejected(small_parquet: Path, option: str) -> None:
     with patch("parqx.cli.ParqxApp") as app_class:
-        result = runner.invoke(app, [str(small_parquet), option, "SELECT * FROM data"])
+        result = runner.invoke(app, [str(small_parquet), option, "SELECT * FROM smoke"])
 
     assert result.exit_code == 2
     assert "No such option" in unstyle(result.output)
