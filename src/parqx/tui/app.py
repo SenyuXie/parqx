@@ -141,6 +141,7 @@ class ParqxApp(App[Any]):
             else:
                 _worker: Worker[None] = self.run_worker(
                     partial(self._load_table, source_id),
+                    description="Load source metadata",
                     group=f"load:{source_id}",
                     exclusive=True,
                     exit_on_error=False,
@@ -262,6 +263,7 @@ class ParqxApp(App[Any]):
                 event.start_row,
                 event.stop_row,
             ),
+            description="Read source page",
             group=f"page:{source_id}",
             exclusive=True,
             exit_on_error=False,
