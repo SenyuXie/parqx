@@ -24,9 +24,7 @@ def version_callback(value: bool) -> None:
 
 @app.command()
 def main(
-    paths: Annotated[
-        list[Path], typer.Argument(help="Parquet files to inspect (one tab per file).")
-    ],
+    paths: Annotated[list[Path], typer.Argument(help="Parquet files to inspect.")],
     verbose: Annotated[
         int,
         typer.Option(
