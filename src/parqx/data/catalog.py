@@ -57,6 +57,7 @@ class SourceCatalog:
         """Assign stable names before any asynchronous file loading starts."""
         self._entries: dict[str, SourceEntry] = {}
         seen_paths: set[Path] = set()
+        seen_files: set[tuple[int, int]] = set()
         used_names: set[str] = set()
         for path in paths:
             error: str | None = None
@@ -69,6 +70,17 @@ class SourceCatalog:
             if resolved in seen_paths:
                 continue
             seen_paths.add(resolved)
+            try:
+                stat = resolved.stat()
+            except OSError:
+                # Loading reports missing or unreadable files individually.
+                pass
+            else:
+                if stat.st_ino:
+                    identity = (stat.st_dev, stat.st_ino)
+                    if identity in seen_files:
+                        continue
+                    seen_files.add(identity)
 
             table_name = path.stem
             suffix = 2

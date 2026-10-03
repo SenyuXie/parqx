@@ -44,6 +44,38 @@ def test_symlink_uses_first_input_name(tmp_path: Path) -> None:
     assert source.table_name == "alias"
 
 
+def test_case_alias_of_existing_file_is_deduplicated(tmp_path: Path) -> None:
+    original = tmp_path / "example.parquet"
+    original.touch()
+    alias = tmp_path / "EXAMPLE.parquet"
+    if not alias.exists() or not original.samefile(alias):
+        pytest.skip("Filesystem is case sensitive")
+
+    catalog = SourceCatalog([alias, original])
+
+    assert len(catalog.entries) == 1
+    assert catalog.entries[0].spec.display_name == "EXAMPLE.parquet"
+    assert catalog.entries[0].spec.table_name == "EXAMPLE"
+
+
+def test_hardlink_uses_first_input_name(tmp_path: Path) -> None:
+    original = tmp_path / "original.parquet"
+    original.touch()
+    alias = tmp_path / "alias.parquet"
+    try:
+        alias.hardlink_to(original)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Hardlinks unavailable: {exc}")
+
+    catalog = SourceCatalog([alias, original])
+
+    assert len(catalog.entries) == 1
+    source = catalog.entries[0].spec
+    assert source.path == alias
+    assert source.display_name == "alias.parquet"
+    assert source.table_name == "alias"
+
+
 def test_names_handle_ascii_case_and_occupied_suffixes(tmp_path: Path) -> None:
     names = ["users", "users_2", "Users", "users", "users_3", "Å", "å"]
     catalog = SourceCatalog(
