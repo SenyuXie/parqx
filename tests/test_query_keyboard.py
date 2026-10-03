@@ -264,7 +264,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 assert query.running
                 assert query.editor.text == "SELECT 42"
                 assert query.query_one("#query-loading").display
-                control = query._query_control  # pyright: ignore[reportPrivateUsage]
+                control = query._current_control  # pyright: ignore[reportPrivateUsage]
                 assert control is not None
                 await pilot.click(footer_keys(footer)["close"])
                 await wait_for(lambda: app.screen is not query, pilot)
