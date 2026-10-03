@@ -5,10 +5,10 @@ packaging-time regressions that the pytest suite cannot see: a missing
 submodule, a broken `[project.scripts]` entry point, an unshipped
 `py.typed` marker, or a runtime dependency that was only available in dev.
 
-Invoked from `.github/workflows/release.yml`:
+Invoked from the CI and release workflows:
 
-    uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
-    uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_test.py
+    uv run --isolated --no-project --with dist/*.whl tests/distribution/check_install.py
+    uv run --isolated --no-project --with dist/*.tar.gz tests/distribution/check_install.py
 
 The `--isolated --no-project` flags mean the only things available are the
 standard library, the built parqx artifact, and parqx's declared runtime

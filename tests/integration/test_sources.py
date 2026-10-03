@@ -1,5 +1,7 @@
-"""Multiple file tabs, shared SQL sources and isolated background reads."""
+"""Multi-source catalog, browsing isolation, and shared SQL lifecycle."""
 
+import gc
+import weakref
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -8,45 +10,48 @@ from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
+from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable, ResultPane
-from tests.test_query_app import run_query, select_tab, wait_for
+from tests.helpers import (
+    open_query,
+    run_query,
+    select_tab,
+    wait_for,
+    wait_for_query_error,
+)
 
 
-def write_join_sources(tmp_path: Path) -> tuple[Path, Path]:
-    users, orders = tmp_path / "users.parquet", tmp_path / "orders.parquet"
-    pq.write_table(
-        pa.table({"id": [1, 2, 3], "name": ["alice", "bob", "carol"]}), users
-    )
-    pq.write_table(
-        pa.table({"user_id": [1, 1, 2, 3], "amount": [10, 15, 7, 20]}), orders
-    )
-    return users, orders
-
-
-async def test_ordered_unique_sources_join_and_keep_independent_view_state(
+async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
     tmp_path: Path,
 ) -> None:
-    users, orders = write_join_sources(tmp_path)
+    users = tmp_path / "one" / "sales report.parquet"
+    orders = tmp_path / "two" / users.name
+    for path in (users, orders):
+        path.parent.mkdir()
+    pq.write_table(pa.table({"id": [1, 2], "name": ["alice", "bob"]}), users)
+    pq.write_table(pa.table({"user_id": [1, 1, 2], "amount": [10, 15, 7]}), orders)
     app = ParqxApp([orders, users, orders])
-    async with app.run_test(size=(100, 24)) as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
-        assert tabs.tab_count == 2
         assert tabs.active == "source-1"
         assert [pane.id for pane in tabs.query(ResultPane)] == ["source-1", "source-2"]
-        assert [spec.path for spec in app.catalog.snapshot()] == [
-            orders.resolve(),
-            users.resolve(),
-        ]
-        assert str(tabs.get_tab("source-1").label) == orders.name
-        assert str(tabs.get_tab("source-2").label) == users.name
+        specs = app.catalog.snapshot()
+        assert [spec.path for spec in specs] == [orders.resolve(), users.resolve()]
+        labels: list[str] = []
+        for spec in specs:
+            tab = tabs.get_tab(spec.source_id)
+            assert f"SQL: {spec.quoted_name}" in str(tab.tooltip)
+            assert str(spec.path) in str(tab.tooltip)
+            assert spec.quoted_name in str(tab.label)
+            labels.append(str(tab.label))
+        assert labels[0] != labels[1]
         first = tabs.get_pane("source-1").query_one(ArrowTable)
         second = tabs.get_pane("source-2").query_one(ArrowTable)
 
@@ -68,23 +73,17 @@ async def test_ordered_unique_sources_join_and_keep_independent_view_state(
         assert second.cursor_type == "cell"
         assert second.cursor_coordinate == Coordinate(0, 0)
 
-        result = await run_query(
-            app,
-            pilot,
-            'SELECT u.name, sum(o.amount) AS total FROM "users" u '
-            'JOIN "orders" o ON u.id = o.user_id GROUP BY u.name ORDER BY u.name',
+        sql = (
+            f"SELECT u.name, sum(o.amount) FROM {specs[1].quoted_name} u "
+            f"JOIN {specs[0].quoted_name} o ON u.id = o.user_id "
+            "GROUP BY u.name ORDER BY u.name"
         )
-        assert result.row_count == 3
-        assert [result.get_cell_at(Coordinate(row, 0)).as_py() for row in range(3)] == [
-            "alice",
-            "bob",
-            "carol",
-        ]
-        assert [result.get_cell_at(Coordinate(row, 1)).as_py() for row in range(3)] == [
-            25,
-            7,
-            20,
-        ]
+        result = await run_query(app, pilot, sql)
+        assert result.row_count == 2
+        assert [
+            [result.get_cell_at(Coordinate(row, column)).as_py() for column in range(2)]
+            for row in range(2)
+        ] == [["alice", 25], ["bob", 7]]
         await select_tab(tabs, "source-1", pilot)
         assert (
             first.show_header,
@@ -93,6 +92,23 @@ async def test_ordered_unique_sources_join_and_keep_independent_view_state(
             first.cursor_type,
             first.cursor_coordinate,
         ) == state
+
+        # Closing browsing views must retain their SQL catalog entries.
+        for source_id in ("source-1", "source-2"):
+            await select_tab(tabs, source_id, pilot)
+            await pilot.press("ctrl+w")
+
+            def source_closed(pane_id: str = source_id) -> bool:
+                return not tabs.query(f"#{pane_id}")
+
+            await wait_for(source_closed, pilot)
+        assert tabs.tab_count == 1
+        assert tabs.active == "query-1"
+        assert len(app.catalog.snapshot()) == 2
+        rerun = await run_query(app, pilot, sql)
+        assert rerun.get_cell_at(Coordinate(0, 1)).as_py() == 25
+        assert tabs.tab_count == 2
+        assert not tabs.query("#source-1, #source-2")
 
 
 async def test_partial_failures_remain_visible_and_healthy_source_is_queryable(
@@ -145,11 +161,6 @@ async def test_all_failed_sources_exit_with_failure(tmp_path: Path) -> None:
     assert all(entry.state == "failed" for entry in app.catalog.entries)
 
 
-def test_empty_source_list_is_rejected() -> None:
-    with pytest.raises(ValueError, match="At least one"):
-        ParqxApp([])
-
-
 async def test_pending_windows_and_close_are_isolated_between_sources(
     tmp_path: Path,
 ) -> None:
@@ -181,12 +192,18 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
         return original_read(source, start, stop, cancelled)
 
     app = ParqxApp([first, second])
-    with patch.object(ParquetSource, "read_window", delayed_read):
+    with (
+        patch.object(ParquetSource, "read_window", delayed_read),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test(size=(80, 18)) as pilot:
             try:
                 tabs = app.query_one(TabbedContent)
                 await wait_for(first_started.is_set, pilot)
                 await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
+                first_cache = weakref.ref(
+                    tabs.get_pane("source-1").query_one(ArrowTable).data
+                )
                 second_table = tabs.get_pane("source-2").query_one(ArrowTable)
                 await select_tab(tabs, "source-2", pilot)
                 await wait_for(lambda: second_table.data.peek(0, 0) is not None, pilot)
@@ -205,6 +222,11 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 assert all(event.is_set() for event in first_cancellations)
                 assert not pending_second.is_set()
 
+                def cache_released() -> bool:
+                    gc.collect()
+                    return first_cache() is None
+
+                await wait_for(cache_released, pilot)
                 first_release.set()
                 await wait_for(first_returned.is_set, pilot)
                 await pilot.pause()
@@ -217,6 +239,7 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 )
                 assert second_table.get_cell_at(Coordinate(999, 0)).as_py() == 10_999
                 assert not app.load_errors
+                notify.assert_not_called()
             finally:
                 first_release.set()
                 second_release.set()
@@ -292,7 +315,7 @@ async def test_closing_source_cancels_queued_page_without_reading_it(
 
 
 async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -> None:
-    paths = [tmp_path / f"file-{index}.parquet" for index in range(8)]
+    paths = [tmp_path / f"file-{index}.parquet" for index in range(5)]
     for path in paths:
         pq.write_table(pa.table({"n": [1]}), path)
     release = Event()
@@ -337,38 +360,63 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
                     ),
                     pilot,
                 )
-                assert counts() == (0, 4, 8)
+                assert counts() == (0, 4, 5)
                 assert len(app.catalog.snapshot()) == len(paths)
             finally:
                 release.set()
 
 
-async def test_query_sources_survive_after_all_file_tabs_close(tmp_path: Path) -> None:
-    users, orders = write_join_sources(tmp_path)
-    app = ParqxApp([users, orders])
-    async with app.run_test(size=(100, 24)) as pilot:
-        tabs = app.query_one(TabbedContent)
-        await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
-        await run_query(app, pilot, "SELECT 42 AS answer")
-        for source_id in ("source-1", "source-2"):
-            await select_tab(tabs, source_id, pilot)
-            await pilot.press("ctrl+w")
+async def test_running_query_uses_frozen_sources_until_retried(
+    small_parquet: Path,
+) -> None:
+    pending = small_parquet.with_name("pending.parquet")
+    pending.write_bytes(small_parquet.read_bytes())
+    metadata_started, metadata_release = Event(), Event()
+    query_started, query_release = Event(), Event()
+    original_enter = QuerySession.__enter__
 
-            def source_closed(pane_id: str = source_id) -> bool:
-                return not tabs.query(f"#{pane_id}")
+    def delayed_metadata(path: Path) -> ParquetSource:
+        if path == pending.resolve():
+            metadata_started.set()
+            assert metadata_release.wait(timeout=15)
+        return ParquetSource(path)
 
-            await wait_for(source_closed, pilot)
-        assert tabs.tab_count == 1
-        assert tabs.active == "query-1"
-        assert len(app.catalog.snapshot()) == 2
+    def delayed_enter(session: QuerySession) -> QuerySession:
+        query_started.set()
+        assert query_release.wait(timeout=15)
+        return original_enter(session)
 
-        result = await run_query(
-            app,
-            pilot,
-            'SELECT count(*), sum(o.amount) FROM "users" u '
-            'JOIN "orders" o ON u.id = o.user_id',
-        )
-        assert result.get_cell_at(Coordinate(0, 0)).as_py() == 4
-        assert result.get_cell_at(Coordinate(0, 1)).as_py() == 52
-        assert tabs.tab_count == 2
-        assert not tabs.query("#source-1, #source-2")
+    app = ParqxApp([small_parquet, pending])
+    with (
+        patch("parqx.tui.app.ParquetSource", delayed_metadata),
+        patch.object(QuerySession, "__enter__", delayed_enter),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
+        async with app.run_test(size=(100, 24)) as pilot:
+            try:
+                await wait_for(metadata_started.is_set, pilot)
+                await wait_for(
+                    lambda: app.catalog.get("source-1").state == "ready", pilot
+                )
+                query = await open_query(app, pilot)
+                query.editor.load_text('SELECT count(*) FROM "pending"')
+                await pilot.press("enter")
+                await wait_for(query_started.is_set, pilot)
+                metadata_release.set()
+                await wait_for(
+                    lambda: app.catalog.get("source-2").state == "ready", pilot
+                )
+                assert query.running
+                assert query.editor.has_focus
+                query_release.set()
+                message = await wait_for_query_error(notify, query, pilot)
+                assert "pending" in message
+                assert "Still loading" in message
+                assert query.editor.has_focus
+                await pilot.press("enter")
+                await wait_for(lambda: app.screen is not query, pilot)
+                table = app.query_one("#query-1").query_one(ArrowTable)
+                assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
+            finally:
+                metadata_release.set()
+                query_release.set()

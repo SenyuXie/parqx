@@ -1,4 +1,4 @@
-"""SQL shutdown waits for real execution without using its executor."""
+"""Application construction and query shutdown without mounting the UI."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +9,13 @@ import pytest
 
 from parqx.data.catalog import SourceCatalog
 from parqx.query.engine import QueryCancelledError, QueryControl, QuerySession
+from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
+
+
+def test_empty_source_list_is_rejected() -> None:
+    with pytest.raises(ValueError, match="At least one"):
+        ParqxApp([])
 
 
 def screen_with_controls(*controls: QueryControl) -> QueryScreen:

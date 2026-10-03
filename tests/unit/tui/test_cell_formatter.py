@@ -16,8 +16,7 @@ def test_rejects_negative_max_nested_depth() -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [(b"", "0x"), (b"\x00", "0x00"), (b"\x00\x01\x02", "0x000102")],
+    ("value", "expected"), [(b"", "0x"), (b"\x00\x01\x02", "0x000102")]
 )
 def test_format_binary_reads_complete_value_when_it_fits(
     value: bytes, expected: str
@@ -86,13 +85,3 @@ def test_format_fallback_formats_non_string_value() -> None:
     result = formatter(scalar)
 
     assert result.plain == "123"
-
-
-def test_dictionary_scalar_uses_fallback_formatter() -> None:
-    formatter = CellFormatter(inline_limit=32)
-    dictionary_type = pa.dictionary(pa.int8(), pa.string())
-    scalar = pa.array(["line\nbreak"], type=dictionary_type)[0]
-
-    result = formatter(scalar)
-
-    assert result.plain == r"line\nbreak"

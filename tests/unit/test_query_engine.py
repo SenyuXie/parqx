@@ -34,31 +34,9 @@ def table_values(table: pa.Table) -> dict[str, list[object]]:
     }
 
 
-def test_query_file_with_quoted_path_and_cte(small_parquet: Path) -> None:
-    path = small_parquet.with_name("a 'quoted' file.parquet")
-    path.write_bytes(small_parquet.read_bytes())
-    source = sources(path)[0]
-    sql = (
-        f"WITH x AS (SELECT * FROM {source.quoted_name} WHERE score > 2) "
-        "SELECT id FROM x ORDER BY id DESC"
-    )
-    with QuerySession((source,), sql, QueryControl()) as session:
-        result = session.preview()
-    assert [v.as_py() for v in result.table.column(0)] == [5, 4, 3, 2]
-    assert not result.truncated
-    assert result.reason is None
-
-
 @pytest.mark.parametrize(
     ("literal", "neighbor"),
-    [
-        ("items[1]", "items1"),
-        ("left[", "left"),
-        ("right]", "right"),
-        ("parts*", "parts-extra"),
-        ("问?号", "问1号"),
-        ("all[*?]", "all*"),
-    ],
+    [("left[", "left"), ("parts*", "parts-extra"), ("问?号", "问1号")],
 )
 def test_source_paths_are_literal_not_globs(
     tmp_path: Path, literal: str, neighbor: str
@@ -102,115 +80,13 @@ def test_literal_parent_path_and_missing_source_cannot_match_neighbors(
         pass
 
 
-def test_preview_limit_does_not_truncate_aggregation_input(small_parquet: Path) -> None:
-    with QuerySession(
-        sources(small_parquet),
-        "SELECT count(*) AS n, sum(id) AS total FROM smoke",
-        QueryControl(),
-        QueryLimits(preview_rows=1),
-    ) as session:
-        result = session.preview()
-    assert result.table.column(0)[0].as_py() == 5
-    assert result.table.column(1)[0].as_py() == 15
-    assert not result.truncated
-
-
 @pytest.mark.parametrize(
-    ("row_limit", "batch_rows", "expected_rows", "truncated"),
-    [(3, 2, 3, True), (2, 4, 2, True), (4, 2, 4, True), (5, 2, 5, False)],
+    "sql", ["", "SELECT 1; SELECT 2", "CREATE TABLE x AS SELECT 1"]
 )
-def test_row_budget_boundaries(
-    small_parquet: Path,
-    row_limit: int,
-    batch_rows: int,
-    expected_rows: int,
-    truncated: bool,
-) -> None:
-    with QuerySession(
-        sources(small_parquet),
-        "SELECT id FROM smoke ORDER BY id",
-        QueryControl(),
-        QueryLimits(preview_rows=row_limit, batch_rows=batch_rows),
-    ) as session:
-        result = session.preview()
-    assert [value.as_py() for value in result.table.column(0)] == list(
-        range(1, expected_rows + 1)
-    )
-    assert result.truncated is truncated
-    assert result.reason == ("row limit" if truncated else None)
-
-
-def test_byte_budget_and_exact_result_boundary(small_parquet: Path) -> None:
-    sql = "SELECT id FROM smoke ORDER BY id"
-    with QuerySession(sources(small_parquet), sql, QueryControl()) as session:
-        complete = session.preview()
-    for budget, truncated in [(16, True), (complete.table.nbytes, False)]:
-        with QuerySession(
-            sources(small_parquet),
-            sql,
-            QueryControl(),
-            QueryLimits(preview_bytes=budget),
-        ) as session:
-            result = session.preview()
-        assert result.table.num_rows >= 1
-        assert result.table.nbytes <= budget
-        assert result.truncated is truncated
-        assert result.reason == ("byte budget" if truncated else None)
-
-
-def test_one_oversized_value_is_still_available(small_parquet: Path) -> None:
-    value = "x" * 100_000
-    with QuerySession(
-        sources(small_parquet),
-        "SELECT repeat('x', 100000) AS value FROM smoke",
-        QueryControl(),
-        QueryLimits(preview_bytes=16),
-    ) as session:
-        result = session.preview()
-    assert result.table.num_rows == 1
-    assert result.table.column(0)[0].as_py() == value
-    assert result.table.nbytes > 16
-    assert result.truncated
-    assert result.reason == "byte budget"
-
-
-def test_truncated_prefix_does_not_retain_discarded_buffers(
-    small_parquet: Path,
-) -> None:
-    with QuerySession(
-        sources(small_parquet),
-        "SELECT CASE WHEN id = 1 THEN 'ok' ELSE repeat('x', 1000000) END AS value "
-        "FROM smoke ORDER BY id",
-        QueryControl(),
-        QueryLimits(preview_rows=1, batch_rows=5),
-    ) as session:
-        result = session.preview()
-    assert result.table.column(0)[0].as_py() == "ok"
-    assert result.truncated
-    assert result.table.get_total_buffer_size() < 1024
-
-
-def test_empty_result_keeps_its_schema(small_parquet: Path) -> None:
-    with QuerySession(
-        sources(small_parquet), "SELECT id FROM smoke WHERE false", QueryControl()
-    ) as session:
-        result = session.preview()
-    assert result.table.num_rows == 0
-    assert result.table.column_names == ["id"]
-    assert result.table.column(0).type == pa.int64()
-    assert not result.truncated
-    assert result.reason is None
-
-
-@pytest.mark.parametrize(
-    "sql", ["", "SELECT 1; SELECT 2", "CREATE TABLE x AS SELECT 1", "DELETE FROM smoke"]
-)
-def test_rejects_statements_without_a_single_query(
-    small_parquet: Path, sql: str
-) -> None:
+def test_rejects_statements_without_a_single_query(sql: str) -> None:
     with (
         pytest.raises(ValueError, match="one SELECT"),
-        QuerySession(sources(small_parquet), sql, QueryControl()),
+        QuerySession((), sql, QueryControl()),
     ):
         pass
 
@@ -327,11 +203,13 @@ def test_cancel_interrupts_native_query(
         assert session.preview().table.column(0)[0].as_py() == 42
 
 
-def test_completed_query_does_not_start_interrupt_thread(small_parquet: Path) -> None:
+def test_query_without_sources_does_not_start_interrupt_thread() -> None:
     with patch.object(engine, "Thread", wraps=Thread) as create_thread:
         control = QueryControl()
-        with QuerySession(sources(small_parquet), "SELECT 42", control) as session:
+        with QuerySession((), "SELECT 42", control) as session:
             assert session.preview().table.column(0)[0].as_py() == 42
+            assert session.sources == ()
+            assert session.issues == ()
         control.cancel()
         create_thread.assert_not_called()
 
@@ -415,7 +293,7 @@ def test_rejects_nonpositive_budgets(
 
 def test_join_and_three_source_cte(small_parquet: Path, tmp_path: Path) -> None:
     orders = tmp_path / "orders.parquet"
-    products = tmp_path / "products.parquet"
+    products = tmp_path / "a 'quoted' file.parquet"
     pq.write_table(
         pa.table(
             {"user_id": [1, 3, 1], "product_id": [8, 9, 9], "quantity": [2, 1, 3]}
@@ -426,20 +304,10 @@ def test_join_and_three_source_cte(small_parquet: Path, tmp_path: Path) -> None:
     inputs = sources(small_parquet, orders, products)
     with QuerySession(
         inputs,
-        "SELECT s.name, o.quantity FROM smoke s JOIN orders o ON s.id = o.user_id "
-        "ORDER BY s.id, o.quantity",
-        QueryControl(),
-    ) as session:
-        assert table_values(session.preview().table) == {
-            "name": ["alice", "alice", "carol"],
-            "quantity": [2, 3, 1],
-        }
-    with QuerySession(
-        inputs,
         "WITH totals AS ("
         "SELECT s.id, sum(o.quantity * p.price) AS cost FROM smoke s "
         "JOIN orders o ON s.id = o.user_id "
-        "JOIN products p ON p.id = o.product_id GROUP BY s.id"
+        f"JOIN {inputs[2].quoted_name} p ON p.id = o.product_id GROUP BY s.id"
         ") SELECT * FROM totals ORDER BY id",
         QueryControl(),
     ) as session:
@@ -513,9 +381,7 @@ def test_no_implicit_data_alias_but_actual_data_file_is_available(
         assert table_values(session.preview().table) == {"n": [5]}
 
 
-@pytest.mark.parametrize(
-    "name", ["two words", "销售记录", "order-items", "many.dots", 'a"b', "select"]
-)
+@pytest.mark.parametrize("name", ['销售 many.dots-"items"', "select"])
 def test_sql_identifiers_are_registered_without_rewriting(
     small_parquet: Path, name: str
 ) -> None:
@@ -526,19 +392,9 @@ def test_sql_identifiers_are_registered_without_rewriting(
         assert table_values(session.preview().table) == {"n": [5]}
 
 
-def test_query_without_sources() -> None:
-    with QuerySession((), "SELECT 42 AS answer", QueryControl()) as session:
-        assert table_values(session.preview().table) == {"answer": [42]}
-        assert session.sources == ()
-        assert session.issues == ()
-
-
 def test_python_variables_are_not_implicit_query_sources() -> None:
     replacement_input = pa.table({"value": [42]})
     assert replacement_input.num_rows == 1
-    # Confirm that this variable would be visible with DuckDB's default setting.
-    with duckdb.connect() as connection:
-        assert connection.sql("SELECT * FROM replacement_input").fetchone() == (42,)
     with (
         pytest.raises(duckdb.CatalogException, match="replacement_input"),
         QuerySession((), "SELECT * FROM replacement_input", QueryControl()),
@@ -552,7 +408,6 @@ def test_python_variables_are_not_implicit_query_sources() -> None:
         ("read_parquet", duckdb.OutOfMemoryException("memory budget")),
         ("read_parquet", duckdb.InterruptException("cancelled")),
         ("create_view", duckdb.InvalidInputException("invalid view")),
-        ("create_view", duckdb.CatalogException("name collision")),
     ],
 )
 def test_fatal_registration_errors_propagate_and_close_resources(

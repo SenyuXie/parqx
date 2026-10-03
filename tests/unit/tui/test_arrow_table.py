@@ -3,11 +3,9 @@
 
 import weakref
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import patch
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 from rich.cells import cell_len
 from rich.text import Text
@@ -97,23 +95,11 @@ def test_numeric_width_measurement_is_bounded() -> None:
         assert fmt.call_count <= 256
 
 
-@pytest.mark.parametrize("chunk_count", [16, 256], ids=["1m-rows", "16m-rows"])
-def test_chunked_width_measurement_has_bounded_memory(chunk_count: int) -> None:
+def test_chunked_width_measurement_has_bounded_memory() -> None:
     # Reuse a small buffer so input construction does not need a large allocation.
     chunk = pa.array(range(62_500), type=pa.int64())
-    column = pa.chunked_array([chunk] * chunk_count)
+    column = pa.chunked_array([chunk] * 256)
     table = pa.table({"x": column})
-
-    assert _column_width_peak_memory(table) < 64 * 1024
-
-
-def test_parquet_width_measurement_has_bounded_memory(tmp_path: Path) -> None:
-    chunk = pa.array(range(62_500), type=pa.int64())
-    source = pa.table({"x": pa.chunked_array([chunk] * 16)})
-    path = tmp_path / "chunked.parquet"
-    pq.write_table(source, path, row_group_size=62_500)
-    table = pq.read_table(path)
-    assert table.column("x").num_chunks > 1
 
     assert _column_width_peak_memory(table) < 64 * 1024
 

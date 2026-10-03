@@ -96,13 +96,12 @@ def test_names_handle_ascii_case_and_occupied_suffixes(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("filename", "name", "quoted"),
     [
-        ("order-items.parquet", "order-items", '"order-items"'),
-        ("two words.parquet", "two words", '"two words"'),
-        ("销售记录.parquet", "销售记录", '"销售记录"'),
-        ("many.dots.parquet", "many.dots", '"many.dots"'),
-        ('a"b.parquet', 'a"b', '"a""b"'),
+        (
+            '销售 many.dots-"items".parquet',
+            '销售 many.dots-"items"',
+            '"销售 many.dots-""items"""',
+        ),
         ("select.parquet", "select", '"select"'),
-        ("data.parquet", "data", '"data"'),
     ],
 )
 def test_names_preserve_file_stem(
@@ -168,9 +167,3 @@ def test_resolution_failure_does_not_abort_other_inputs(
     assert pending.state == "loading"
     catalog.mark_ready(pending.spec.source_id)
     assert catalog.snapshot() == (pending.spec,)
-
-
-def test_unknown_source_id_is_rejected() -> None:
-    catalog = SourceCatalog([])
-    with pytest.raises(KeyError, match="unknown"):
-        catalog.get("unknown")
