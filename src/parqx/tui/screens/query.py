@@ -72,6 +72,8 @@ class QueryScreen(ModalScreen[QueryResult]):
     }
     """
 
+    _SHUTDOWN_TIMEOUT: ClassVar[float] = 5.0
+
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "run_query", "Run SQL", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
@@ -89,11 +91,10 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._footer = Footer(show_command_palette=False)
-        self._request_id = 0
-        """Only the current request may dismiss the modal or update its state."""
-        self._query_control: QueryControl | None = None
+        self._current_control: QueryControl | None = None
+        """Only this request may dismiss the modal or update its state."""
         self._query_controls: list[QueryControl] = []
-        self.running = False
+        """Track queued and unfinished requests, including cancelled older ones."""
 
     def compose(self) -> ComposeResult:
         """Yield the centered editor, loading indicator and native shortcut footer."""
@@ -119,8 +120,14 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.set_class(event.size.height < 18 or event.size.width < 60, "compact")
         self._footer.compact = event.size.width < 60
 
-    def _set_running(self, running: bool) -> None:
-        self.running = running
+    @property
+    def running(self) -> bool:
+        """Whether a request still owns the query dialog."""
+        return self._current_control is not None
+
+    def _set_current_control(self, control: QueryControl | None) -> None:
+        self._current_control = control
+        running = self.running
         self.editor.read_only = running
         self._loading.display = running
         self.refresh_bindings()
@@ -136,8 +143,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         sql = self.editor.text
         if self.running or not sql.strip():
             return
-        self._request_id += 1
-        self._query_control = control = QueryControl()
+        control = QueryControl()
         self._query_controls = [
             item for item in self._query_controls if not item.finished.is_set()
         ]
@@ -148,8 +154,8 @@ class QueryScreen(ModalScreen[QueryResult]):
             for entry in self._catalog.entries
             if entry.state != "ready"
         )
-        self._set_running(True)
-        self._run_query(sources, sql, self._request_id, control, unavailable)
+        self._set_current_control(control)
+        self._run_query(sources, sql, control, unavailable)
 
     def _publish[T, **P](
         self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
@@ -171,7 +177,6 @@ class QueryScreen(ModalScreen[QueryResult]):
         self,
         sources: tuple[SourceSpec, ...],
         sql: str,
-        request_id: int,
         control: QueryControl,
         unavailable: tuple[SourceIssue, ...],
     ) -> None:
@@ -184,7 +189,7 @@ class QueryScreen(ModalScreen[QueryResult]):
             control.check()
             self._publish(
                 self._on_query_ok,
-                request_id,
+                control,
                 QueryResult(
                     sql,
                     preview,
@@ -208,25 +213,25 @@ class QueryScreen(ModalScreen[QueryResult]):
                     message += "\nQuery sources:\n" + "\n".join(
                         f"{source.quoted_name} → {source.path}" for source in sources
                     )
-                self._publish(self._on_query_error, request_id, message)
+                self._publish(self._on_query_error, control, message)
         except QueryCancelledError:
             return
         finally:
             control.finished.set()
 
-    def _is_current(self, request_id: int) -> bool:
-        return request_id == self._request_id and self.running and self.is_current
+    def _is_current(self, control: QueryControl) -> bool:
+        return control is self._current_control and self.is_active
 
-    def _on_query_ok(self, request_id: int, result: QueryResult) -> None:
-        if not self._is_current(request_id):
+    def _on_query_ok(self, control: QueryControl, result: QueryResult) -> None:
+        if not self._is_current(control):
             return
-        self._set_running(False)
+        self._set_current_control(None)
         self.dismiss(result)
 
-    def _on_query_error(self, request_id: int, message: str) -> None:
-        if not self._is_current(request_id):
+    def _on_query_error(self, control: QueryControl, message: str) -> None:
+        if not self._is_current(control):
             return
-        self._set_running(False)
+        self._set_current_control(None)
         self.notify(
             message, title="SQL error", severity="error", timeout=4, markup=False
         )
@@ -234,10 +239,10 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def _cancel_request(self) -> None:
         # Invalidate first so even an already queued worker callback is harmless.
-        self._request_id += 1
-        if self._query_control is not None:
-            self._query_control.cancel()
-        self._set_running(False)
+        control = self._current_control
+        self._set_current_control(None)
+        if control is not None:
+            control.cancel()
 
     def action_close(self) -> None:
         """Cancel any pending execution and close without returning a result."""
@@ -246,14 +251,24 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def on_screen_suspend(self) -> None:
         """Interrupt execution if another screen unexpectedly covers the editor."""
-        if self.running and not self.is_current:
+        if self.running and not self.is_active:
             self._cancel_request()
 
     async def on_unmount(self) -> None:
         """Interrupt unfinished queries and let their worker-owned resources close."""
-        self._request_id += 1
-        for control in self._query_controls:
+        self._current_control = None
+        controls = tuple(self._query_controls)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._SHUTDOWN_TIMEOUT
+        for control in controls:
             control.cancel()
-        for control in self._query_controls:
-            if control.started.is_set() and not control.finished.is_set():
-                await asyncio.to_thread(control.finished.wait, 5)
+        # The default executor also runs SQL; do not queue cleanup waits on it.
+        # This bounds cooperative waiting, not the lifetime of native threads.
+        while any(
+            control.started.is_set() and not control.finished.is_set()
+            for control in controls
+        ):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.01, remaining))

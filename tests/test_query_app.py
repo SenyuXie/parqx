@@ -245,7 +245,7 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
                 query.editor.load_text("SELECT 1 AS obsolete")
                 await pilot.press("enter")
                 await wait_for(started.is_set, pilot)
-                control = query._query_control  # pyright: ignore[reportPrivateUsage]
+                control = query._current_control  # pyright: ignore[reportPrivateUsage]
                 assert control is not None
                 await pilot.press("escape")
                 await wait_for(lambda: app.screen is not query, pilot)
@@ -336,7 +336,7 @@ async def test_query_cancellation_and_shutdown_finish_worker(
             query.editor.load_text("SELECT 42")
             await pilot.press("enter")
             await wait_for(started.is_set, pilot)
-            control = query._query_control  # pyright: ignore[reportPrivateUsage]
+            control = query._current_control  # pyright: ignore[reportPrivateUsage]
             assert control is not None
             if cancel_explicitly:
                 await pilot.press("escape")
