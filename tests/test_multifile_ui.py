@@ -145,13 +145,15 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
 
     app = ParqxApp(paths)
     with patch.object(QuerySession, "__enter__", delayed_enter):
-        async with app.run_test(size=(40, 12)) as pilot:
+        async with app.run_test(size=(40, 12), notifications=True) as pilot:
             try:
                 await wait_for(lambda: len(app.catalog.snapshot()) == len(paths), pilot)
                 query = await open_query(app, pilot)
-                await pilot.pause()
+                footer = query.query_one(Footer)
+                await wait_for(lambda: footer_ready(footer), pilot)
                 assert_compact_controls_visible(query)
                 assert query.editor.has_focus
+                editor_region = query.editor.region
                 query.editor.load_text("SELECT missing_column")
                 await pilot.press("enter")
                 await wait_for(lambda: query.error is not None, pilot)
@@ -159,7 +161,8 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
                 assert_compact_controls_visible(query)
                 assert query.editor.has_focus
                 assert not query.editor.read_only
-                assert query.query_one("#query-status").region.height == 1
+                assert not query.query("#query-status")
+                assert query.editor.region == editor_region
 
                 query.editor.load_text("SELECT 4")
                 query.editor.move_cursor((0, len(query.editor.text)))
