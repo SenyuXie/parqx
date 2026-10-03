@@ -121,6 +121,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         """Focus the existing editor without resetting its selection or history."""
         self.error = None
         self._status.update("")
+        self._status.tooltip = None
         self._status.remove_class("error")
         self.refresh_sources()
         self.editor.focus()
@@ -170,6 +171,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.error = None
         self._status.remove_class("error")
         self._status.update("Running SQL…")
+        self._status.tooltip = None
         sources = self._catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
@@ -215,7 +217,11 @@ class QueryScreen(ModalScreen[QueryResult]):
                 self._on_query_ok,
                 request_id,
                 QueryResult(
-                    sql, preview, perf_counter() - started, sources, session.issues
+                    sql,
+                    preview,
+                    perf_counter() - started,
+                    sources,
+                    unavailable + session.issues,
                 ),
             )
         except (
@@ -250,6 +256,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._set_running(False)
         self.error = message
         self._status.update(f"SQL error: {message}")
+        self._status.tooltip = message
         self._status.add_class("error")
         self.editor.focus()
 

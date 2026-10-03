@@ -380,6 +380,9 @@ async def test_unavailable_source_warning_and_error_recover(
         await wait_for(lambda: query.error is not None, pilot)
         assert "Unavailable sources" in (query.error or "")
         assert str(small_parquet) in (query.error or "")
+        assert str(small_parquet) in str(
+            query.query_one("#query-status", Label).tooltip
+        )
         small_parquet.write_bytes(contents)
         query.editor.load_text("SELECT count(*) FROM smoke")
         await pilot.press("enter")
@@ -407,6 +410,7 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
                 await wait_for(started.is_set, pilot)
                 app.catalog.mark_failed("source-1", "Temporarily unavailable")
                 release.set()
+
                 await wait_for(lambda: app.screen is not query, pilot)
                 tabs = app.query_one(TabbedContent)
                 table = tabs.get_pane("query-1").query_one(ArrowTable)
@@ -417,3 +421,16 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
                 assert "Temporarily unavailable" in (query.error or "")
             finally:
                 release.set()
+
+
+async def test_success_reports_sources_excluded_from_catalog(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp(small_parquet)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        app.catalog.mark_failed("source-1", "Could not open this source")
+        await run_query(app, pilot, "SELECT 42 AS answer")
+        tabs = app.query_one(TabbedContent)
+        assert "warning" in str(tabs.get_pane("query-1").query_one(Label).content)
+        assert "Could not open this source" in str(tabs.get_tab("query-1").tooltip)
