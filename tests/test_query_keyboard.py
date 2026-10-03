@@ -14,7 +14,7 @@ from textual.widgets._footer import FooterKey
 from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.test_query_app import open_query, wait_for
+from tests.test_query_app import open_query, wait_for, wait_for_query_error
 
 SHIFT_ENTER_SEQUENCE = "\x1b[13;2u"
 
@@ -60,8 +60,10 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
         await wait_for(lambda: query.editor.text == "SELECT missing\n", pilot)
         assert query.editor.has_focus
         assert not query.running
-        await pilot.click(footer_keys(footer)["run_query"])
-        await wait_for(lambda: query.error is not None, pilot)
+        with patch.object(app, "notify", wraps=app.notify) as notify:
+            await pilot.click(footer_keys(footer)["run_query"])
+            message = await wait_for_query_error(notify, query, pilot)
+        assert "missing" in message
         await wait_for(
             lambda: (
                 footer_ready(footer)
@@ -182,16 +184,17 @@ async def test_blank_sql_and_old_query_keys_do_not_execute(small_parquet: Path) 
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
         query = await open_query(app, pilot)
-        query.editor.load_text(" \n ")
-        await pilot.press("enter")
-        assert not query.running
-        assert query.error is None
-        assert app.screen is query
-        query.editor.load_text("SELECT 42")
-        await pilot.press("f1", "f2", "f3")
-        assert not query.running
-        assert tabs.tab_count == 1
-        assert app.screen is query
+        with patch.object(app, "notify", wraps=app.notify) as notify:
+            query.editor.load_text(" \n ")
+            await pilot.press("enter")
+            assert not query.running
+            assert app.screen is query
+            query.editor.load_text("SELECT 42")
+            await pilot.press("f1", "f2", "f3")
+            assert not query.running
+            assert tabs.tab_count == 1
+            assert app.screen is query
+            notify.assert_not_called()
 
 
 async def test_ctrl_w_in_editor_deletes_word_without_closing_tab(

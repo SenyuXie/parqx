@@ -105,8 +105,12 @@ class QueryPreview:
     """A bounded result; truncation does not limit the query's input."""
 
     table: pa.Table
-    truncated: bool
     reason: str | None = None
+
+    @property
+    def truncated(self) -> bool:
+        """Whether a preview budget stopped reading the result."""
+        return self.reason is not None
 
 
 class QuerySession:
@@ -225,9 +229,7 @@ class QuerySession:
                 break
         self.control.check()
         return QueryPreview(
-            pa.Table.from_batches(batches, schema=schema),
-            truncated=reason is not None,
-            reason=reason,
+            pa.Table.from_batches(batches, schema=schema), reason=reason
         )
 
     def close(self) -> None:

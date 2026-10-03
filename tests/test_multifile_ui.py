@@ -14,7 +14,13 @@ from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable
-from tests.test_query_app import open_query, run_query, select_tab, wait_for
+from tests.test_query_app import (
+    open_query,
+    run_query,
+    select_tab,
+    wait_for,
+    wait_for_query_error,
+)
 from tests.test_query_keyboard import footer_keys, footer_ready
 
 
@@ -80,6 +86,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
     with (
         patch("parqx.tui.app.ParquetSource", delayed_metadata),
         patch.object(QuerySession, "__enter__", delayed_enter),
+        patch.object(app, "notify", wraps=app.notify) as notify,
     ):
         async with app.run_test(size=(100, 24)) as pilot:
             try:
@@ -98,9 +105,9 @@ async def test_running_query_uses_frozen_sources_until_retried(
                 assert query.running
                 assert query.editor.has_focus
                 query_release.set()
-                await wait_for(lambda: query.error is not None, pilot)
-                assert "pending" in (query.error or "")
-                assert "Still loading" in (query.error or "")
+                message = await wait_for_query_error(notify, query, pilot)
+                assert "pending" in message
+                assert "Still loading" in message
                 assert query.editor.has_focus
                 await pilot.press("enter")
                 await wait_for(lambda: app.screen is not query, pilot)
@@ -144,7 +151,10 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
         return original_enter(session)
 
     app = ParqxApp(paths)
-    with patch.object(QuerySession, "__enter__", delayed_enter):
+    with (
+        patch.object(QuerySession, "__enter__", delayed_enter),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test(size=(40, 12), notifications=True) as pilot:
             try:
                 await wait_for(lambda: len(app.catalog.snapshot()) == len(paths), pilot)
@@ -156,7 +166,8 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
                 editor_region = query.editor.region
                 query.editor.load_text("SELECT missing_column")
                 await pilot.press("enter")
-                await wait_for(lambda: query.error is not None, pilot)
+                message = await wait_for_query_error(notify, query, pilot)
+                assert "missing_column" in message
                 await pilot.pause()
                 assert_compact_controls_visible(query)
                 assert query.editor.has_focus
