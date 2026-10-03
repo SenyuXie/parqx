@@ -20,7 +20,7 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
-Press `ctrl+p` → **SQL query** to query the file as `data`. Results open in new tabs.
+Press `ctrl+p` → **SQL query** to query the file by its filename without the extension (for example, `"weather"`). Results open in new tabs.
 
 ## Keyboard control
 

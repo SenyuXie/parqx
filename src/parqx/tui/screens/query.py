@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from time import perf_counter
 from typing import ClassVar, cast
 
@@ -18,6 +17,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Label, LoadingIndicator, TextArea
 
+from parqx.data.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -34,6 +34,8 @@ class QueryResult:
     sql: str
     preview: QueryPreview
     elapsed: float
+    sources: tuple[SourceSpec, ...] = ()
+    issues: tuple[SourceIssue, ...] = ()
 
 
 class QueryScreen(ModalScreen[QueryResult]):
@@ -59,6 +61,7 @@ class QueryScreen(ModalScreen[QueryResult]):
             }
 
             & > #query-loading { height: 1; }
+            & > #query-sources { height: 1; }
 
             & > Label {
                 width: 1fr;
@@ -78,13 +81,16 @@ class QueryScreen(ModalScreen[QueryResult]):
         Binding("escape", "close", "Close", priority=True),
     ]
 
-    def __init__(self, path: Path, query_limits: QueryLimits | None = None) -> None:
+    def __init__(
+        self, catalog: SourceCatalog, query_limits: QueryLimits | None = None
+    ) -> None:
         """Create the editor without opening a connection or reading the file."""
         super().__init__()
-        self._path = path
+        self._catalog = catalog
         self._query_limits = query_limits or QueryLimits()
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._status = Label("", id="query-status", markup=False)
+        self._sources_label = Label("", id="query-sources", markup=False)
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._request_id = 0
@@ -99,6 +105,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         dialog = Vertical(id="query-dialog")
         dialog.border_title = "SQL query"
         with dialog:
+            yield self._sources_label
             yield self.editor
             yield self._loading
             yield self._status
@@ -114,13 +121,34 @@ class QueryScreen(ModalScreen[QueryResult]):
         """Focus the existing editor without resetting its selection or history."""
         self.error = None
         self._status.update("")
+        self._status.tooltip = None
         self._status.remove_class("error")
+        self.refresh_sources()
         self.editor.focus()
+
+    def refresh_sources(self) -> None:
+        """Refresh source discovery without changing a running query's context."""
+        if self.running:
+            return
+        entries = self._catalog.entries
+        self._sources_label.update(
+            "Tables: "
+            + ", ".join(
+                entry.spec.quoted_name
+                + (f" ({entry.state})" if entry.state != "ready" else "")
+                for entry in entries
+            )
+        )
+        self._sources_label.tooltip = "\n".join(
+            f"{entry.spec.quoted_name} → {entry.spec.path}" for entry in entries
+        )
 
     def _set_running(self, running: bool) -> None:
         self.running = running
         self.editor.read_only = running
         self._loading.display = running
+        if not running:
+            self.refresh_sources()
         self.refresh_bindings()
 
     def action_newline(self) -> None:
@@ -143,8 +171,16 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.error = None
         self._status.remove_class("error")
         self._status.update("Running SQL…")
+        self._status.tooltip = None
+        sources = self._catalog.snapshot()
+        unavailable = tuple(
+            entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
+            for entry in self._catalog.entries
+            if entry.state != "ready"
+        )
+        self.refresh_sources()
         self._set_running(True)
-        self._run_query(sql, self._request_id, control)
+        self._run_query(sources, sql, self._request_id, control, unavailable)
 
     def _publish[T, **P](
         self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
@@ -162,17 +198,31 @@ class QueryScreen(ModalScreen[QueryResult]):
             return None
 
     @work(thread=True, group="query", exit_on_error=False)
-    def _run_query(self, sql: str, request_id: int, control: QueryControl) -> None:
+    def _run_query(
+        self,
+        sources: tuple[SourceSpec, ...],
+        sql: str,
+        request_id: int,
+        control: QueryControl,
+        unavailable: tuple[SourceIssue, ...],
+    ) -> None:
         control.started.set()
         started = perf_counter()
+        session = QuerySession(sources, sql, control, self._query_limits)
         try:
-            with QuerySession(self._path, sql, control, self._query_limits) as session:
+            with session:
                 preview = session.preview()
             control.check()
             self._publish(
                 self._on_query_ok,
                 request_id,
-                QueryResult(sql, preview, perf_counter() - started),
+                QueryResult(
+                    sql,
+                    preview,
+                    perf_counter() - started,
+                    sources,
+                    unavailable + session.issues,
+                ),
             )
         except (
             duckdb.Error,
@@ -182,7 +232,10 @@ class QueryScreen(ModalScreen[QueryResult]):
             MemoryError,
         ) as exc:
             if not control.cancelled.is_set():
-                self._publish(self._on_query_error, request_id, str(exc))
+                message = str(exc)
+                if issues := unavailable + session.issues:
+                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
+                self._publish(self._on_query_error, request_id, message)
         except QueryCancelledError:
             return
         finally:
@@ -203,6 +256,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._set_running(False)
         self.error = message
         self._status.update(f"SQL error: {message}")
+        self._status.tooltip = message
         self._status.add_class("error")
         self.editor.focus()
 

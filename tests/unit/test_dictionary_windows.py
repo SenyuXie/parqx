@@ -110,9 +110,7 @@ def test_nested_dictionary_parquet_keeps_only_referenced_categories(
 
 
 @pytest.mark.parametrize("row_limit", [2, 3])
-def test_query_dictionary_preview_uses_compacted_budget(
-    small_parquet: Path, row_limit: int
-) -> None:
+def test_query_dictionary_preview_uses_compacted_budget(row_limit: int) -> None:
     column = pa.DictionaryArray.from_arrays(
         pa.array([0, 0, 0], type=pa.int8()), pa.array(["ok", "x" * 1_000_000])
     )
@@ -121,7 +119,7 @@ def test_query_dictionary_preview_uses_compacted_budget(
     with (
         patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=reader),
         QuerySession(
-            small_parquet,
+            (),
             "SELECT 1",
             QueryControl(),
             QueryLimits(preview_rows=row_limit, preview_bytes=10),
