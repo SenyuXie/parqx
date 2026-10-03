@@ -186,8 +186,13 @@ async def test_compact_dialog_preserves_editing_and_controls_in_all_states(
                 await pilot.press("enter")
                 await wait_for(started.is_set, pilot)
                 footer = query.query_one(Footer)
+                # A rebuilt FooterKey has its disabled class before layout
+                # assigns a region, so wait for both state and geometry.
                 await wait_for(
-                    lambda: footer_keys(footer)["run_query"].has_class("-disabled"),
+                    lambda: (
+                        footer_ready(footer)
+                        and footer_keys(footer)["run_query"].has_class("-disabled")
+                    ),
                     pilot,
                 )
                 assert_compact_controls_visible(query)
