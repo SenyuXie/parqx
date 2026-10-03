@@ -20,7 +20,12 @@ Open a Parquet file:
 parqx data/weather.parquet
 ```
 
-Press `ctrl+p` → **SQL query** to query the file as `data`. Results open in new tabs.
+Open several files at once:
+
+```bash
+parqx users.parquet orders.parquet
+parqx data/*.parquet
+```
 
 ## Keyboard control
 

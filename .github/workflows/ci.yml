@@ -11,6 +11,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  package:
+    name: Distribution smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: uv build
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl tests/distribution/check_install.py
+      - name: Smoke test (source distribution)
+        run: uv run --isolated --no-project --with dist/*.tar.gz tests/distribution/check_install.py
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -48,12 +65,29 @@ jobs:
         run: uv run pyright
 
   test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }} / ${{ matrix.suite }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.12", "3.13"]
+        # Run UI regressions once; cover OS and Python compatibility with the
+        # fast contract tests and a real browse/query/quit journey.
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+            suite: full
+            test-paths: tests
+          - os: ubuntu-latest
+            python-version: "3.13"
+            suite: core
+            test-paths: tests/unit tests/smoke
+          - os: macos-latest
+            python-version: "3.12"
+            suite: core
+            test-paths: tests/unit tests/smoke
+          - os: windows-latest
+            python-version: "3.12"
+            suite: core
+            test-paths: tests/unit tests/smoke
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -66,4 +100,4 @@ jobs:
       - name: Sync dev dependencies
         run: uv sync --locked --group dev
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q ${{ matrix.test-paths }}

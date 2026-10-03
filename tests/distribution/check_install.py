@@ -5,10 +5,10 @@ packaging-time regressions that the pytest suite cannot see: a missing
 submodule, a broken `[project.scripts]` entry point, an unshipped
 `py.typed` marker, or a runtime dependency that was only available in dev.
 
-Invoked from `.github/workflows/release.yml`:
+Invoked from the CI and release workflows:
 
-    uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
-    uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_test.py
+    uv run --isolated --no-project --with dist/*.whl tests/distribution/check_install.py
+    uv run --isolated --no-project --with dist/*.tar.gz tests/distribution/check_install.py
 
 The `--isolated --no-project` flags mean the only things available are the
 standard library, the built parqx artifact, and parqx's declared runtime
@@ -19,10 +19,19 @@ from __future__ import annotations
 
 import subprocess
 from importlib import metadata, resources
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from parqx.catalog import SourceCatalog
+from parqx.query.engine import QueryControl, QueryLimits, QuerySession
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
     "parqx.cli",
+    "parqx.catalog",
     "parqx.logger",
     "parqx.data",
     "parqx.data.batch",
@@ -78,11 +87,41 @@ def check_cli_entry_point() -> None:
     print(f"OK: CLI entry point: {out}")
 
 
+def check_multi_source_query() -> None:
+    """Exercise installed Arrow and DuckDB integration with two complete files."""
+    with TemporaryDirectory(prefix="parqx-smoke-") as temporary:
+        users = Path(temporary) / "users.parquet"
+        orders = Path(temporary) / "orders[1].parquet"
+        pq.write_table(pa.table({"id": [1, 2]}), users)
+        pq.write_table(pa.table({"user_id": [1, 1, 2], "amount": [10, 15, 7]}), orders)
+        pq.write_table(
+            pa.table({"user_id": [1], "amount": [-1]}),
+            Path(temporary) / "orders1.parquet",
+        )
+        catalog = SourceCatalog([users, orders, users])
+        assert len(catalog.entries) == 2
+        for entry in catalog.entries:
+            catalog.mark_ready(entry.spec.source_id)
+        with QuerySession(
+            catalog.snapshot(),
+            'SELECT count(*), sum(o.amount) FROM "users" u '
+            'JOIN "orders[1]" o ON u.id = o.user_id',
+            QueryControl(),
+            QueryLimits(preview_rows=1),
+        ) as session:
+            preview = session.preview()
+        assert preview.table.column(0)[0].as_py() == 3
+        assert preview.table.column(1)[0].as_py() == 32
+        assert not preview.truncated
+    print("OK: multi-source JOIN reads complete inputs with a bounded preview")
+
+
 def main() -> None:
     check_imports()
     check_version_metadata()
     check_py_typed_marker()
     check_cli_entry_point()
+    check_multi_source_query()
     print("All smoke checks passed.")
 
 

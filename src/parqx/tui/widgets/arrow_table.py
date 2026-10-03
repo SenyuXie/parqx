@@ -535,7 +535,9 @@ class ArrowTable(ScrollView, can_focus=True):
     class HeaderSelected(Message):
         """Posted when a column header/label is clicked."""
 
-        def __init__(self, arrow_table: ArrowTable, column_index: int, label: Text):
+        def __init__(
+            self, arrow_table: ArrowTable, column_index: int, label: Text
+        ) -> None:
             """Initialize a header selected message.
 
             Args:
@@ -564,7 +566,7 @@ class ArrowTable(ScrollView, can_focus=True):
     class RowIndexSelected(Message):
         """Posted when a row index cell is clicked."""
 
-        def __init__(self, arrow_table: ArrowTable, row_index: int):
+        def __init__(self, arrow_table: ArrowTable, row_index: int) -> None:
             """Initialize a row-index selected message.
 
             Args:
