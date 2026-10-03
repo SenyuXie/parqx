@@ -26,10 +26,10 @@ async def _wait_until(
 
 async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
     """Boot the app, wait for async load, drive the cursor, quit cleanly."""
-    app = ParqxApp(path=small_parquet)
+    app = ParqxApp(paths=[small_parquet])
     async with app.run_test() as pilot:
         # The background read mounts the table before clearing native loading.
-        source = app.query_one("#source", TabPane)
+        source = app.query_one("#source-1", TabPane)
         await _wait_until(lambda: not source.loading, pilot)
         await _wait_until(lambda: bool(source.query(ArrowTable)), pilot)
 
@@ -47,19 +47,19 @@ async def test_app_loads_parquet_and_navigates(small_parquet: Path) -> None:
         await pilot.press("c")
         assert table.cursor_type == "row"
 
-    assert app.load_error is None
+    assert not app.load_errors
 
 
 async def test_app_reports_load_error_for_corrupt_file(tmp_path: Path) -> None:
-    """A non-parquet file surfaces `load_error` instead of crashing."""
+    """A non-parquet file surfaces a source issue instead of crashing."""
     bogus = tmp_path / "not_a_parquet.txt"
     bogus.write_text("definitely not parquet")
 
-    app = ParqxApp(path=bogus)
+    app = ParqxApp(paths=[bogus])
     async with app.run_test() as pilot:
-        # _on_load_error sets `load_error` and then calls self.exit(), which
+        # _on_load_error records an issue and calls self.exit(), which
         # marks the worker CANCELLED — so we can't await the worker. Poll the
-        # observable contract (`load_error`) instead.
-        await _wait_until(lambda: app.load_error is not None, pilot)
+        # observable contract (`load_errors`) instead.
+        await _wait_until(lambda: bool(app.load_errors), pilot)
 
-    assert app.load_error is not None
+    assert bool(app.load_errors)

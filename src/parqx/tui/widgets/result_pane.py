@@ -53,6 +53,12 @@ class ResultPane(TabPane):
         self._status.update(status)
         self._status.display = bool(status)
 
+    def show_error(self, message: str) -> None:
+        """Replace a source's loading cover with its individual failure."""
+        self.loading = False
+        self.update_status(f"Open error: {message}")
+        self._status.tooltip = message
+
     def on_unmount(self) -> None:
         """Release Arrow buffers even if Textual briefly retains the closed widget."""
         if self.table is not None:

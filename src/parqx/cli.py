@@ -24,15 +24,8 @@ def version_callback(value: bool) -> None:
 
 @app.command()
 def main(
-    path: Annotated[
-        Path,
-        typer.Argument(
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="Parquet file to inspect.",
-        ),
+    paths: Annotated[
+        list[Path], typer.Argument(help="Parquet files to inspect (one tab per file).")
     ],
     verbose: Annotated[
         int,
@@ -59,9 +52,10 @@ def main(
 
     setup_logging(verbose)
 
-    parqx = ParqxApp(path=path)
+    parqx = ParqxApp(paths=paths)
     parqx.run()
 
-    if parqx.load_error is not None:
-        typer.echo(f"parqx: cannot read {path}: {parqx.load_error}", err=True)
+    if parqx.load_errors:
+        for issue in parqx.load_errors:
+            typer.echo(f"parqx: cannot read {issue}", err=True)
         raise typer.Exit(code=1)

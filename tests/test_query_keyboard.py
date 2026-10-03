@@ -28,7 +28,7 @@ def footer_ready(footer: Footer) -> bool:
 async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -84,7 +84,7 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
 async def test_shift_enter_and_multiline_paste_only_edit_sql(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         table = app.query_one(ArrowTable)
@@ -113,7 +113,7 @@ async def test_shift_enter_and_multiline_paste_only_edit_sql(
 
 
 async def test_enter_runs_entire_sql_even_with_selection(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -131,7 +131,7 @@ async def test_enter_runs_entire_sql_even_with_selection(small_parquet: Path) ->
 
 
 async def test_blank_sql_and_old_query_keys_do_not_execute(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -151,7 +151,7 @@ async def test_blank_sql_and_old_query_keys_do_not_execute(small_parquet: Path) 
 async def test_ctrl_w_in_editor_deletes_word_without_closing_tab(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -179,7 +179,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
         release.wait(timeout=5)
         return original_enter(session)
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(QuerySession, "__enter__", delayed_enter):
         async with app.run_test() as pilot:
             try:
@@ -225,7 +225,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
 async def test_sql_dialog_fits_and_centers_in_terminal(
     small_parquet: Path, size: tuple[int, int]
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test(size=size) as pilot:
         query = await open_query(app, pilot)
         dialog = query.query_one("#query-dialog")

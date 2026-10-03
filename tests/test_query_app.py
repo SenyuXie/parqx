@@ -72,15 +72,15 @@ async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> No
 
 
 async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet, query_limits=QueryLimits(preview_rows=2))
+    app = ParqxApp([small_parquet], query_limits=QueryLimits(preview_rows=2))
     async with app.run_test() as pilot:
         tabs = app.query_one("#results", TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
-        await wait_for(lambda: not tabs.get_pane("source").loading, pilot)
+        await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
         assert tabs.tab_count == 1
-        assert tabs.active == "source"
-        assert str(tabs.get_tab("source").label) == small_parquet.name
-        source = tabs.get_pane("source").query_one(ArrowTable)
+        assert tabs.active == "source-1"
+        assert str(tabs.get_tab("source-1").label) == small_parquet.name
+        source = tabs.get_pane("source-1").query_one(ArrowTable)
         assert (source.row_count, source.column_count) == (5, 3)
 
         table = await run_query(app, pilot, "SELECT name FROM smoke ORDER BY id")
@@ -99,7 +99,7 @@ async def test_initial_file_tab_and_bounded_query_preview(small_parquet: Path) -
 async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -124,7 +124,7 @@ async def test_query_error_preserves_tabs_and_empty_result_keeps_schema(
 
 
 async def test_tabs_preserve_independent_table_state(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test(size=(60, 15)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -158,7 +158,7 @@ async def test_tabs_preserve_independent_table_state(small_parquet: Path) -> Non
 
 
 async def test_close_tab_footer_and_last_tab_guard(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -178,10 +178,10 @@ async def test_close_tab_footer_and_last_tab_guard(small_parquet: Path) -> None:
             lambda: bool(close_keys()) and not close_keys()[0].has_class("-disabled"),
             pilot,
         )
-        await select_tab(tabs, "source", pilot)
+        await select_tab(tabs, "source-1", pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "query-1", pilot)
-        assert not tabs.query("#source")
+        assert not tabs.query("#source-1")
         await wait_for(
             lambda: bool(close_keys()) and close_keys()[0].has_class("-disabled"), pilot
         )
@@ -214,7 +214,7 @@ async def test_cancelled_query_cannot_publish_into_reopened_dialog(
             return QueryPreview(pa.table({"obsolete": [1]}), truncated=False)
         return original_preview(session)
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(QuerySession, "preview", delayed_preview):
         async with app.run_test() as pilot:
             try:
@@ -249,8 +249,12 @@ async def test_file_read_cannot_recreate_closed_source_tab(
     small_parquet: Path, stale_error: bool
 ) -> None:
     started, release, returned = Event(), Event(), Event()
+    healthy = small_parquet.with_name("healthy.parquet")
+    healthy.write_bytes(small_parquet.read_bytes())
 
     def delayed_read(path: Path) -> ParquetSource:
+        if path == healthy:
+            return ParquetSource(path)
         started.set()
         release.wait(timeout=5)
         try:
@@ -260,26 +264,26 @@ async def test_file_read_cannot_recreate_closed_source_tab(
         finally:
             returned.set()
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet, healthy])
     with patch("parqx.tui.app.ParquetSource", delayed_read):
         async with app.run_test() as pilot:
             try:
                 await wait_for(started.is_set, pilot)
                 tabs = app.query_one(TabbedContent)
-                source = tabs.get_pane("source")
+                source = tabs.get_pane("source-1")
                 assert source.loading
                 assert not source.query(ArrowTable)
                 table = await run_query(app, pilot, "SELECT 42 AS answer")
-                await select_tab(tabs, "source", pilot)
+                await select_tab(tabs, "source-1", pilot)
                 await pilot.press("ctrl+w")
-                await wait_for(lambda: not tabs.query("#source"), pilot)
+                await wait_for(lambda: not tabs.query("#source-1"), pilot)
                 release.set()
                 await wait_for(returned.is_set, pilot)
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
-                assert tabs.tab_count == 1
-                assert tabs.active == "query-1"
+                assert tabs.tab_count == 2
+                assert tabs.active in {"source-2", "query-1"}
                 assert table.columns[0].name == "answer"
-                assert app.load_error is None
+                assert bool(app.load_errors) is stale_error
                 if not stale_error:
                     count = await run_query(app, pilot, "SELECT count(*) FROM smoke")
                     assert count.get_cell_at(Coordinate(0, 0)).as_py() == 5
@@ -299,7 +303,7 @@ async def test_query_cancellation_and_shutdown_finish_worker(
         session.control.cancelled.wait(timeout=5)
         return original_enter(session)
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(QuerySession, "__enter__", wait_for_cancel):
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -321,11 +325,11 @@ async def test_query_cancellation_and_shutdown_finish_worker(
     assert control.finished.is_set()
 
 
-@pytest.mark.parametrize("pane_id", ["source", "query-1"])
+@pytest.mark.parametrize("pane_id", ["source-1", "query-1"])
 async def test_closing_tab_releases_its_cached_data(
     small_parquet: Path, pane_id: str
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -345,7 +349,7 @@ async def test_closing_tab_releases_its_cached_data(
 
 
 async def test_filename_sql_replaces_implicit_data_alias(small_parquet: Path) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
@@ -363,7 +367,7 @@ async def test_unavailable_source_warning_and_error_recover(
     small_parquet: Path,
 ) -> None:
     contents = small_parquet.read_bytes()
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
@@ -399,7 +403,7 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
         release.wait(timeout=5)
         return original_enter(session)
 
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     with patch.object(QuerySession, "__enter__", delayed_enter):
         async with app.run_test() as pilot:
             try:
@@ -426,7 +430,7 @@ async def test_query_freezes_sources_before_worker_starts(small_parquet: Path) -
 async def test_success_reports_sources_excluded_from_catalog(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp(small_parquet)
+    app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         app.catalog.mark_failed("source-1", "Could not open this source")

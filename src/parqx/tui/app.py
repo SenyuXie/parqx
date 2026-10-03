@@ -5,19 +5,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import weakref
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
+from stat import S_ISREG
 from threading import Event
 from typing import Any, ClassVar
 
 import pyarrow as pa
-from textual import on, work
+from textual import on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
 
-from parqx.data.catalog import SourceCatalog
+from parqx.data.catalog import SourceCatalog, SourceIssue
 from parqx.data.parquet import ParquetSource, ReadCancelledError
 from parqx.data.view import DataPage, TableData
 from parqx.query.engine import QueryLimits
@@ -28,8 +31,24 @@ from parqx.tui.widgets.arrow_table import CursorType
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class SourceViewState:
+    """Per-view paging state, independent of the retained SQL source catalog."""
+
+    source: ParquetSource | None = None
+    page_request: int = 0
+    page_cancelled: Event = field(default_factory=Event)
+
+
+def _open_source(path: Path) -> ParquetSource:
+    """Validate and inspect an ordinary file on the source-reading pool."""
+    if not S_ISREG(path.stat().st_mode):
+        raise OSError(f"Not a regular file: {path}")
+    return ParquetSource(path)
+
+
 class ParqxApp(App[Any]):
-    """Inspect a Parquet file and keep SQL previews in separate tabs."""
+    """Inspect Parquet files and keep SQL previews in separate tabs."""
 
     CSS = """
     #results, #results > ContentSwitcher { height: 1fr; }
@@ -51,31 +70,45 @@ class ParqxApp(App[Any]):
     )
     """Order in which `action_cycle_cursor_type` advances the cursor type."""
 
-    def __init__(self, path: Path, query_limits: QueryLimits | None = None) -> None:
-        """Initialize the app without reading the source file.
+    def __init__(
+        self, paths: Sequence[Path], query_limits: QueryLimits | None = None
+    ) -> None:
+        """Initialize ordered sources without reading their Parquet metadata.
 
         Args:
-            path: Parquet file to load after the UI mounts.
+            paths: Parquet files to load after the UI mounts.
             query_limits: Optional preview and execution budget overrides.
         """
+        if not paths:
+            raise ValueError("At least one Parquet path is required")
         super().__init__()
-        self._path = path
-        self.catalog = SourceCatalog([path])
+        self.catalog = SourceCatalog(paths)
         self._tabs = TabbedContent(id="results")
-        self._panes = {"source": ResultPane(path.name, id="source")}
+        self._panes = {
+            entry.spec.source_id: ResultPane(
+                entry.spec.display_name, id=entry.spec.source_id
+            )
+            for entry in self.catalog.entries
+        }
+        self._source_views = {source_id: SourceViewState() for source_id in self._panes}
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
-        self._load_request_id = 0
-        self._source: ParquetSource | None = None
-        self._page_request = 0
-        self._page_cancelled = Event()
+        self._source_pool = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="parqx-source"
+        )
+        self._shutting_down = False
         # Textual's registration signature omits the screen's generic result type.
         self.install_screen(  # pyright: ignore[reportUnknownMemberType]
             QueryScreen(self.catalog, query_limits=query_limits), "query"
         )
-        self.load_error: str | None = None
-        """The CLI reports a source read failure after the app exits."""
+
+    @property
+    def load_errors(self) -> tuple[SourceIssue, ...]:
+        """Return individual source failures for the CLI's exit summary."""
+        return tuple(
+            entry.issue for entry in self.catalog.entries if entry.issue is not None
+        )
 
     def compose(self) -> ComposeResult:
         """Yield result tabs and the keyboard shortcut footer."""
@@ -83,13 +116,25 @@ class ParqxApp(App[Any]):
         yield Footer(show_command_palette=True)
 
     async def on_mount(self) -> None:
-        """Open the source tab before starting the background file read."""
-        # Add dynamically so TabbedContent's composition doesn't retain a closed
-        # source pane and all of its Arrow buffers for the rest of the app's life.
-        await self._tabs.add_pane(self._panes["source"])
-        self._tabs.active = "source"
-        self._refresh_tab_bindings()
-        self._load_table(self._load_request_id)
+        """Create all source tabs in input order before starting metadata reads."""
+        # Dynamically added panes aren't retained by TabbedContent's composition.
+        async with self._tab_lock:
+            for pane in tuple(self._panes.values()):
+                await self._tabs.add_pane(pane)
+            self._tabs.active = self.catalog.entries[0].spec.source_id
+            self._refresh_tab_bindings()
+        for entry in self.catalog.entries:
+            source_id = entry.spec.source_id
+            if entry.issue is not None:
+                self._panes[source_id].show_error(str(entry.issue))
+            else:
+                self.run_worker(
+                    self._load_table(source_id),
+                    group=f"load:{source_id}",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+        self._exit_if_all_failed()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
         """Expose the SQL dialog alongside Textual's built-in commands."""
@@ -122,7 +167,9 @@ class ParqxApp(App[Any]):
 
     def _refresh_tab_bindings(self) -> None:
         # Update the main footer even while another screen is on top of it.
-        self._tabs.screen.refresh_bindings()
+        # TabActivated can arrive after automatic exit has detached the tabs.
+        if self._tabs.is_attached:
+            self._tabs.screen.refresh_bindings()
 
     def _active_table(self) -> ArrowTable | None:
         pane = self._panes.get(self._tabs.active)
@@ -136,53 +183,52 @@ class ParqxApp(App[Any]):
     def _on_tab_activated(self) -> None:
         self._refresh_tab_bindings()
 
-    def _publish[T, **P](
-        self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-    ) -> T | None:
-        """Deliver a worker update while tolerating concurrent app shutdown."""
-        if not self.is_running:
-            return None
-        try:
-            return self.call_from_thread(callback, *args, **kwargs)
-        except RuntimeError:
-            if self.is_running:
-                raise
-            return None
-
-    @work(thread=True, group="load", exclusive=True, exit_on_error=False)
-    def _load_table(self, request_id: int) -> None:
-        try:
-            source = ParquetSource(self._path)
-        except (OSError, pa.ArrowException, MemoryError) as exc:
-            logger.exception("Failed to read parquet file: %s", self._path)
-            self._publish(self._on_load_error, str(exc), request_id)
+    async def _load_table(self, source_id: str) -> None:
+        if self._shutting_down:
             return
-        self._publish(self._on_load_ok, source, request_id)
+        path = self.catalog.get(source_id).spec.path
+        try:
+            source = await asyncio.get_running_loop().run_in_executor(
+                self._source_pool, _open_source, path
+            )
+        except (OSError, pa.ArrowException, MemoryError) as exc:
+            logger.exception("Failed to read parquet file: %s", path)
+            self._on_load_error(source_id, str(exc))
+            return
+        await self._on_load_ok(source_id, source)
 
-    async def _on_load_ok(self, source: ParquetSource, request_id: int) -> None:
+    async def _on_load_ok(self, source_id: str, source: ParquetSource) -> None:
         async with self._tab_lock:
-            if request_id != self._load_request_id:
+            if self._shutting_down:
                 return
-            self.catalog.mark_ready("source-1")
+            self.catalog.mark_ready(source_id)
             self._refresh_query_sources()
-            pane = self._panes.get("source")
-            if pane is None:
+            pane = self._panes.get(source_id)
+            state = self._source_views.get(source_id)
+            if pane is None or state is None:
                 return
-            self._source = source
+            state.source = source
             await pane.show_table(
                 TableData(source.schema, source.row_count),
                 f"{source.row_count:,} rows · original values",
             )
-            if self._tabs.active == "source":
+            if self._tabs.active == source_id:
                 self._focus_active_table()
 
-    def _on_load_error(self, message: str, request_id: int) -> None:
-        if request_id == self._load_request_id:
-            self.catalog.mark_failed("source-1", message)
-            self._refresh_query_sources()
-            if "source" in self._panes:
-                self.load_error = message
-                self.exit(return_code=1)
+    def _on_load_error(self, source_id: str, message: str) -> None:
+        if self._shutting_down:
+            return
+        self.catalog.mark_failed(source_id, message)
+        self._refresh_query_sources()
+        pane = self._panes.get(source_id)
+        if pane is not None:
+            issue = self.catalog.get(source_id).issue
+            pane.show_error(str(issue))
+        self._exit_if_all_failed()
+
+    def _exit_if_all_failed(self) -> None:
+        if all(entry.state == "failed" for entry in self.catalog.entries):
+            self.exit(return_code=1)
 
     def _refresh_query_sources(self) -> None:
         query = self.get_screen("query", QueryScreen)  # pyright: ignore[reportUnknownMemberType]
@@ -190,31 +236,43 @@ class ParqxApp(App[Any]):
 
     @on(ArrowTable.WindowRequested)
     def _on_window_requested(self, event: ArrowTable.WindowRequested) -> None:
-        """Read source windows on workers without changing the active result tab."""
-        pane = self._panes.get("source")
+        """Schedule a page only for the source view that requested its window."""
+        pane = event.control.parent
+        if not isinstance(pane, ResultPane) or pane.id is None:
+            return
+        source_id = pane.id
+        state = self._source_views.get(source_id)
         if (
-            self._source is None
-            or pane is None
+            self._shutting_down
+            or state is None
+            or state.source is None
+            or self._panes.get(source_id) is not pane
             or pane.table is None
             or pane.table is not event.control
             or pane.table.data is not event.data
         ):
             return
-        self._page_cancelled.set()
-        self._page_cancelled = cancelled = Event()
-        self._page_request += 1
-        self._read_page(
-            self._source,
-            weakref.ref(event.data),
-            event.start_row,
-            event.stop_row,
-            self._page_request,
-            cancelled,
+        state.page_cancelled.set()
+        state.page_cancelled = cancelled = Event()
+        state.page_request += 1
+        self.run_worker(
+            self._read_page(
+                source_id,
+                state.source,
+                weakref.ref(event.data),
+                event.start_row,
+                event.stop_row,
+                state.page_request,
+                cancelled,
+            ),
+            group=f"page:{source_id}",
+            exclusive=True,
+            exit_on_error=False,
         )
 
-    @work(thread=True, group="page", exclusive=True, exit_on_error=False)
-    def _read_page(
+    async def _read_page(
         self,
+        source_id: str,
         source: ParquetSource,
         data: weakref.ReferenceType[TableData],
         start: int,
@@ -222,25 +280,32 @@ class ParqxApp(App[Any]):
         request: int,
         cancelled: Event,
     ) -> None:
-        # A closed pane can release its cache while this bounded read finishes.
+        # Native work receives no strong references to the widget or its cache.
+        if self._shutting_down or cancelled.is_set():
+            return
         try:
-            page = source.read_window(start, stop, cancelled)
+            page = await asyncio.get_running_loop().run_in_executor(
+                self._source_pool, source.read_window, start, stop, cancelled
+            )
         except ReadCancelledError:
             return
         except (OSError, pa.ArrowException, MemoryError) as exc:
             if not cancelled.is_set():
-                self._publish(self._on_page_error, data, request, str(exc))
+                self._on_page_error(source_id, data, request, str(exc))
             return
         if not cancelled.is_set():
-            self._publish(self._on_page_loaded, data, request, page)
+            self._on_page_loaded(source_id, data, request, page)
 
     def _current_source_pane(
-        self, data: weakref.ReferenceType[TableData], request: int
+        self, source_id: str, data: weakref.ReferenceType[TableData], request: int
     ) -> ResultPane | None:
-        pane = self._panes.get("source")
+        pane = self._panes.get(source_id)
+        state = self._source_views.get(source_id)
         if (
-            request != self._page_request
-            or self._source is None
+            self._shutting_down
+            or state is None
+            or request != state.page_request
+            or state.source is None
             or pane is None
             or pane.table is None
             or pane.table.data is not data()
@@ -249,31 +314,41 @@ class ParqxApp(App[Any]):
         return pane
 
     def _on_page_loaded(
-        self, data: weakref.ReferenceType[TableData], request: int, page: DataPage
+        self,
+        source_id: str,
+        data: weakref.ReferenceType[TableData],
+        request: int,
+        page: DataPage,
     ) -> None:
-        pane = self._current_source_pane(data, request)
+        pane = self._current_source_pane(source_id, data, request)
         if pane is not None and pane.table is not None:
             pane.table.accept_page(page)
             pane.update_status(f"{pane.table.row_count:,} rows · original values")
 
     def _on_page_error(
-        self, data: weakref.ReferenceType[TableData], request: int, message: str
+        self,
+        source_id: str,
+        data: weakref.ReferenceType[TableData],
+        request: int,
+        message: str,
     ) -> None:
-        pane = self._current_source_pane(data, request)
+        pane = self._current_source_pane(source_id, data, request)
         if pane is not None and pane.table is not None:
             pane.table.fail_window()
             pane.update_status(f"Read error: {message}")
 
-    def _cancel_source_read(self, *, cancel_load: bool = True) -> None:
-        if cancel_load:
-            self._load_request_id += 1
-        self._page_request += 1
-        self._page_cancelled.set()
-        self._source = None
+    def _cancel_source_read(self, source_id: str) -> None:
+        state = self._source_views.pop(source_id, None)
+        if state is not None:
+            state.page_request += 1
+            state.page_cancelled.set()
 
     def on_unmount(self) -> None:
-        """Invalidate source callbacks and cancel any in-flight window read."""
-        self._cancel_source_read()
+        """Stop source work and prevent all late UI updates during shutdown."""
+        self._shutting_down = True
+        for source_id in tuple(self._source_views):
+            self._cancel_source_read(source_id)
+        self._source_pool.shutdown(wait=False, cancel_futures=True)
 
     def action_open_query(self) -> None:
         """Open the reusable SQL editor without replacing the current tab."""
@@ -322,9 +397,9 @@ class ParqxApp(App[Any]):
             pane_id = self._tabs.active
             if pane_id not in self._panes:
                 return
-            if pane_id == "source":
-                self.catalog.mark_closed("source-1")
-                self._cancel_source_read(cancel_load=False)
+            if pane_id in self._source_views:
+                self.catalog.mark_closed(pane_id)
+                self._cancel_source_read(pane_id)
                 self._refresh_query_sources()
             await self._tabs.remove_pane(pane_id)
             del self._panes[pane_id]
