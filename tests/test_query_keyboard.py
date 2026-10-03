@@ -56,11 +56,11 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
 
         query.editor.load_text("SELECT missing")
         query.editor.move_cursor((0, len(query.editor.text)))
-        assert await pilot.click(footer_keys(footer)["newline"])
+        await pilot.click(footer_keys(footer)["newline"])
         await wait_for(lambda: query.editor.text == "SELECT missing\n", pilot)
         assert query.editor.has_focus
         assert not query.running
-        assert await pilot.click(footer_keys(footer)["run_query"])
+        await pilot.click(footer_keys(footer)["run_query"])
         await wait_for(lambda: query.error is not None, pilot)
         await wait_for(
             lambda: (
@@ -83,14 +83,14 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
         await wait_for(lambda: not query.query("Toast"), pilot)
 
         query.editor.load_text("SELECT 42 AS answer")
-        assert await pilot.click(footer_keys(footer)["run_query"])
+        await pilot.click(footer_keys(footer)["run_query"])
         await wait_for(lambda: app.screen is not query and tabs.tab_count == 2, pilot)
         table = tabs.get_pane("query-1").query_one(ArrowTable)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
         await open_query(app, pilot)
         await wait_for(lambda: footer_ready(footer), pilot)
         assert query.editor.has_focus
-        assert await pilot.click(footer_keys(footer)["close"])
+        await pilot.click(footer_keys(footer)["close"])
         await wait_for(lambda: app.screen is not query, pilot)
         assert tabs.tab_count == 2
 
@@ -235,7 +235,10 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 query.editor.load_text("SELECT 42")
                 footer = query.query_one(Footer)
                 await wait_for(lambda: footer_ready(footer), pilot)
-                assert await pilot.click(footer_keys(footer)["run_query"])
+                # Bindings can rebuild the footer while Pilot delivers the click.
+                # Verify its action, not the identity of the old FooterKey.
+                footer.refresh(recompose=True)
+                await pilot.click(footer_keys(footer)["run_query"])
                 await wait_for(started.is_set, pilot)
                 await wait_for(
                     lambda: (
@@ -260,7 +263,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 assert query.query_one("#query-loading").display
                 control = query._query_control  # pyright: ignore[reportPrivateUsage]
                 assert control is not None
-                assert await pilot.click(footer_keys(footer)["close"])
+                await pilot.click(footer_keys(footer)["close"])
                 await wait_for(lambda: app.screen is not query, pilot)
                 assert control.cancelled.is_set()
                 assert not query.running

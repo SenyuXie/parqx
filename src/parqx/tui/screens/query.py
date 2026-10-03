@@ -66,6 +66,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         }
 
         &.compact > #query-dialog {
+            width: 100%;
             height: 90%;
         }
     }

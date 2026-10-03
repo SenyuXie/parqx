@@ -121,7 +121,7 @@ def assert_compact_controls_visible(query: QueryScreen) -> None:
     assert footer.region.height == 1
     assert dialog.region.contains_region(footer.region)
     keys = footer_keys(footer)
-    for action in ("run_query", "close"):
+    for action in ("run_query", "newline", "close"):
         key = keys[action]
         assert key.region.width > 0
         assert key.region.height == 1
