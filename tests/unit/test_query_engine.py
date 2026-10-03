@@ -1,4 +1,5 @@
 from dataclasses import replace
+from os import name as os_name
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread, current_thread
@@ -46,6 +47,59 @@ def test_query_file_with_quoted_path_and_cte(small_parquet: Path) -> None:
     assert [v.as_py() for v in result.table.column(0)] == [5, 4, 3, 2]
     assert not result.truncated
     assert result.reason is None
+
+
+@pytest.mark.parametrize(
+    ("literal", "neighbor"),
+    [
+        ("items[1]", "items1"),
+        ("left[", "left"),
+        ("right]", "right"),
+        ("parts*", "parts-extra"),
+        ("问?号", "问1号"),
+        ("all[*?]", "all*"),
+    ],
+)
+def test_source_paths_are_literal_not_globs(
+    tmp_path: Path, literal: str, neighbor: str
+) -> None:
+    if os_name == "nt" and any(char in literal for char in "*?"):
+        pytest.skip("Windows filenames cannot contain * or ?")
+    path = tmp_path / f"{literal}.parquet"
+    pq.write_table(pa.table({"value": ["opened"]}), path)
+    pq.write_table(pa.table({"value": ["unopened"]}), tmp_path / f"{neighbor}.parquet")
+    inputs = sources(path)
+    with QuerySession(
+        inputs, f"SELECT * FROM {inputs[0].quoted_name}", QueryControl()
+    ) as session:
+        assert table_values(session.preview().table) == {"value": ["opened"]}
+        assert not session.issues
+
+
+def test_literal_parent_path_and_missing_source_cannot_match_neighbors(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "batch[1]"
+    neighbor = tmp_path / "batch1"
+    directory.mkdir()
+    neighbor.mkdir()
+    path = directory / "items[1].parquet"
+    pq.write_table(pa.table({"value": ["opened"]}), path)
+    for candidate in (directory / "items1.parquet", neighbor / "items1.parquet"):
+        pq.write_table(pa.table({"value": ["unopened"]}), candidate)
+    inputs = sources(path)
+    with QuerySession(inputs, 'SELECT * FROM "items[1]"', QueryControl()) as session:
+        assert table_values(session.preview().table) == {"value": ["opened"]}
+    path.unlink()
+    with QuerySession(inputs, "SELECT 42 AS answer", QueryControl()) as session:
+        assert table_values(session.preview().table) == {"answer": [42]}
+        assert len(session.issues) == 1
+        assert session.issues[0].source == inputs[0]
+    with (
+        pytest.raises(duckdb.CatalogException),
+        QuerySession(inputs, 'SELECT * FROM "items[1]"', QueryControl()),
+    ):
+        pass
 
 
 def test_preview_limit_does_not_truncate_aggregation_input(small_parquet: Path) -> None:

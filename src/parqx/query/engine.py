@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from glob import escape as escape_glob
 from tempfile import TemporaryDirectory
 from threading import Event, Lock, Thread
 from types import TracebackType
@@ -156,7 +157,9 @@ class QuerySession:
             for source in self.sources:
                 self.control.check()
                 try:
-                    relation = connection.read_parquet(str(source.path))
+                    # DuckDB expands glob syntax even for one path. A source
+                    # must read exactly its registered file, including []?*.
+                    relation = connection.read_parquet(escape_glob(str(source.path)))
                 except (
                     duckdb.IOException,
                     duckdb.InvalidInputException,
