@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 from textual.coordinate import Coordinate
-from textual.widgets import Footer, Label, TabbedContent
+from textual.widgets import Footer, TabbedContent
 
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QuerySession
@@ -40,9 +40,8 @@ async def test_duplicate_names_expose_exact_sql_references_and_full_paths(
                 return source_table.data.peek(0, 0) is not None
 
             await wait_for(first_page_loaded, pilot)
-            status = str(pane.query_one(Label).content)
-            assert f"SQL: {spec.quoted_name}" in status
             tab = tabs.get_tab(spec.source_id)
+            assert f"SQL: {spec.quoted_name}" in str(tab.tooltip)
             assert spec.quoted_name in str(tab.label)
             assert str(spec.path) in str(tab.tooltip)
             labels.append(str(tab.label))

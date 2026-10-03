@@ -12,7 +12,7 @@ import pytest
 from textual.command import CommandPalette
 from textual.coordinate import Coordinate
 from textual.widget import Widget
-from textual.widgets import Input, Label, TabbedContent
+from textual.widgets import Input, TabbedContent
 
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
@@ -192,14 +192,20 @@ async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) ->
         return original_read(source, start, stop, cancelled)
 
     app = ParqxApp([path])
-    with patch.object(ParquetSource, "read_window", fail_first_read):
+    with (
+        patch.object(ParquetSource, "read_window", fail_first_read),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             table = app.query_one(ArrowTable)
-            status = app.query_one("#source-1").query_one(Label)
-            await wait_for(
-                lambda: "temporarily unavailable" in str(status.content), pilot
-            )
+            await wait_for(lambda: notify.called, pilot)
+            message = str(notify.call_args.args[0])
+            assert "temporarily unavailable" in message
+            assert str(path.resolve()) in message
+            assert '"retry"' in message
+            assert notify.call_args.kwargs["severity"] == "error"
+            assert notify.call_args.kwargs["markup"] is False
             table.refresh()
             await pilot.pause()
             assert calls == 1
@@ -207,7 +213,7 @@ async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) ->
             await pilot.press("ctrl+end")
             await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
             assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
-            assert "original values" in str(status.content)
+            assert notify.call_count == 1
 
 
 async def test_shutdown_cancels_pending_source_window(small_parquet: Path) -> None:

@@ -98,7 +98,6 @@ class ParqxApp(App[Any]):
                     else ""
                 ),
                 id=entry.spec.source_id,
-                sql_name=entry.spec.quoted_name,
             )
             for entry in self.catalog.entries
         }
@@ -135,7 +134,7 @@ class ParqxApp(App[Any]):
                 await self._tabs.add_pane(pane)
             for entry in self.catalog.entries:
                 self._tabs.get_tab(entry.spec.source_id).tooltip = Content(
-                    str(entry.spec.path)
+                    f"{entry.spec.path}\nSQL: {entry.spec.quoted_name}"
                 )
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_bindings()
@@ -223,10 +222,7 @@ class ParqxApp(App[Any]):
             if pane is None or state is None:
                 return
             state.source = source
-            await pane.show_table(
-                TableData(source.schema, source.row_count),
-                f"{source.row_count:,} rows · original values",
-            )
+            await pane.show_table(TableData(source.schema, source.row_count))
             if self._tabs.active == source_id:
                 self._focus_active_table()
 
@@ -333,7 +329,6 @@ class ParqxApp(App[Any]):
         pane = self._current_source_pane(source_id, data, request)
         if pane is not None and pane.table is not None:
             pane.table.accept_page(page)
-            pane.update_status(f"{pane.table.row_count:,} rows · original values")
 
     def _on_page_error(
         self,
@@ -345,7 +340,12 @@ class ParqxApp(App[Any]):
         pane = self._current_source_pane(source_id, data, request)
         if pane is not None and pane.table is not None:
             pane.table.fail_window()
-            pane.update_status(f"Read error: {message}")
+            self.notify(
+                str(SourceIssue(self.catalog.get(source_id).spec, message)),
+                title="Read error",
+                severity="error",
+                markup=False,
+            )
 
     def _cancel_source_read(self, source_id: str) -> None:
         state = self._source_views.pop(source_id, None)
@@ -379,17 +379,18 @@ class ParqxApp(App[Any]):
                 if result.issues:
                     suffix += f" · warning: {len(result.issues)} sources unavailable"
                 pane = ResultPane(
-                    f"Query {self._query_number}",
-                    id=pane_id,
-                    table=preview.table,
-                    status=f"{preview.table.num_rows:,} rows · {suffix} · {result.elapsed:.2f}s",
+                    f"Query {self._query_number}", id=pane_id, table=preview.table
                 )
                 self._panes[pane_id] = pane
                 await self._tabs.add_pane(pane)
                 context = "\n".join(
                     f"{source.quoted_name} → {source.path}" for source in result.sources
                 )
-                details = result.sql + (f"\n\nSources:\n{context}" if context else "")
+                details = (
+                    f"{preview.table.num_rows:,} rows · {suffix} · {result.elapsed:.2f}s"
+                    f"\n\n{result.sql}"
+                    + (f"\n\nSources:\n{context}" if context else "")
+                )
                 if result.issues:
                     details += "\n\nUnavailable sources:\n" + "\n".join(
                         map(str, result.issues)
