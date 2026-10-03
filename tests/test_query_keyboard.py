@@ -29,7 +29,7 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
     small_parquet: Path,
 ) -> None:
     app = ParqxApp([small_parquet])
-    async with app.run_test() as pilot:
+    async with app.run_test(notifications=True) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
         query = await open_query(app, pilot)
@@ -67,6 +67,12 @@ async def test_query_footer_clicks_preserve_focus_and_allow_error_recovery(
         assert query.editor.has_focus
         assert not query.editor.read_only
         assert tabs.tab_count == 1
+        # Native notifications overlay the footer until dismissed.
+        await wait_for(lambda: bool(query.query("Toast")), pilot)
+        toast = query.query_one("Toast")
+        await wait_for(lambda: toast.region.width > 0, pilot)
+        assert await pilot.click(toast)
+        await wait_for(lambda: not query.query("Toast"), pilot)
 
         query.editor.load_text("SELECT 42 AS answer")
         assert await pilot.click(footer_keys(footer)["run_query"])
