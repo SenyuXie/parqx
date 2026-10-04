@@ -58,9 +58,9 @@ These shortcuts apply to the active tab.
 
 | Key                      | Action                                        |
 | ---                      | ---                                           |
-| `ctrl+p` → **SQL query** | Open the centered SQL editor                  |
+| `ctrl+p` → **SQL query** | Open the compact SQL editor                   |
 | `enter`                  | Run the complete SQL query                    |
-| `shift+enter`            | Insert a newline                              |
+| `shift+enter`            | Insert a newline and expand the editor        |
 | `esc`                    | Close the editor and cancel any running query |
 
 ## License

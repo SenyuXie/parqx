@@ -44,22 +44,23 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     DEFAULT_CSS = """
     QueryScreen {
-        align: center middle;
+        align: center top;
         background: $background 60%;
 
         & > #query-dialog {
-            width: 90%;
-            max-width: 100;
-            height: 70%;
-            max-height: 24;
+            width: 80%;
+            max-width: 90;
+            height: 4;
             padding: 0 1;
             border: solid $primary;
             background: $surface;
 
             & > TextArea {
                 height: 1fr;
-                min-height: 2;
+                min-height: 1;
                 border: none;
+                scrollbar-size-horizontal: 0;
+                overflow-y: hidden;
             }
 
             & > #query-loading { height: 1; }
@@ -67,7 +68,6 @@ class QueryScreen(ModalScreen[QueryResult]):
 
         &.compact > #query-dialog {
             width: 100%;
-            height: 90%;
         }
     }
     """
@@ -87,6 +87,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         super().__init__()
         self._catalog = catalog
         self._query_limits = query_limits or QueryLimits()
+        self._dialog = Vertical(id="query-dialog")
+        self._dialog.border_title = "SQL query"
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
@@ -97,10 +99,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         """Track queued and unfinished requests, including cancelled older ones."""
 
     def compose(self) -> ComposeResult:
-        """Yield the centered editor, loading indicator and native shortcut footer."""
-        dialog = Vertical(id="query-dialog")
-        dialog.border_title = "SQL query"
-        with dialog:
+        """Yield the expanding editor, loading indicator and shortcut footer."""
+        with self._dialog:
             yield self.editor
             yield self._loading
             yield self._footer
@@ -113,12 +113,36 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def on_screen_resume(self) -> None:
         """Focus the existing editor without resetting its selection or history."""
+        self._resize_dialog()
         self.editor.focus()
 
     def on_resize(self, event: Resize) -> None:
         """Reserve room for editing and shortcuts on a small terminal."""
         self.set_class(event.size.height < 18 or event.size.width < 60, "compact")
         self._footer.compact = event.size.width < 60
+        self._resize_dialog()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Resize after typing, paste, deletion, undo or loading saved SQL."""
+        self._resize_dialog()
+
+    def _resize_dialog(self) -> None:
+        # Two border rows, the footer and an optional loading row.
+        chrome_height = 3 + int(self.running)
+        line_count = self.editor.document.line_count
+        height = min(line_count + chrome_height, 24, max(4, self.size.height))
+        # TextArea checks for overflow before the larger dialog is laid out.
+        # Only allow a scrollbar when the lines exceed the target editor height.
+        self.editor.styles.overflow_y = (
+            "auto" if line_count > height - chrome_height else "hidden"
+        )
+        self._dialog.styles.height = height
+        # Place the input row one sixth down, allowing for the top border.
+        # Keep the starting row steady as the editor grows, moving up only
+        # when necessary to keep the footer inside a short terminal.
+        top = min(max(0, self.size.height // 6 - 1), max(0, self.size.height - height))
+        self._dialog.styles.margin = (top, 0, 0, 0)
+        self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
 
     @property
     def running(self) -> bool:
@@ -130,6 +154,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         running = self.running
         self.editor.read_only = running
         self._loading.display = running
+        self._resize_dialog()
         self.refresh_bindings()
 
     def action_newline(self) -> None:
