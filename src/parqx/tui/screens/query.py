@@ -209,10 +209,6 @@ class QueryScreen(ModalScreen[QueryResult]):
                 message = str(exc)
                 if issues := unavailable + session.issues:
                     message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
-                if sources:
-                    message += "\nQuery sources:\n" + "\n".join(
-                        f"{source.quoted_name} → {source.path}" for source in sources
-                    )
                 self._publish(self._on_query_error, control, message)
         except QueryCancelledError:
             return

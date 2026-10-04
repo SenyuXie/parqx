@@ -47,7 +47,6 @@ async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
         labels: list[str] = []
         for spec in specs:
             tab = tabs.get_tab(spec.source_id)
-            assert f"SQL: {spec.quoted_name}" in str(tab.tooltip)
             assert str(spec.path) in str(tab.tooltip)
             assert spec.quoted_name in str(tab.label)
             labels.append(str(tab.label))

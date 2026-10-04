@@ -130,7 +130,7 @@ class ParqxApp(App[Any]):
                 await self._tabs.add_pane(pane)
             for entry in self.catalog.entries:
                 self._tabs.get_tab(entry.spec.source_id).tooltip = Content(
-                    f"{entry.spec.path}\nSQL: {entry.spec.quoted_name}"
+                    f"{entry.spec.path}"
                 )
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_bindings()
