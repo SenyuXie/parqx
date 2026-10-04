@@ -10,6 +10,7 @@ import pytest
 from textual.coordinate import Coordinate
 from textual.screen import Screen
 from textual.widgets import Footer, TabbedContent
+from textual.worker import WorkerFailed
 
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryControl, QuerySession
@@ -23,6 +24,7 @@ from tests.helpers import (
     run_query,
     select_tab,
     wait_for,
+    wait_for_query_error,
 )
 
 
@@ -38,6 +40,96 @@ def query_controls(monkeypatch: pytest.MonkeyPatch) -> list[QueryControl]:
 
     monkeypatch.setattr("parqx.tui.screens.query.QueryControl", create_control)
     return controls
+
+
+@pytest.mark.parametrize(
+    ("operation", "failure"),
+    [
+        ("preview", RuntimeError("unexpected preview failure")),
+        ("constructor", MemoryError()),
+    ],
+)
+async def test_worker_failure_unlocks_editor_and_allows_another_query(
+    small_parquet: Path,
+    query_controls: list[QueryControl],
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
+    failure: Exception,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        tabs = app.query_one(TabbedContent)
+        query.editor.load_text("SELECT 1 AS failed")
+        target = (
+            "parqx.query.engine.QuerySession.preview"
+            if operation == "preview"
+            else "parqx.tui.screens.query.QuerySession"
+        )
+        with (
+            patch(target, side_effect=failure),
+            patch.object(app, "notify", wraps=app.notify) as notify,
+        ):
+            query.action_run_query()
+            control = query_controls[-1]
+            message = await wait_for_query_error(notify, query, pilot)
+            await wait_for(control.finished.is_set, pilot)
+            assert (str(failure) or type(failure).__name__) in message
+            assert control.started.is_set()
+            assert not control.cancelled.is_set()
+            assert app.screen is query
+            assert not query.editor.read_only
+            assert not query.query_one("#query-loading").display
+            assert query.editor.has_focus
+            assert query.editor.text == "SELECT 1 AS failed"
+            assert tabs.tab_count == 1
+
+        errors = [
+            record
+            for record in caplog.records
+            if record.name == "parqx.tui.screens.query"
+        ]
+        if operation == "preview":
+            assert len(errors) == 1
+            assert errors[0].exc_info is not None
+            assert errors[0].exc_info[1] is failure
+            assert errors[0].exc_info[2] is not None
+        else:
+            assert not errors
+
+        result = await run_query(app, pilot, "SELECT 42 AS answer")
+        assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
+        await wait_for(query_controls[-1].finished.is_set, pilot)
+        assert tabs.tab_count == 2
+
+
+@pytest.mark.parametrize(
+    ("callback", "sql"), [("dismiss", "SELECT 42"), ("notify", "SELECT missing_column")]
+)
+async def test_ui_delivery_failure_propagates_and_finishes_request(
+    small_parquet: Path, query_controls: list[QueryControl], callback: str, sql: str
+) -> None:
+    app = ParqxApp([small_parquet])
+    failure = RuntimeError("UI delivery failed")
+
+    async def run_app() -> None:
+        async with app.run_test() as pilot:
+            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            query = await open_query(app, pilot)
+            query.editor.load_text(sql)
+            with patch.object(query, callback, side_effect=failure):
+                query.action_run_query()
+                worker = next(
+                    worker for worker in app.workers if worker.group == "query"
+                )
+                await wait_for(lambda: worker.is_finished, pilot)
+
+    with pytest.raises(WorkerFailed, match="UI delivery failed") as raised:
+        await run_app()
+    assert raised.value.error is failure
+    assert len(query_controls) == 1
+    assert query_controls[0].finished.is_set()
 
 
 async def test_queued_callbacks_cannot_finish_a_new_query(

@@ -26,30 +26,54 @@ def test_information_flags_exit_without_starting_app(option: str, output: str) -
 
 def test_paths_are_forwarded_in_order(tmp_path: Path) -> None:
     paths = [tmp_path / "second.parquet", tmp_path / "first.parquet"]
-    with patch("parqx.cli.ParqxApp") as app_class:
+    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
         app_class.return_value.load_errors = ()
+        app_class.return_value.return_code = 0
         result = runner.invoke(app, [str(path) for path in paths])
     assert result.exit_code == 0
     app_class.assert_called_once_with(paths=paths)
     app_class.return_value.run.assert_called_once_with()
 
 
-def test_partial_failure_reports_each_path_after_app_finishes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("return_code", [0, 1, 7])
+def test_application_exit_code_is_preserved_without_load_errors(
+    tmp_path: Path, return_code: int
+) -> None:
+    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
+        app_class.return_value.load_errors = ()
+        app_class.return_value.return_code = None
+
+        def finish() -> None:
+            app_class.return_value.return_code = return_code
+
+        app_class.return_value.run.side_effect = finish
+        result = runner.invoke(app, [str(tmp_path / "source.parquet")])
+    assert result.exit_code == return_code
+    assert result.stderr == ""
+    app_class.return_value.run.assert_called_once_with()
+
+
+@pytest.mark.parametrize(("return_code", "expected_code"), [(0, 1), (1, 1), (7, 7)])
+def test_partial_failure_reports_each_path_after_app_finishes(
+    tmp_path: Path, return_code: int, expected_code: int
+) -> None:
     paths = [
         tmp_path / name for name in ("good.parquet", "missing.parquet", "bad.parquet")
     ]
     catalog = SourceCatalog(paths[1:])
     errors = tuple(SourceIssue(entry.spec, "Cannot read") for entry in catalog.entries)
-    with patch("parqx.cli.ParqxApp") as app_class:
+    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
         # Errors only become available once the interactive application exits.
         app_class.return_value.load_errors = ()
+        app_class.return_value.return_code = None
 
         def finish() -> None:
             app_class.return_value.load_errors = errors
+            app_class.return_value.return_code = return_code
 
         app_class.return_value.run.side_effect = finish
         result = runner.invoke(app, [str(path) for path in paths])
-    assert result.exit_code == 1
+    assert result.exit_code == expected_code
     assert str(paths[1]) in result.stderr
     assert str(paths[2]) in result.stderr
     assert result.stderr.count("Cannot read") == 2

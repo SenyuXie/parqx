@@ -334,7 +334,10 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
     )
 
 
-async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError])
+async def test_window_error_waits_for_navigation_before_retry(
+    tmp_path: Path, error_type: type[Exception], caplog: pytest.LogCaptureFixture
+) -> None:
     path = tmp_path / "retry.parquet"
     pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)
     original_read = ParquetSource.read_window
@@ -346,7 +349,7 @@ async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) ->
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise OSError("window temporarily unavailable")
+            raise error_type("window temporarily unavailable")
         return original_read(source, start, stop, cancelled)
 
     app = ParqxApp([path])
@@ -364,6 +367,12 @@ async def test_window_error_waits_for_navigation_before_retry(tmp_path: Path) ->
             assert '"retry"' in message
             assert notify.call_args.kwargs["severity"] == "error"
             assert notify.call_args.kwargs["markup"] is False
+            record = next(
+                record for record in caplog.records if record.name == "parqx.tui.app"
+            )
+            assert record.exc_info is not None
+            assert record.exc_info[0] is error_type
+            assert record.exc_info[2] is not None
             table.refresh()
             await pilot.pause()
             assert calls == 1

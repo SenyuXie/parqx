@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -27,6 +28,8 @@ from parqx.query.engine import (
     QueryPreview,
     QuerySession,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -198,7 +201,7 @@ class QueryScreen(ModalScreen[QueryResult]):
             if app.is_running:
                 raise
 
-    @work(thread=True, group="query", exit_on_error=False)
+    @work(thread=True, group="query")
     def _run_query(
         self,
         sources: tuple[SourceSpec, ...],
@@ -208,8 +211,9 @@ class QueryScreen(ModalScreen[QueryResult]):
     ) -> None:
         control.started.set()
         started = perf_counter()
-        session = QuerySession(sources, sql, control, self._query_limits)
+        session: QuerySession | None = None
         try:
+            session = QuerySession(sources, sql, control, self._query_limits)
             with session:
                 preview = session.preview()
             control.check()
@@ -219,21 +223,21 @@ class QueryScreen(ModalScreen[QueryResult]):
                 elapsed=perf_counter() - started,
                 issues=unavailable + session.issues,
             )
-            self._publish(partial(self._on_query_ok, control, result))
-        except (
-            duckdb.Error,
-            pa.ArrowException,
-            OSError,
-            ValueError,
-            MemoryError,
-        ) as exc:
-            if not control.cancelled.is_set():
-                message = str(exc)
-                if issues := unavailable + session.issues:
-                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
-                self._publish(partial(self._on_query_error, control, message))
         except QueryCancelledError:
             return
+        except Exception as exc:
+            if not isinstance(
+                exc, (duckdb.Error, pa.ArrowException, OSError, ValueError, MemoryError)
+            ):
+                logger.exception("Unexpected query failure")
+            if not control.cancelled.is_set():
+                message = str(exc) or type(exc).__name__
+                issues = unavailable + (session.issues if session is not None else ())
+                if issues:
+                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
+                self._publish(partial(self._on_query_error, control, message))
+        else:
+            self._publish(partial(self._on_query_ok, control, result))
         finally:
             control.finished.set()
 

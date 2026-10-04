@@ -14,7 +14,6 @@ from stat import S_ISREG
 from threading import Event
 from typing import Any, ClassVar
 
-import pyarrow as pa
 from textual import on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
@@ -158,7 +157,6 @@ class ParqxApp(App[Any]):
                     description="Load source metadata",
                     group=f"load:{source_id}",
                     exclusive=True,
-                    exit_on_error=False,
                 )
         self._exit_if_all_failed()
 
@@ -217,9 +215,9 @@ class ParqxApp(App[Any]):
             source = await asyncio.get_running_loop().run_in_executor(
                 self._source_pool, _open_source, path
             )
-        except (OSError, pa.ArrowException, MemoryError) as exc:
+        except Exception as exc:
             logger.exception("Failed to read parquet file: %s", path)
-            self._on_load_error(source_id, str(exc))
+            self._on_load_error(source_id, str(exc) or type(exc).__name__)
             return
         await self._on_load_ok(source_id, source)
 
@@ -280,7 +278,6 @@ class ParqxApp(App[Any]):
             description="Read source page",
             group=f"page:{source_id}",
             exclusive=True,
-            exit_on_error=False,
         )
 
     async def _read_page(
@@ -302,9 +299,12 @@ class ParqxApp(App[Any]):
             )
         except ReadCancelledError:
             return
-        except (OSError, pa.ArrowException, MemoryError) as exc:
+        except Exception as exc:
             if not cancelled.is_set():
-                self._on_page_error(source_id, data, cancelled, str(exc))
+                logger.exception("Failed to read parquet window: %s", source.path)
+                self._on_page_error(
+                    source_id, data, cancelled, str(exc) or type(exc).__name__
+                )
             return
         if not cancelled.is_set():
             self._on_page_loaded(source_id, data, cancelled, page)

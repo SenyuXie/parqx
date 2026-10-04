@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
@@ -158,6 +159,42 @@ async def test_all_failed_sources_exit_with_failure(tmp_path: Path) -> None:
     assert app.return_code == 1
     assert len(app.load_errors) == 2
     assert all(entry.state == "failed" for entry in app.catalog.entries)
+
+
+async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_sources_usable(
+    small_parquet: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    failed = small_parquet.with_name("failed.parquet")
+    failed.write_bytes(small_parquet.read_bytes())
+
+    def open_source(path: Path) -> ParquetSource:
+        if path == failed.resolve():
+            raise RuntimeError("metadata reader failed unexpectedly")
+        return ParquetSource(path)
+
+    app = ParqxApp([failed, small_parquet])
+    with patch("parqx.tui.app._open_source", open_source):
+        async with app.run_test() as pilot:
+            await wait_for(
+                lambda: all(entry.state != "loading" for entry in app.catalog.entries),
+                pilot,
+            )
+            assert [entry.state for entry in app.catalog.entries] == ["failed", "ready"]
+            pane = app.query_one("#source-1", ResultPane)
+            assert not pane.loading
+            error = pane.query_one(".source-error", Static)
+            assert error.display
+            assert "metadata reader failed unexpectedly" in str(error.content)
+            assert len(app.load_errors) == 1
+            assert app.load_errors[0].source.path == failed.resolve()
+            record = next(
+                record for record in caplog.records if record.name == "parqx.tui.app"
+            )
+            assert record.exc_info is not None
+            assert record.exc_info[0] is RuntimeError
+            assert record.exc_info[2] is not None
+            result = await run_query(app, pilot, "SELECT count(*) FROM smoke")
+            assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
 
 
 async def test_pending_windows_and_close_are_isolated_between_sources(
