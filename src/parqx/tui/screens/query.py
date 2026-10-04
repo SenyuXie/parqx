@@ -48,8 +48,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         background: $background 60%;
 
         & > #query-dialog {
-            width: 90%;
-            max-width: 100;
+            width: 80%;
+            max-width: 90;
             height: 4;
             padding: 0 1;
             border: solid $primary;
