@@ -427,3 +427,46 @@ async def test_query_editor_scrolls_within_resized_terminal(
         )
         assert editor.region.height == 1
         assert editor.has_focus
+
+
+async def test_query_editor_only_shows_scrollbar_when_lines_overflow(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(80, 24)) as pilot:
+        query = await open_query(app, pilot)
+        editor = query.editor
+        await wait_for(lambda: editor.region.height == 1, pilot)
+        scrollbar_states: list[bool] = []
+
+        def record_scrollbar_visibility(visible: bool) -> None:
+            scrollbar_states.append(visible)
+
+        # Capture every visibility transition, including a flash before layout settles.
+        app.watch(editor, "show_vertical_scrollbar", record_scrollbar_visibility)
+        await pilot.press("shift+enter")
+        await wait_for(lambda: editor.region.height == 2, pilot)
+        assert not any(scrollbar_states), scrollbar_states
+
+        editor.history.checkpoint()
+        app.post_message(events.Paste("SELECT 1\nAS answer"))
+        await wait_for(lambda: editor.region.height == 3, pilot)
+        assert not any(scrollbar_states), scrollbar_states
+        await pilot.press("ctrl+z")
+        await wait_for(lambda: editor.region.height == 2, pilot)
+        assert not any(scrollbar_states), scrollbar_states
+
+        await pilot.press("f7")
+        overflow_sql = "SELECT 1" + "\n-- another line" * 49
+        app.post_message(events.Paste(overflow_sql))
+        await wait_for(
+            lambda: (
+                editor.text == overflow_sql
+                and editor.show_vertical_scrollbar
+                and editor.scroll_y > 0
+            ),
+            pilot,
+        )
+        assert any(scrollbar_states)
+        assert editor.region.height < 50
+        assert editor.scrollable_content_region.contains(*editor.cursor_screen_offset)

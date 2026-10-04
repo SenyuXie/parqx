@@ -60,6 +60,7 @@ class QueryScreen(ModalScreen[QueryResult]):
                 min-height: 1;
                 border: none;
                 scrollbar-size-horizontal: 0;
+                overflow-y: hidden;
             }
 
             & > #query-loading { height: 1; }
@@ -126,11 +127,14 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._resize_dialog()
 
     def _resize_dialog(self) -> None:
-        # Two border rows and the shortcut footer sit outside the editor.
-        height = min(
-            self.editor.document.line_count + 3 + int(self.running),
-            24,
-            max(4, self.size.height),
+        # Two border rows, the footer and an optional loading row.
+        chrome_height = 3 + int(self.running)
+        line_count = self.editor.document.line_count
+        height = min(line_count + chrome_height, 24, max(4, self.size.height))
+        # TextArea checks for overflow before the larger dialog is laid out.
+        # Only allow a scrollbar when the lines exceed the target editor height.
+        self.editor.styles.overflow_y = (
+            "auto" if line_count > height - chrome_height else "hidden"
         )
         self._dialog.styles.height = height
         # Place the input row one sixth down, allowing for the top border.
