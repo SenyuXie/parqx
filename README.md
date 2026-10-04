@@ -27,6 +27,17 @@ parqx users.parquet orders.parquet
 parqx data/*.parquet
 ```
 
+## Browsing and types
+
+Parqx uses DuckDB for browsing and SQL. Browsing loads a small window of rows
+at a time and caches it for nearby navigation.
+
+Displayed schemas and values follow DuckDB's interpretation of the file.
+Timezone-aware nanosecond timestamps are read at microsecond precision, and
+some Arrow extension types are converted. Browsing rejects files containing
+decimal columns with precision above 38 to avoid incorrect conversion.
+Browsing does not modify the original files.
+
 ## Keyboard control
 
 ### Navigation

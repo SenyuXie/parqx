@@ -26,7 +26,8 @@ from textual.worker import (
 )
 
 from parqx.catalog import SourceCatalog, SourceIssue
-from parqx.data.parquet import ParquetSource, ReadCancelledError
+from parqx.data.duckdb import QueryCancelledError, QueryControl
+from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
 from parqx.query.engine import QueryLimits
 from parqx.tui.screens.query import QueryResult, QueryScreen
@@ -288,16 +289,22 @@ class ParqxApp(App[Any]):
         start: int,
         stop: int,
     ) -> None:
-        # One worker signal cancels both awaiting the result and native batches.
+        # The worker and DuckDB share one cancellation signal.
         cancelled = get_current_worker().cancelled_event
         # Native work receives no strong references to the widget or its cache.
         if self._shutting_down or cancelled.is_set():
             return
+        control = QueryControl(cancelled=cancelled)
+        # One read fills the existing cache for several subsequent UI windows.
+        prefetch_stop = max(stop, start + source.page_rows)
         try:
             page = await asyncio.get_running_loop().run_in_executor(
-                self._source_pool, source.read_window, start, stop, cancelled
+                self._source_pool, source.read_window, start, prefetch_stop, control
             )
-        except ReadCancelledError:
+        except asyncio.CancelledError:
+            control.cancel()
+            raise
+        except QueryCancelledError:
             return
         except Exception as exc:
             if not cancelled.is_set():

@@ -224,12 +224,14 @@ async def test_close_before_query_worker_starts_preserves_next_run(
     small_parquet: Path, query_controls: list[QueryControl]
 ) -> None:
     app = ParqxApp([small_parquet])
-    with (
-        patch.object(duckdb, "connect", wraps=duckdb.connect) as connect,
-        patch.object(app, "notify", wraps=app.notify) as notify,
-    ):
-        async with app.run_test() as pilot:
-            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        table = app.query_one(ArrowTable)
+        await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+        with (
+            patch.object(duckdb, "connect", wraps=duckdb.connect) as connect,
+            patch.object(app, "notify", wraps=app.notify) as notify,
+        ):
             query = await open_query(app, pilot)
             query.editor.load_text("SELECT 1 AS cancelled")
             query.action_run_query()

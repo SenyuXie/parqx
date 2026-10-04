@@ -6,12 +6,14 @@ from pathlib import Path
 from threading import Event, get_ident
 from unittest.mock import patch
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
 
+from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
 from parqx.tui.app import ParqxApp
@@ -187,15 +189,17 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
     original_read = ParquetSource.read_window
 
     def record_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         assert get_ident() != ui_thread
         reads.append((start, stop))
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([path])
     with (
-        patch("pyarrow.parquet.read_table", side_effect=AssertionError("full read")),
+        patch(
+            "pyarrow.parquet.ParquetFile", side_effect=AssertionError("PyArrow read")
+        ),
         patch.object(ParquetSource, "read_window", record_read),
     ):
         async with app.run_test(size=(60, 15)) as pilot:
@@ -209,7 +213,7 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
             assert table.get_cell_at(Coordinate(99_999, 0)).as_py() == 99_999
             assert table.cursor_row == 99_999
             assert len(reads) <= 4
-            assert all(0 < stop - start <= 256 for start, stop in reads)
+            assert all(0 < stop - start <= 4_096 for start, stop in reads)
             assert table.data.cache_bytes <= table.data.cache_budget
 
             table.focus()
@@ -218,16 +222,51 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
             assert table.get_cell_at(Coordinate(0, 0)).as_py() == 0
 
 
+async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) -> None:
+    path = tmp_path / "read-ahead.parquet"
+    pq.write_table(pa.table({"n": range(10_000)}), path, row_group_size=1_000)
+    reads: list[tuple[int, int]] = []
+    original_read = ParquetSource.read_window
+
+    def record_read(
+        source: ParquetSource, start: int, stop: int, control: QueryControl
+    ) -> DataPage:
+        reads.append((start, stop))
+        return original_read(source, start, stop, control)
+
+    app = ParqxApp([path])
+    with patch.object(ParquetSource, "read_window", record_read):
+        async with app.run_test(size=(60, 15)) as pilot:
+            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            table = app.query_one(ArrowTable)
+            await wait_for(lambda: table.data.peek(4_095, 0) is not None, pilot)
+            assert reads == [(0, 4_096)]
+            assert table.data.peek(4_096, 0) is None
+
+            for row in (256, 512, 1_024, 2_048, 4_000):
+                table.move_cursor(row=row, animate=False)
+                await pilot.pause()
+                assert table.cursor_row == row
+                assert table.get_cell_at(Coordinate(row, 0)).as_py() == row
+                assert reads == [(0, 4_096)]
+
+            table.move_cursor(row=4_096, animate=False)
+            await wait_for(lambda: table.data.peek(4_096, 0) is not None, pilot)
+            assert reads == [(0, 4_096), (4_096, 8_192)]
+            assert table.get_cell_at(Coordinate(4_096, 0)).as_py() == 4_096
+            assert table.data.cache_bytes <= table.data.cache_budget
+
+
 async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> None:
     started, release = Event(), Event()
     original_read = ParquetSource.read_window
 
     def delayed_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         started.set()
         release.wait(timeout=5)
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([small_parquet])
     with patch.object(ParquetSource, "read_window", delayed_read):
@@ -254,27 +293,36 @@ async def test_new_window_cancels_old_read_and_discards_late_error(
 ) -> None:
     path = tmp_path / "superseded.parquet"
     pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)
-    started, release, returned = Event(), Event(), Event()
+    started, release, returned, interrupted = Event(), Event(), Event(), Event()
     cancellation: list[Event] = []
     original_read = ParquetSource.read_window
+    original_interrupt = duckdb.DuckDBPyConnection.interrupt
+
+    def record_interrupt(connection: duckdb.DuckDBPyConnection) -> None:
+        original_interrupt(connection)
+        interrupted.set()
 
     def delayed_first_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         if not started.is_set():
-            cancellation.append(cancelled)
-            started.set()
-            try:
-                assert release.wait(timeout=15)
-                # Simulate native work completing after its worker was cancelled.
-                raise OSError("obsolete window failed")
-            finally:
-                returned.set()
-        return original_read(source, start, stop, cancelled)
+            cancellation.append(control.cancelled)
+            with duckdb.connect() as connection:
+                control.attach(connection)
+                started.set()
+                try:
+                    assert release.wait(timeout=15)
+                    # Native work can finish after its worker was cancelled.
+                    raise OSError("obsolete window failed")
+                finally:
+                    control.detach()
+                    returned.set()
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([path])
     with (
         patch.object(ParquetSource, "read_window", delayed_first_read),
+        patch.object(duckdb.DuckDBPyConnection, "interrupt", record_interrupt),
         patch.object(app, "notify", wraps=app.notify) as notify,
     ):
         async with app.run_test(size=(80, 18)) as pilot:
@@ -284,6 +332,8 @@ async def test_new_window_cancels_old_read_and_discards_late_error(
                 await pilot.press("ctrl+end")
                 await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
                 assert cancellation[0].is_set()
+                assert interrupted.is_set()
+                assert not returned.is_set()
                 assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
 
                 release.set()
@@ -301,15 +351,15 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
     tmp_path: Path, recwarn: pytest.WarningsRecorder
 ) -> None:
     path = tmp_path / "rapid.parquet"
-    pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)
+    pq.write_table(pa.table({"n": range(10_000)}), path, row_group_size=100)
     reads: list[int] = []
     original_read = ParquetSource.read_window
 
     def record_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         reads.append(start)
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([path])
     async with app.run_test() as pilot:
@@ -318,13 +368,13 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
         await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
         with patch.object(ParquetSource, "read_window", record_read):
             # Deliver multiple requests before any new worker can start.
-            for start in (300, 600, 900):
+            for start in (5_000, 7_000, 9_000):
                 app._on_window_requested(  # pyright: ignore[reportPrivateUsage]
                     ArrowTable.WindowRequested(table, table.data, start, start + 100)
                 )
-            await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
-            assert reads == [900]
-            assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
+            await wait_for(lambda: table.data.peek(9_999, 0) is not None, pilot)
+            assert reads == [9_000]
+            assert table.get_cell_at(Coordinate(9_999, 0)).as_py() == 9_999
             await pilot.pause()
     gc.collect()
     assert not any(
@@ -344,13 +394,13 @@ async def test_window_error_waits_for_navigation_before_retry(
     calls = 0
 
     def fail_first_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise error_type("window temporarily unavailable")
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([path])
     with (
@@ -389,13 +439,13 @@ async def test_shutdown_cancels_pending_source_window(small_parquet: Path) -> No
     original_read = ParquetSource.read_window
 
     def wait_for_cancel(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
-        cancellation.append(cancelled)
+        cancellation.append(control.cancelled)
         started.set()
-        cancelled.wait(timeout=5)
+        control.cancelled.wait(timeout=5)
         try:
-            return original_read(source, start, stop, cancelled)
+            return original_read(source, start, stop, control)
         finally:
             finished.set()
 

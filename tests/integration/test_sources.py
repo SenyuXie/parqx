@@ -14,6 +14,7 @@ import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
+from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
 from parqx.query.engine import QuerySession
@@ -202,7 +203,7 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
 ) -> None:
     first, second = tmp_path / "first.parquet", tmp_path / "second.parquet"
     pq.write_table(pa.table({"n": range(1_000)}), first, row_group_size=100)
-    pq.write_table(pa.table({"n": range(10_000, 11_000)}), second, row_group_size=100)
+    pq.write_table(pa.table({"n": range(10_000, 15_000)}), second, row_group_size=100)
     first_started, first_release, first_returned = Event(), Event(), Event()
     second_started, second_release = Event(), Event()
     first_cancellations: list[Event] = []
@@ -210,10 +211,10 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
     original_read = ParquetSource.read_window
 
     def delayed_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
         if source.path == first.resolve():
-            first_cancellations.append(cancelled)
+            first_cancellations.append(control.cancelled)
             first_started.set()
             try:
                 assert first_release.wait(timeout=15)
@@ -221,11 +222,11 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 return DataPage(start, pa.table({"n": [-1]}))
             finally:
                 first_returned.set()
-        if start >= 500:
-            second_cancellations.append(cancelled)
+        if start >= 4_096:
+            second_cancellations.append(control.cancelled)
             second_started.set()
             assert second_release.wait(timeout=15)
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     app = ParqxApp([first, second])
     with (
@@ -244,6 +245,7 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 await select_tab(tabs, "source-2", pilot)
                 await wait_for(lambda: second_table.data.peek(0, 0) is not None, pilot)
                 assert second_table.get_cell_at(Coordinate(0, 0)).as_py() == 10_000
+                assert second_table.data.peek(4_999, 0) is None
                 assert not first_returned.is_set()
                 assert not any(event.is_set() for event in first_cancellations)
 
@@ -267,13 +269,13 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 await wait_for(first_returned.is_set, pilot)
                 await pilot.pause()
                 assert not tabs.query("#source-1")
-                assert second_table.data.peek(999, 0) is None
+                assert second_table.data.peek(4_999, 0) is None
                 assert not pending_second.is_set()
                 second_release.set()
                 await wait_for(
-                    lambda: second_table.data.peek(999, 0) is not None, pilot
+                    lambda: second_table.data.peek(4_999, 0) is not None, pilot
                 )
-                assert second_table.get_cell_at(Coordinate(999, 0)).as_py() == 10_999
+                assert second_table.get_cell_at(Coordinate(4_999, 0)).as_py() == 14_999
                 assert not app.load_errors
                 notify.assert_not_called()
             finally:
@@ -281,7 +283,7 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 second_release.set()
 
 
-async def test_closing_source_cancels_queued_page_without_reading_it(
+async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_page(
     tmp_path: Path,
 ) -> None:
     paths = [tmp_path / f"file-{index}.parquet" for index in range(5)]
@@ -295,12 +297,12 @@ async def test_closing_source_cancels_queued_page_without_reading_it(
     original_submit = ThreadPoolExecutor.submit
 
     def delayed_read(
-        source: ParquetSource, start: int, stop: int, cancelled: Event
+        source: ParquetSource, start: int, stop: int, control: QueryControl
     ) -> DataPage:
-        cancellations.append(cancelled)
+        cancellations.append(control.cancelled)
         started[source.path].set()
         assert release.wait(timeout=15)
-        return original_read(source, start, stop, cancelled)
+        return original_read(source, start, stop, control)
 
     def track_submit[T, **P](
         executor: ThreadPoolExecutor,
@@ -330,6 +332,10 @@ async def test_closing_source_cancels_queued_page_without_reading_it(
                 for index in range(1, 4):
                     await select_tab(tabs, f"source-{index + 1}", pilot)
                     await wait_for(started[paths[index].resolve()].is_set, pilot)
+                result = await run_query(app, pilot, "SELECT 42 AS answer")
+                assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
+                assert not release.is_set()
+                assert not any(event.is_set() for event in cancellations)
                 await select_tab(tabs, "source-5", pilot)
                 await wait_for(queued.is_set, pilot)
                 assert not started[paths[-1].resolve()].is_set()
@@ -345,7 +351,7 @@ async def test_closing_source_cancels_queued_page_without_reading_it(
                 release.set()
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                 assert not started[paths[-1].resolve()].is_set()
-                assert tabs.tab_count == 4
+                assert tabs.tab_count == 5
             finally:
                 release.set()
 
