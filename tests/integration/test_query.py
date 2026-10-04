@@ -66,7 +66,9 @@ async def test_bounded_results_and_footer_error_recovery(small_parquet: Path) ->
             assert table.row_count == 2
 
             query.editor.load_text("SELECT name FROM smoke WHERE false")
-            await wait_for(lambda: footer_ready(footer), pilot)
+            await wait_for(
+                lambda: query.editor.region.height == 1 and footer_ready(footer), pilot
+            )
             assert await pilot.click(footer_keys(footer)["run_query"])
             await wait_for(
                 lambda: app.screen is not query and tabs.tab_count == 3, pilot
@@ -319,3 +321,110 @@ async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -
         table = tabs.get_pane("query-1").query_one(ArrowTable)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
         assert table.columns[0].name == "answer"
+
+
+async def test_query_editor_follows_multiline_edits(small_parquet: Path) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(100, 30)) as pilot:
+        query = await open_query(app, pilot)
+        editor = query.editor
+        dialog = query.query_one("#query-dialog")
+        footer = query.query_one(Footer)
+        await wait_for(
+            lambda: editor.region.height == 1 and footer_ready(footer), pilot
+        )
+        initial_top = dialog.region.y
+        assert 30 // 4 <= initial_top < 30 // 2
+        assert abs(dialog.region.x - (100 - dialog.region.right)) <= 1
+
+        await pilot.press("S", "E", "L", "E", "C", "T", "space", "4", "2")
+        assert editor.text == "SELECT 42"
+        editor.history.checkpoint()
+        await pilot.press("shift+enter")
+        await wait_for(lambda: editor.region.height == 2, pilot)
+        assert editor.text == "SELECT 42\n"
+        assert dialog.region.y == initial_top
+        assert footer.region.y > editor.region.y
+
+        await pilot.press("ctrl+z")
+        await wait_for(lambda: editor.region.height == 1, pilot)
+        assert editor.text == "SELECT 42"
+        await pilot.press("ctrl+y")
+        await wait_for(lambda: editor.region.height == 2, pilot)
+        editor.history.checkpoint()
+        app.post_message(events.Paste("AS answer\nFROM smoke"))
+        await wait_for(lambda: editor.region.height == 3, pilot)
+        assert editor.text == "SELECT 42\nAS answer\nFROM smoke"
+        assert dialog.region.y == initial_top
+        assert not query.running
+
+        await pilot.press("ctrl+z")
+        await wait_for(lambda: editor.region.height == 2, pilot)
+        assert editor.text == "SELECT 42\n"
+        await pilot.press("backspace")
+        await wait_for(lambda: editor.region.height == 1, pilot)
+        assert editor.text == "SELECT 42"
+        assert dialog.region.y == initial_top
+
+
+async def test_query_editor_scrolls_within_resized_terminal(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(80, 24)) as pilot:
+        query = await open_query(app, pilot)
+        editor = query.editor
+        footer = query.query_one(Footer)
+        await wait_for(
+            lambda: editor.region.height == 1 and footer_ready(footer), pilot
+        )
+
+        long_line = "SELECT " + ", ".join(str(number) for number in range(100))
+        app.post_message(events.Paste(long_line))
+        await wait_for(lambda: editor.text == long_line and editor.scroll_x > 0, pilot)
+        assert editor.region.height == 1
+        assert editor.cursor_location == (0, len(long_line))
+
+        editor.load_text("")
+        multiline_sql = "SELECT 1" + "\n-- another line" * 49
+        app.post_message(events.Paste(multiline_sql))
+        await wait_for(
+            lambda: editor.text == multiline_sql and editor.scroll_y > 0, pilot
+        )
+        assert 1 < editor.region.height < 50
+        assert query.region.contains_region(footer.region)
+        assert editor.cursor_location == (49, len("-- another line"))
+
+        await pilot.resize_terminal(40, 10)
+        await wait_for(
+            lambda: (
+                query.region.width == 40
+                and query.region.height == 10
+                and query.region.contains_region(footer.region)
+            ),
+            pilot,
+        )
+        assert 0 < editor.region.height < 10
+        assert editor.scroll_y > 0
+        await pilot.press("shift+enter")
+        await wait_for(
+            lambda: editor.scrollable_content_region.contains(
+                *editor.cursor_screen_offset
+            ),
+            pilot,
+        )
+        assert editor.text == multiline_sql + "\n"
+        for key in footer_keys(footer).values():
+            assert footer.region.contains_region(key.region)
+        await pilot.press("f7", "backspace")
+        await wait_for(lambda: editor.region.height == 1, pilot)
+        assert editor.text == ""
+        assert query.region.contains_region(footer.region)
+
+        await pilot.resize_terminal(100, 30)
+        await wait_for(
+            lambda: query.region.height == 30 and 30 // 4 <= editor.region.y < 30 // 2,
+            pilot,
+        )
+        assert editor.region.height == 1
+        assert editor.has_focus

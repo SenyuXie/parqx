@@ -56,11 +56,14 @@ These shortcuts apply to the active tab.
 
 ### SQL query
 
+The editor starts with one input line near the upper middle of the terminal. It
+grows and shrinks with your query, scrolling when the available height is reached.
+
 | Key                      | Action                                        |
 | ---                      | ---                                           |
-| `ctrl+p` → **SQL query** | Open the centered SQL editor                  |
+| `ctrl+p` → **SQL query** | Open the compact SQL editor                   |
 | `enter`                  | Run the complete SQL query                    |
-| `shift+enter`            | Insert a newline                              |
+| `shift+enter`            | Insert a newline and expand the editor         |
 | `esc`                    | Close the editor and cancel any running query |
 
 ## License

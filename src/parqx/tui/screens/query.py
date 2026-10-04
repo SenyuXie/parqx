@@ -44,22 +44,22 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     DEFAULT_CSS = """
     QueryScreen {
-        align: center middle;
+        align: center top;
         background: $background 60%;
 
         & > #query-dialog {
             width: 90%;
             max-width: 100;
-            height: 70%;
-            max-height: 24;
+            height: 4;
             padding: 0 1;
             border: solid $primary;
             background: $surface;
 
             & > TextArea {
                 height: 1fr;
-                min-height: 2;
+                min-height: 1;
                 border: none;
+                scrollbar-size-horizontal: 0;
             }
 
             & > #query-loading { height: 1; }
@@ -67,7 +67,6 @@ class QueryScreen(ModalScreen[QueryResult]):
 
         &.compact > #query-dialog {
             width: 100%;
-            height: 90%;
         }
     }
     """
@@ -87,6 +86,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         super().__init__()
         self._catalog = catalog
         self._query_limits = query_limits or QueryLimits()
+        self._dialog = Vertical(id="query-dialog")
+        self._dialog.border_title = "SQL query"
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
@@ -97,10 +98,8 @@ class QueryScreen(ModalScreen[QueryResult]):
         """Track queued and unfinished requests, including cancelled older ones."""
 
     def compose(self) -> ComposeResult:
-        """Yield the centered editor, loading indicator and native shortcut footer."""
-        dialog = Vertical(id="query-dialog")
-        dialog.border_title = "SQL query"
-        with dialog:
+        """Yield the expanding editor, loading indicator and shortcut footer."""
+        with self._dialog:
             yield self.editor
             yield self._loading
             yield self._footer
@@ -113,12 +112,34 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def on_screen_resume(self) -> None:
         """Focus the existing editor without resetting its selection or history."""
+        self._resize_dialog()
         self.editor.focus()
 
     def on_resize(self, event: Resize) -> None:
         """Reserve room for editing and shortcuts on a small terminal."""
         self.set_class(event.size.height < 18 or event.size.width < 60, "compact")
         self._footer.compact = event.size.width < 60
+        self._resize_dialog()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Resize after typing, paste, deletion, undo or loading saved SQL."""
+        self._resize_dialog()
+
+    def _resize_dialog(self) -> None:
+        # Two border rows and the shortcut footer sit outside the editor.
+        height = min(
+            self.editor.document.line_count + 3 + int(self.running),
+            24,
+            max(4, self.size.height),
+        )
+        self._dialog.styles.height = height
+        # Keep the starting row steady as the editor grows, moving up only
+        # when necessary to keep the footer inside a short terminal.
+        top = min(
+            max(0, (self.size.height - 4) // 3), max(0, self.size.height - height)
+        )
+        self._dialog.styles.margin = (top, 0, 0, 0)
+        self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
 
     @property
     def running(self) -> bool:
@@ -130,6 +151,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         running = self.running
         self.editor.read_only = running
         self._loading.display = running
+        self._resize_dialog()
         self.refresh_bindings()
 
     def action_newline(self) -> None:
