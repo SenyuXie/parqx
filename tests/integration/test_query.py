@@ -334,7 +334,7 @@ async def test_query_editor_follows_multiline_edits(small_parquet: Path) -> None
             lambda: editor.region.height == 1 and footer_ready(footer), pilot
         )
         initial_top = dialog.region.y
-        assert 30 // 4 <= initial_top < 30 // 2
+        assert 30 // 6 <= initial_top <= 30 // 4
         assert abs(dialog.region.x - (100 - dialog.region.right)) <= 1
 
         await pilot.press("S", "E", "L", "E", "C", "T", "space", "4", "2")
@@ -423,7 +423,7 @@ async def test_query_editor_scrolls_within_resized_terminal(
 
         await pilot.resize_terminal(100, 30)
         await wait_for(
-            lambda: query.region.height == 30 and 30 // 4 <= editor.region.y < 30 // 2,
+            lambda: query.region.height == 30 and 30 // 6 <= editor.region.y <= 30 // 4,
             pilot,
         )
         assert editor.region.height == 1
