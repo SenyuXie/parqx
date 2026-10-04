@@ -133,11 +133,10 @@ class QueryScreen(ModalScreen[QueryResult]):
             max(4, self.size.height),
         )
         self._dialog.styles.height = height
+        # Place the input row one sixth down, allowing for the top border.
         # Keep the starting row steady as the editor grows, moving up only
         # when necessary to keep the footer inside a short terminal.
-        top = min(
-            max(0, (self.size.height - 4) // 4), max(0, self.size.height - height)
-        )
+        top = min(max(0, self.size.height // 6 - 1), max(0, self.size.height - height))
         self._dialog.styles.margin = (top, 0, 0, 0)
         self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
 

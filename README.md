@@ -56,8 +56,9 @@ These shortcuts apply to the active tab.
 
 ### SQL query
 
-The editor starts with one input line near the upper quarter of the terminal. It
-grows and shrinks with your query, scrolling when the available height is reached.
+The editor starts with one input line about one sixth of the way down the
+terminal. It grows and shrinks with your query, scrolling when the available
+height is reached.
 
 | Key                      | Action                                        |
 | ---                      | ---                                           |
