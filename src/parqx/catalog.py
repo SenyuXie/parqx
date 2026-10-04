@@ -13,14 +13,29 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _reserve_table_name(stem: str, used_names: set[str]) -> str:
+    """Choose a unique SQL name and reserve its ASCII-folded spelling."""
+    name = stem
+    suffix = 2
+    while name.translate(_ASCII_LOWER) in used_names:
+        name = f"{stem}_{suffix}"
+        suffix += 1
+    used_names.add(name.translate(_ASCII_LOWER))
+    return name
+
+
 @dataclass(frozen=True)
 class SourceSpec:
     """Immutable identity and SQL name of an input file."""
 
     source_id: str
+    """Stable catalog identifier, independent of loading state."""
     path: Path
+    """Absolute file path used to open the source."""
     display_name: str
+    """File name from the first input referring to this source."""
     table_name: str
+    """Unique SQL table name before identifier quoting."""
 
     @property
     def quoted_name(self) -> str:
@@ -33,7 +48,9 @@ class SourceIssue:
     """A file-specific failure with enough context for user feedback."""
 
     source: SourceSpec
+    """Source associated with this error or availability warning."""
     message: str
+    """Error or availability explanation shown to the user."""
 
     def __str__(self) -> str:
         """Include the SQL name, file path and failure reason."""
@@ -45,8 +62,11 @@ class SourceEntry:
     """Current loading state of a source."""
 
     spec: SourceSpec
+    """Source identity retained through loading and failure."""
     state: Literal["loading", "ready", "failed"] = "loading"
+    """Loading state that determines whether the source is queryable."""
     issue: SourceIssue | None = None
+    """Failure details when the source is in the failed state."""
 
 
 class SourceCatalog:
@@ -81,12 +101,7 @@ class SourceCatalog:
                         continue
                     seen_files.add(identity)
 
-            table_name = path.stem
-            suffix = 2
-            while table_name.translate(_ASCII_LOWER) in used_names:
-                table_name = f"{path.stem}_{suffix}"
-                suffix += 1
-            used_names.add(table_name.translate(_ASCII_LOWER))
+            table_name = _reserve_table_name(path.stem, used_names)
             source_id = f"source-{len(self._entries) + 1}"
             spec = SourceSpec(source_id, resolved, path.name, table_name)
             self._entries[source_id] = SourceEntry(spec)

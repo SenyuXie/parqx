@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 from glob import escape as escape_glob
 from tempfile import TemporaryDirectory
@@ -25,10 +26,15 @@ class QueryLimits:
     """Execution and preview budgets, independent of the widget's render cache."""
 
     preview_rows: int = 10_000
+    """Maximum number of result rows retained for display."""
     preview_bytes: int = 32 * 1024 * 1024
+    """Retained Arrow byte budget, allowing one oversized row."""
     batch_rows: int = 1024
+    """Number of rows requested per Arrow reader batch."""
     memory_limit: str = "256MB"
+    """DuckDB execution memory limit, separate from preview data."""
     threads: int = 2
+    """Maximum number of DuckDB execution threads."""
 
     def __post_init__(self) -> None:
         """Reject budgets which could prevent forward progress."""
@@ -105,7 +111,9 @@ class QueryPreview:
     """A bounded result; truncation does not limit the query's input."""
 
     table: pa.Table
+    """Result rows retained within the preview budgets."""
     reason: str | None = None
+    """Budget that stopped reading, or None for a complete result."""
 
     @property
     def truncated(self) -> bool:
@@ -133,24 +141,24 @@ class QuerySession:
         self.sql = sql
         self.control = control
         self.limits = limits or QueryLimits()
-        self._connection: duckdb.DuckDBPyConnection | None = None
+        self._resources = ExitStack()
         self._reader: pa.RecordBatchReader | None = None
-        self._temporary: TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> Self:
         """Open a private connection and start one SELECT statement."""
         self.control.check()
-        self._temporary = TemporaryDirectory(prefix="parqx-duckdb-")
+        temporary = TemporaryDirectory(prefix="parqx-duckdb-")
+        self._resources.callback(temporary.cleanup)
         try:
             connection = duckdb.connect(
                 config={
                     "threads": self.limits.threads,
                     "memory_limit": self.limits.memory_limit,
-                    "temp_directory": self._temporary.name,
+                    "temp_directory": temporary.name,
                     "python_enable_replacements": False,
                 }
             )
-            self._connection = connection
+            self._resources.callback(connection.close)
             self.control.attach(connection)
             statements = connection.extract_statements(self.sql)
             if (
@@ -158,32 +166,37 @@ class QuerySession:
                 or statements[0].type != duckdb.StatementType.SELECT
             ):
                 raise ValueError("Enter one SELECT query (WITH is supported).")
-            for source in self.sources:
-                self.control.check()
-                try:
-                    # DuckDB expands glob syntax even for one path. A source
-                    # must read exactly its registered file, including []?*.
-                    relation = connection.read_parquet(escape_glob(str(source.path)))
-                except (
-                    duckdb.IOException,
-                    duckdb.InvalidInputException,
-                    duckdb.PermissionException,
-                    OSError,
-                ) as exc:
-                    self.control.check()
-                    self.issues += (SourceIssue(source, str(exc)),)
-                    continue
-                self.control.check()
-                relation.create_view(source.table_name, replace=False)
-                self.control.check()
+            self._register_sources(connection)
             self.control.check()
             relation = connection.sql(self.sql)
             self._reader = relation.to_arrow_reader(self.limits.batch_rows)
+            self._resources.callback(self._reader.close)
             self.control.check()
         except BaseException:
             self.close()
             raise
         return self
+
+    def _register_sources(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Register readable files and retain file-specific failures as warnings."""
+        for source in self.sources:
+            self.control.check()
+            try:
+                # DuckDB expands glob syntax even for one path. A source
+                # must read exactly its registered file, including []?*.
+                relation = connection.read_parquet(escape_glob(str(source.path)))
+            except (
+                duckdb.IOException,
+                duckdb.InvalidInputException,
+                duckdb.PermissionException,
+                OSError,
+            ) as exc:
+                self.control.check()
+                self.issues += (SourceIssue(source, str(exc)),)
+                continue
+            self.control.check()
+            relation.create_view(source.table_name, replace=False)
+            self.control.check()
 
     def preview(self) -> QueryPreview:
         """Read a row- and byte-bounded preview, discarding the unconsumed tail.
@@ -234,20 +247,12 @@ class QuerySession:
 
     def close(self) -> None:
         """Release the reader, connection and engine spill directory."""
+        # Stop cross-thread interrupts before closing resources in reverse order.
         self.control.detach()
         try:
-            if self._reader is not None:
-                self._reader.close()
+            self._resources.close()
         finally:
             self._reader = None
-            try:
-                if self._connection is not None:
-                    self._connection.close()
-            finally:
-                self._connection = None
-                if self._temporary is not None:
-                    self._temporary.cleanup()
-                    self._temporary = None
 
     def __exit__(
         self,

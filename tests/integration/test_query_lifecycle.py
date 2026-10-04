@@ -56,17 +56,14 @@ async def test_queued_callbacks_cannot_finish_a_new_query(
             original_enter = QuerySession.__enter__
             previous_count = tabs.tab_count
 
-            def delayed_publish[T, **P](
-                screen: QueryScreen,
-                callback: Callable[P, T],
-                *args: P.args,
-                **kwargs: P.kwargs,
-            ) -> T | None:
+            def delayed_publish(
+                screen: QueryScreen, callback: Callable[[], None]
+            ) -> None:
                 if not publishing.is_set():
                     # The worker passed its cancellation check before a new request.
                     publishing.set()
                     assert release_old.wait(timeout=10)
-                return original_publish(screen, callback, *args, **kwargs)
+                original_publish(screen, callback)
 
             def delayed_enter(session: QuerySession) -> QuerySession:
                 if session.sql == "SELECT 42 AS current":
@@ -164,18 +161,16 @@ async def test_covering_query_screen_cancels_request_and_preserves_editor(
     small_parquet: Path, query_controls: list[QueryControl]
 ) -> None:
     publishing, release = Event(), Event()
-    deliveries: list[Callable[[], object]] = []
+    deliveries: list[Callable[[], None]] = []
     original_publish = QueryScreen._publish  # pyright: ignore[reportPrivateUsage]
 
-    def delayed_publish[T, **P](
-        screen: QueryScreen, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-    ) -> T | None:
+    def delayed_publish(screen: QueryScreen, callback: Callable[[], None]) -> None:
         if not publishing.is_set():
-            deliveries.append(lambda: callback(*args, **kwargs))
+            deliveries.append(callback)
             publishing.set()
             assert release.wait(timeout=10)
-            return None
-        return original_publish(screen, callback, *args, **kwargs)
+            return
+        original_publish(screen, callback)
 
     app = ParqxApp([small_parquet])
     with (

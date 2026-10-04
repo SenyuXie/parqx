@@ -44,6 +44,25 @@ def _open_source(path: Path) -> ParquetSource:
     return ParquetSource(path)
 
 
+def _query_result_details(result: QueryResult) -> str:
+    """Format preview status, SQL and source warnings for a result tab."""
+    preview = result.preview
+    status = (
+        f"preview, {preview.reason} · total unknown"
+        if preview.truncated
+        else "complete"
+    )
+    if result.issues:
+        status += f" · warning: {len(result.issues)} sources unavailable"
+    details = (
+        f"{preview.table.num_rows:,} rows · {status} · {result.elapsed:.2f}s"
+        f"\n\n{result.sql}"
+    )
+    if result.issues:
+        details += "\n\nUnavailable sources:\n" + "\n".join(map(str, result.issues))
+    return details
+
+
 class ParqxApp(App[Any]):
     """Inspect Parquet files and keep SQL previews in separate tabs."""
 
@@ -84,18 +103,13 @@ class ParqxApp(App[Any]):
         name_counts = Counter(
             entry.spec.display_name.casefold() for entry in self.catalog.entries
         )
-        self._panes = {
-            entry.spec.source_id: ResultPane(
-                entry.spec.display_name
-                + (
-                    f" · {entry.spec.quoted_name}"
-                    if name_counts[entry.spec.display_name.casefold()] > 1
-                    else ""
-                ),
-                id=entry.spec.source_id,
-            )
-            for entry in self.catalog.entries
-        }
+        self._panes: dict[str, ResultPane] = {}
+        for entry in self.catalog.entries:
+            source = entry.spec
+            title = source.display_name
+            if name_counts[title.casefold()] > 1:
+                title += f" · {source.quoted_name}"
+            self._panes[source.source_id] = ResultPane(title, id=source.source_id)
         # Only open browsing views retain source metadata; SQL uses the catalog.
         self._source_views: dict[str, ParquetSource | None] = dict.fromkeys(self._panes)
         self._tab_lock = asyncio.Lock()
@@ -295,9 +309,9 @@ class ParqxApp(App[Any]):
         if not cancelled.is_set():
             self._on_page_loaded(source_id, data, cancelled, page)
 
-    def _current_source_pane(
+    def _current_source_table(
         self, source_id: str, data: weakref.ReferenceType[TableData], cancelled: Event
-    ) -> ResultPane | None:
+    ) -> ArrowTable | None:
         pane = self._panes.get(source_id)
         if (
             self._shutting_down
@@ -308,7 +322,7 @@ class ParqxApp(App[Any]):
             or pane.table.data is not data()
         ):
             return None
-        return pane
+        return pane.table
 
     def _on_page_loaded(
         self,
@@ -317,9 +331,9 @@ class ParqxApp(App[Any]):
         cancelled: Event,
         page: DataPage,
     ) -> None:
-        pane = self._current_source_pane(source_id, data, cancelled)
-        if pane is not None and pane.table is not None:
-            pane.table.accept_page(page)
+        table = self._current_source_table(source_id, data, cancelled)
+        if table is not None:
+            table.accept_page(page)
 
     def _on_page_error(
         self,
@@ -328,9 +342,9 @@ class ParqxApp(App[Any]):
         cancelled: Event,
         message: str,
     ) -> None:
-        pane = self._current_source_pane(source_id, data, cancelled)
-        if pane is not None and pane.table is not None:
-            pane.table.fail_window()
+        table = self._current_source_table(source_id, data, cancelled)
+        if table is not None:
+            table.fail_window()
             self.notify(
                 str(SourceIssue(self.catalog.get(source_id).spec, message)),
                 title="Read error",
@@ -360,28 +374,16 @@ class ParqxApp(App[Any]):
             async with self._tab_lock:
                 self._query_number += 1
                 pane_id = f"query-{self._query_number}"
-                preview = result.preview
-                suffix = (
-                    f"preview, {preview.reason} · total unknown"
-                    if preview.truncated
-                    else "complete"
-                )
-                if result.issues:
-                    suffix += f" · warning: {len(result.issues)} sources unavailable"
                 pane = ResultPane(
-                    f"Query {self._query_number}", id=pane_id, table=preview.table
+                    f"Query {self._query_number}",
+                    id=pane_id,
+                    table=result.preview.table,
                 )
                 self._panes[pane_id] = pane
                 await self._tabs.add_pane(pane)
-                details = (
-                    f"{preview.table.num_rows:,} rows · {suffix} · {result.elapsed:.2f}s"
-                    f"\n\n{result.sql}"
+                self._tabs.get_tab(pane_id).tooltip = Content(
+                    _query_result_details(result)
                 )
-                if result.issues:
-                    details += "\n\nUnavailable sources:\n" + "\n".join(
-                        map(str, result.issues)
-                    )
-                self._tabs.get_tab(pane_id).tooltip = Content(details)
                 self._tabs.active = pane_id
                 self._refresh_tab_bindings()
         self.call_after_refresh(self._focus_active_table)
