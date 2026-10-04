@@ -373,13 +373,9 @@ class ParqxApp(App[Any]):
                 )
                 self._panes[pane_id] = pane
                 await self._tabs.add_pane(pane)
-                context = "\n".join(
-                    f"{source.quoted_name} → {source.path}" for source in result.sources
-                )
                 details = (
                     f"{preview.table.num_rows:,} rows · {suffix} · {result.elapsed:.2f}s"
                     f"\n\n{result.sql}"
-                    + (f"\n\nSources:\n{context}" if context else "")
                 )
                 if result.issues:
                     details += "\n\nUnavailable sources:\n" + "\n".join(
