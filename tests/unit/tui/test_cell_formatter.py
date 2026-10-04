@@ -105,7 +105,11 @@ def test_large_strings_only_format_a_prefix(
     assert result.plain == "x" * 17
 
 
-@pytest.mark.parametrize("value", ["e" + "\u0301" * 100_000, "\u200d" * 100_000])
+@pytest.mark.parametrize(
+    "value",
+    ["e" + "\u0301" * 100_000, "\u200d" * 100_000],
+    ids=["combining-marks", "zero-width-joiners"],
+)
 @pytest.mark.parametrize("nested", [False, True])
 def test_zero_width_characters_hit_a_byte_budget(value: str, nested: bool) -> None:
     scalar = (
@@ -227,7 +231,9 @@ def test_unsupported_types_do_not_convert_their_values() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["x" * 100_000, "\n" * 100_000, "e" + "\u0301" * 100_000]
+    "name",
+    ["x" * 100_000, "\n" * 100_000, "e" + "\u0301" * 100_000],
+    ids=["identifier", "newlines", "combining-marks"],
 )
 def test_long_struct_field_names_are_bounded(name: str) -> None:
     scalar = pa.array([{name: 1}], type=pa.struct({name: pa.int64()}))[0]
