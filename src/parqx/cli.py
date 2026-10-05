@@ -53,7 +53,9 @@ def main(
     parqx = ParqxApp(paths=paths)
     parqx.run()
 
-    if parqx.load_errors:
-        for issue in parqx.load_errors:
-            typer.echo(f"parqx: cannot read {issue}", err=True)
-        raise typer.Exit(code=1)
+    load_errors = parqx.load_errors
+    for issue in load_errors:
+        typer.echo(f"parqx: cannot read {issue}", err=True)
+    return_code = parqx.return_code or int(bool(load_errors))
+    if return_code:
+        raise typer.Exit(code=return_code)

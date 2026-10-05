@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from time import perf_counter
 from typing import ClassVar, cast
 
@@ -27,16 +29,21 @@ from parqx.query.engine import (
     QuerySession,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class QueryResult:
     """A completed SQL preview and the information displayed with its table."""
 
     sql: str
+    """SQL text executed to produce this preview."""
     preview: QueryPreview
+    """Bounded Arrow result and its truncation reason, if any."""
     elapsed: float
-    sources: tuple[SourceSpec, ...] = ()
+    """Seconds spent executing, previewing and closing the query session."""
     issues: tuple[SourceIssue, ...] = ()
+    """Unavailable sources reported alongside the completed preview."""
 
 
 class QueryScreen(ModalScreen[QueryResult]):
@@ -182,22 +189,19 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._set_current_control(control)
         self._run_query(sources, sql, control, unavailable)
 
-    def _publish[T, **P](
-        self, callback: Callable[P, T], *args: P.args, **kwargs: P.kwargs
-    ) -> T | None:
+    def _publish(self, callback: Callable[[], None]) -> None:
         """Deliver a worker update while tolerating concurrent app shutdown."""
         # Textual's app getter omits the generic return type.
         app = cast(App[object], self.app)  # pyright: ignore[reportUnknownMemberType]
         if not app.is_running:
-            return None
+            return
         try:
-            return app.call_from_thread(callback, *args, **kwargs)
+            app.call_from_thread(callback)
         except RuntimeError:
             if app.is_running:
                 raise
-            return None
 
-    @work(thread=True, group="query", exit_on_error=False)
+    @work(thread=True, group="query")
     def _run_query(
         self,
         sources: tuple[SourceSpec, ...],
@@ -207,36 +211,33 @@ class QueryScreen(ModalScreen[QueryResult]):
     ) -> None:
         control.started.set()
         started = perf_counter()
-        session = QuerySession(sources, sql, control, self._query_limits)
+        session: QuerySession | None = None
         try:
+            session = QuerySession(sources, sql, control, self._query_limits)
             with session:
                 preview = session.preview()
             control.check()
-            self._publish(
-                self._on_query_ok,
-                control,
-                QueryResult(
-                    sql,
-                    preview,
-                    perf_counter() - started,
-                    sources,
-                    unavailable + session.issues,
-                ),
+            result = QueryResult(
+                sql=sql,
+                preview=preview,
+                elapsed=perf_counter() - started,
+                issues=unavailable + session.issues,
             )
-        except (
-            duckdb.Error,
-            pa.ArrowException,
-            OSError,
-            ValueError,
-            MemoryError,
-        ) as exc:
-            if not control.cancelled.is_set():
-                message = str(exc)
-                if issues := unavailable + session.issues:
-                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
-                self._publish(self._on_query_error, control, message)
         except QueryCancelledError:
             return
+        except Exception as exc:
+            if not isinstance(
+                exc, (duckdb.Error, pa.ArrowException, OSError, ValueError, MemoryError)
+            ):
+                logger.exception("Unexpected query failure")
+            if not control.cancelled.is_set():
+                message = str(exc) or type(exc).__name__
+                issues = unavailable + (session.issues if session is not None else ())
+                if issues:
+                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
+                self._publish(partial(self._on_query_error, control, message))
+        else:
+            self._publish(partial(self._on_query_ok, control, result))
         finally:
             control.finished.set()
 

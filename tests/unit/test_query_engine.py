@@ -13,8 +13,8 @@ import pyarrow.parquet as pq
 import pytest
 
 from parqx.catalog import SourceCatalog, SourceSpec
+from parqx.data import duckdb as engine
 from parqx.data.batch import bounded_prefix
-from parqx.query import engine
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -276,6 +276,57 @@ def test_session_cleans_spill_directory_on_success_or_error(
         assert "missing" in sql
     assert len(directories) == 1
     assert not directories[0].exists()
+
+
+@pytest.mark.parametrize("failure", ["reader", "connection"])
+def test_cleanup_failure_still_releases_remaining_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    directories: list[Path] = []
+    closed: list[str] = []
+    control = QueryControl()
+    original_detach = control.detach
+    original_close = duckdb.DuckDBPyConnection.close
+
+    def create_temporary(*, prefix: str) -> TemporaryDirectory[str]:
+        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
+        directories.append(Path(temporary.name))
+        return temporary
+
+    def detach() -> None:
+        original_detach()
+        closed.append("control")
+
+    def close_connection(connection: duckdb.DuckDBPyConnection) -> None:
+        original_close(connection)
+        closed.append("connection")
+        if failure == "connection":
+            raise OSError("connection cleanup failed")
+
+    class Reader:
+        def close(self) -> None:
+            closed.append("reader")
+            if failure == "reader":
+                raise OSError("reader cleanup failed")
+
+    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
+    monkeypatch.setattr(control, "detach", detach)
+    monkeypatch.setattr(duckdb.DuckDBPyConnection, "close", close_connection)
+    session = QuerySession((), "SELECT 42", control)
+    with (
+        patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()),
+        pytest.raises(OSError, match=f"{failure} cleanup failed"),
+        session,
+    ):
+        pass
+    assert closed.index("control") < closed.index("reader") < closed.index("connection")
+    assert len(directories) == 1
+    assert not directories[0].exists()
+    with pytest.raises(RuntimeError, match="not open"):
+        session.preview()
+    session.close()
+    assert closed.count("reader") == closed.count("connection") == 1
+    control.cancel()
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,9 @@ class DataPage:
     """An immutable Arrow window at an absolute row offset."""
 
     start: int
+    """Zero-based row offset of this window in the full result."""
     table: pa.Table
+    """Arrow data for the contiguous rows beginning at start."""
 
     @property
     def stop(self) -> int:

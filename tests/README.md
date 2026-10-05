@@ -10,6 +10,13 @@ lowest layer that can verify it:
 | `smoke/` | Open a real Parquet file, navigate, run SQL, close a result and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
+`data.duckdb` provides shared connection setup, cancellation and bounded Arrow
+previews. `data.parquet` reads file metadata and browsing windows through DuckDB;
+each request owns a short-lived connection. `query.engine` runs SQL sessions on
+the same shared primitives. Arrow holds cached pages and supplies display values.
+Keep paging order, literal file paths, type conversions and cancellation tests
+at these boundaries; distribution checks exercise both browsing and SQL.
+
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and
 Windows on Python 3.12. Detailed UI scenarios run once; the other jobs run
 `uv run pytest -q tests/unit tests/smoke`. This checks both operating-system and

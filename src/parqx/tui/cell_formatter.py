@@ -13,10 +13,12 @@ from rich.cells import cell_len
 from rich.text import Text
 
 
-def _format_field_name(value: str) -> str:
+def _format_field_name(value: str, limit: int) -> str:
+    truncated = len(value) > limit
+    value = value[:limit]
     if value.isidentifier():
-        return value
-    return json.dumps(value, ensure_ascii=False)
+        return value + ("…" if truncated else "")
+    return json.dumps(value + ("…" if truncated else ""), ensure_ascii=False)
 
 
 def _single_line(value: str) -> str:
@@ -48,9 +50,17 @@ class CellFormatter:
         """Convert a cell into a Rich Text for display."""
         return self._format_scalar(scalar, depth=0, nested=False)
 
-    def _format_scalar(self, scalar: pa.Scalar, depth: int, nested: bool) -> Text:
+    def _format_scalar(
+        self, scalar: pa.Scalar | None, depth: int, nested: bool
+    ) -> Text:
         """Convert an Arrow scalar into a single-line Rich Text."""
-        if not scalar.is_valid:
+        while (
+            scalar is not None
+            and scalar.is_valid
+            and isinstance(scalar, (pa.DictionaryScalar, pa.JsonScalar))
+        ):
+            scalar = scalar.value
+        if scalar is None or not scalar.is_valid:
             return Text("null", style="dim italic magenta")
 
         data_type = scalar.type
@@ -72,6 +82,7 @@ class CellFormatter:
             pa.types.is_binary(data_type)
             or pa.types.is_large_binary(data_type)
             or pa.types.is_fixed_size_binary(data_type)
+            or pa.types.is_binary_view(data_type)
         ):
             return self._format_binary(scalar)
 
@@ -95,7 +106,12 @@ class CellFormatter:
         if pa.types.is_map(data_type):
             return self._format_map(scalar, depth=depth)
 
-        return self._format_fallback(scalar, nested=nested)
+        if isinstance(scalar, pa.UuidScalar):
+            return Text(str(scalar.as_py()))
+
+        # Unknown scalars may contain arbitrarily large values. Avoid as_py()
+        # until their Arrow representation has a bounded formatting path.
+        return Text("<unsupported>", style="dim")
 
     def _format_boolean(self, scalar: pa.Scalar) -> Text:
         value = cast(bool, scalar.as_py())
@@ -121,7 +137,11 @@ class CellFormatter:
     def _format_binary(self, scalar: pa.Scalar) -> Text:
         prefix = "0x"
         buffer = cast(
-            pa.BinaryScalar | pa.LargeBinaryScalar | pa.FixedSizeBinaryScalar, scalar
+            pa.BinaryScalar
+            | pa.LargeBinaryScalar
+            | pa.FixedSizeBinaryScalar
+            | pa.BinaryViewScalar,
+            scalar,
         ).as_buffer()
         preview_byte_count = min(
             len(buffer), ceil((self.inline_limit - len(prefix) + 1) / 2)
@@ -142,7 +162,10 @@ class CellFormatter:
 
         # ASCII usually fits in one pass. Multibyte UTF-8 may require more data
         # before the rendered text exceeds the terminal-cell width limit.
-        byte_count = min(total_bytes, max(1, self.inline_limit + 1))
+        # Cap reads independently of width: combining and zero-width characters
+        # can consume arbitrarily many bytes without filling a terminal cell.
+        byte_limit = min(total_bytes, 4 * (self.inline_limit + 1))
+        byte_count = min(byte_limit, self.inline_limit + 1)
 
         while True:
             prefix = buffer.slice(0, byte_count).to_pybytes()
@@ -150,17 +173,23 @@ class CellFormatter:
             # The byte slice may end in the middle of a multibyte UTF-8 character.
             # Ignore only that incomplete trailing character.
             decoded = prefix.decode("utf-8", errors="ignore")
-
             rendered = (
                 json.dumps(decoded, ensure_ascii=False)
                 if nested
                 else _single_line(decoded)
             )
 
-            if byte_count == total_bytes or cell_len(rendered) > self.inline_limit:
+            overflows = cell_len(rendered) > self.inline_limit
+            if byte_count == byte_limit and byte_limit < total_bytes and not overflows:
+                rendered = (
+                    json.dumps(decoded + "…", ensure_ascii=False)
+                    if nested
+                    else rendered + "…"
+                )
+            if byte_count == byte_limit or overflows:
                 return Text(rendered)
 
-            byte_count = min(total_bytes, byte_count * 2)
+            byte_count = min(byte_limit, byte_count * 2)
 
     def _format_list(self, scalar: pa.Scalar, depth: int) -> Text:
         value = cast(
@@ -203,7 +232,9 @@ class CellFormatter:
                     return result
 
             field_name = data_type[index].name
-            result.append(_format_field_name(field_name), style="blue")
+            result.append(
+                _format_field_name(field_name, self.inline_limit + 1), style="blue"
+            )
             result.append(": ", style="blue")
 
             if self._overflows(result):
@@ -251,18 +282,6 @@ class CellFormatter:
 
         result.append("}", style="blue")
         return result
-
-    def _format_fallback(self, scalar: pa.Scalar, nested: bool) -> Text:
-        value = scalar.as_py()
-
-        if isinstance(value, str):
-            rendered = (
-                json.dumps(value, ensure_ascii=False) if nested else _single_line(value)
-            )
-        else:
-            rendered = _single_line(str(value))
-
-        return Text(rendered)
 
     def _overflows(self, value: Text) -> bool:
         return cell_len(value.plain) > self.inline_limit

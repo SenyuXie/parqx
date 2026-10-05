@@ -98,8 +98,8 @@ async def test_cancelled_query_starting_after_shutdown_creates_no_resources(
     loop = asyncio.get_running_loop()
     with (
         ThreadPoolExecutor(max_workers=1) as executor,
-        patch("parqx.query.engine.TemporaryDirectory") as temporary,
-        patch("parqx.query.engine.duckdb.connect") as connect,
+        patch("parqx.data.duckdb.TemporaryDirectory") as temporary,
+        patch("parqx.data.duckdb.duckdb.connect") as connect,
     ):
         loop.set_default_executor(executor)
         occupying = loop.run_in_executor(None, occupy_executor)
