@@ -50,6 +50,8 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
     "parqx.tui.widgets.result_pane",
+    "parqx.tui.widgets.source_pane",
+    "parqx.tui.widgets.table_pane",
 )
 
 
