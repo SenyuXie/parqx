@@ -4,6 +4,7 @@ import pyarrow as pa
 import pytest
 from rich.cells import cell_len
 
+from parqx.query.engine import QueryControl, QuerySession
 from parqx.tui.cell_formatter import CellFormatter
 
 
@@ -182,6 +183,66 @@ def test_dictionary_containers_preserve_temporal_precision_and_depth() -> None:
     assert (
         CellFormatter(inline_limit=64, max_nested_depth=0)(values[0]).plain == "<list>"
     )
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("union_value(a := 42)", "42"),
+        ("union_value(a := 'hello')", "hello"),
+        ("union_value(b := 'hello')::UNION(a INTEGER, b VARCHAR)", "hello"),
+        ("[union_value(a := 42)]", "[42]"),
+        ("{'value': union_value(a := 'hello')}", '{value: "hello"}'),
+        ("union_value(a := union_value(b := 42))", "42"),
+    ],
+)
+def test_query_union_members_are_displayed(expression: str, expected: str) -> None:
+    with QuerySession((), f"SELECT {expression} AS value", QueryControl()) as session:
+        scalar = session.preview().table.column(0)[0]
+
+    assert CellFormatter(inline_limit=32)(scalar).plain == expected
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["union_value(a := NULL::INTEGER)", "NULL::UNION(a INTEGER, b VARCHAR)"],
+)
+def test_query_union_nulls_keep_null_formatting(expression: str) -> None:
+    with QuerySession((), f"SELECT {expression} AS value", QueryControl()) as session:
+        scalar = session.preview().table.column(0)[0]
+
+    result = CellFormatter(inline_limit=16)(scalar)
+
+    assert result.plain == "null"
+    assert result.style == "dim italic magenta"
+
+
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        ("repeat('x', 1000000)", "x" * 17),
+        ("repeat('x', 1000000)::BLOB", "0x" + "78" * 8),
+    ],
+)
+def test_query_union_large_members_use_bounded_previews(
+    member: str, expected: str
+) -> None:
+    with QuerySession(
+        (), f"SELECT union_value(a := {member}) AS value", QueryControl()
+    ) as session:
+        scalar = session.preview().table.column(0)[0]
+
+    assert CellFormatter(inline_limit=16)(scalar).plain == expected
+
+
+def test_query_union_containers_respect_nested_depth() -> None:
+    with QuerySession(
+        (), "SELECT union_value(a := [1, 2, 3]) AS value", QueryControl()
+    ) as session:
+        scalar = session.preview().table.column(0)[0]
+
+    assert CellFormatter(inline_limit=32)(scalar).plain == "[1, 2, 3]"
+    assert CellFormatter(inline_limit=32, max_nested_depth=0)(scalar).plain == "<list>"
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass
-from glob import escape as escape_glob
 from types import TracebackType
 from typing import Self
 
@@ -15,7 +14,7 @@ from parqx.catalog import SourceIssue, SourceSpec
 from parqx.data.duckdb import QueryCancelledError as QueryCancelledError
 from parqx.data.duckdb import QueryControl as QueryControl
 from parqx.data.duckdb import QueryPreview as QueryPreview
-from parqx.data.duckdb import connect, read_preview
+from parqx.data.duckdb import connect, literal_parquet_path, read_preview
 
 
 @dataclass(frozen=True)
@@ -98,9 +97,10 @@ class QuerySession:
         for source in self.sources:
             self.control.check()
             try:
-                # DuckDB expands glob syntax even for one path. A source
-                # must read exactly its registered file, including []?*.
-                relation = connection.read_parquet(escape_glob(str(source.path)))
+                literal_path = self._resources.enter_context(
+                    literal_parquet_path(source.path)
+                )
+                relation = connection.read_parquet(literal_path)
             except (
                 duckdb.IOException,
                 duckdb.InvalidInputException,

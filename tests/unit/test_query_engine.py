@@ -80,6 +80,97 @@ def test_literal_parent_path_and_missing_source_cannot_match_neighbors(
         pass
 
 
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+@pytest.mark.parametrize(
+    ("literal", "neighbor"),
+    [
+        (r"a\bc[1].parquet", "a/bc[1].parquet"),
+        (r"a\?b.parquet", "a/?b.parquet"),
+        (r"a\*b.parquet", "a/*b.parquet"),
+        (r"batch\[1]/items.parquet", "batch/[1]/items.parquet"),
+    ],
+)
+def test_posix_backslash_and_glob_sources_remain_literal(
+    tmp_path: Path, literal: str, neighbor: str
+) -> None:
+    path = tmp_path / literal
+    other = tmp_path / neighbor
+    path.parent.mkdir(parents=True, exist_ok=True)
+    other.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"value": [42]}), path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+    inputs = sources(path)
+
+    with QuerySession(
+        inputs, f"SELECT * FROM {inputs[0].quoted_name}", QueryControl()
+    ) as session:
+        assert table_values(session.preview().table) == {"value": [42]}
+        assert not session.issues
+    path.unlink()
+    with QuerySession(inputs, "SELECT 42 AS answer", QueryControl()) as session:
+        assert table_values(session.preview().table) == {"answer": [42]}
+        assert len(session.issues) == 1
+        assert session.issues[0].source == inputs[0]
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+def test_literal_source_removed_during_registration_does_not_read_neighbor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / r"a\bc[1].parquet"
+    other = tmp_path / "a" / "bc[1].parquet"
+    other.parent.mkdir()
+    pq.write_table(pa.table({"value": [42]}), path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+    inputs = sources(path)
+    original_read = duckdb.DuckDBPyConnection.read_parquet
+
+    def remove_before_binding(
+        connection: duckdb.DuckDBPyConnection, literal_path: str
+    ) -> duckdb.DuckDBPyRelation:
+        path.unlink()
+        return original_read(connection, literal_path)
+
+    monkeypatch.setattr(
+        duckdb.DuckDBPyConnection, "read_parquet", remove_before_binding
+    )
+    with QuerySession(inputs, "SELECT 42 AS answer", QueryControl()) as session:
+        assert table_values(session.preview().table) == {"answer": [42]}
+        assert len(session.issues) == 1
+        assert session.issues[0].source == inputs[0]
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+@pytest.mark.parametrize("fail", [False, True])
+def test_literal_source_alias_lives_until_session_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    path = tmp_path / r"a\bc[1].parquet"
+    pq.write_table(pa.table({"value": [42]}), path)
+    inputs = sources(path)
+    directories: list[Path] = []
+
+    def create_temporary(
+        *, prefix: str, dir: str | None = None
+    ) -> TemporaryDirectory[str]:
+        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
+        directories.append(Path(temporary.name))
+        return temporary
+
+    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
+    sql = f"SELECT {'missing' if fail else '*'} FROM {inputs[0].quoted_name}"
+    session = QuerySession(inputs, sql, QueryControl())
+    if fail:
+        with pytest.raises(duckdb.BinderException), session:
+            pass
+    else:
+        with session:
+            assert table_values(session.preview().table) == {"value": [42]}
+            assert all(directory.exists() for directory in directories)
+    assert len(directories) == 2
+    assert not any(directory.exists() for directory in directories)
+
+
 @pytest.mark.parametrize(
     "sql", ["", "SELECT 1; SELECT 2", "CREATE TABLE x AS SELECT 1"]
 )
