@@ -23,8 +23,8 @@ from textual.worker import Worker
 
 from parqx.catalog import SourceCatalog, SourceIssue
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryLimits
-from parqx.tui.screens.query import QueryResult, QueryScreen
+from parqx.query.engine import QueryLimits, QueryResult
+from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable, ResultPane, SourcePane, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
 

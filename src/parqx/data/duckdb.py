@@ -5,13 +5,45 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from tempfile import TemporaryDirectory
+from glob import escape as escape_glob
+from os import name as os_name
+from pathlib import Path
+from tempfile import TemporaryDirectory, gettempdir
 from threading import Event, Lock, Thread
 
 import duckdb
 import pyarrow as pa
 
 from parqx.data.batch import bounded_prefix, compact_batch
+
+
+def _needs_literal_alias(path: str) -> bool:
+    return os_name != "nt" and "\\" in path and any(char in path for char in "[*?")
+
+
+@contextmanager
+def literal_parquet_path(path: Path) -> Generator[str, None, None]:
+    """Keep one literal file addressable until its DuckDB reader is closed."""
+    value = str(path)
+    if _needs_literal_alias(value):
+        # DuckDB's globber treats backslashes as directory separators, even on
+        # POSIX. Escaping glob characters can therefore select a different file.
+        # A safe symlink name avoids globbing the original path without copying
+        # its contents. A missing target stays missing rather than matching peers.
+        directory_root = gettempdir()
+        if _needs_literal_alias(directory_root):
+            # TMPDIR can contain the same ambiguous characters. On POSIX, /tmp
+            # gives this small alias a safe address without moving engine spill.
+            # TemporaryDirectory still creates a private, unpredictable directory.
+            directory_root = "/tmp"  # noqa: S108
+        with TemporaryDirectory(
+            prefix="parqx-literal-", dir=directory_root
+        ) as directory:
+            alias = Path(directory) / "source.parquet"
+            alias.symlink_to(path.absolute())
+            yield escape_glob(str(alias))
+    else:
+        yield escape_glob(value)
 
 
 class QueryCancelledError(Exception):

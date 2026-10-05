@@ -57,7 +57,7 @@ class CellFormatter:
         while (
             scalar is not None
             and scalar.is_valid
-            and isinstance(scalar, (pa.DictionaryScalar, pa.JsonScalar))
+            and isinstance(scalar, (pa.DictionaryScalar, pa.JsonScalar, pa.UnionScalar))
         ):
             scalar = scalar.value
         if scalar is None or not scalar.is_valid:

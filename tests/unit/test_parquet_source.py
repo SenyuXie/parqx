@@ -1,5 +1,6 @@
 """DuckDB file metadata, ordered paging, budgets and cancellation."""
 
+import tempfile
 from datetime import UTC, datetime
 from decimal import Decimal
 from os import name as os_name
@@ -166,6 +167,55 @@ def test_source_path_is_literal_including_parent_directory(
     path.unlink()
     with pytest.raises(FileNotFoundError):
         source.read_window(0, 1, QueryControl())
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+@pytest.mark.parametrize(
+    ("literal", "neighbor"),
+    [
+        (r"a\bc[1].parquet", "a/bc[1].parquet"),
+        (r"a\?b.parquet", "a/?b.parquet"),
+        (r"a\*b.parquet", "a/*b.parquet"),
+        (r"batch\[1]/items.parquet", "batch/[1]/items.parquet"),
+    ],
+)
+def test_posix_backslash_and_glob_path_cannot_read_neighbor(
+    tmp_path: Path, literal: str, neighbor: str
+) -> None:
+    path = tmp_path / literal
+    other = tmp_path / neighbor
+    path.parent.mkdir(parents=True, exist_ok=True)
+    other.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"value": [42]}), path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+
+    source = ParquetSource(path)
+    assert source.row_count == 1
+    assert source.read_window(0, 2, QueryControl()).table.equals(
+        pa.table({"value": [42]})
+    )
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        source.read_window(0, 2, QueryControl())
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+def test_posix_literal_path_with_ambiguous_temporary_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temporary_root = tmp_path / r"tmp\[dir]"
+    temporary_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary_root))
+    path = tmp_path / r"a\bc[1].parquet"
+    other = tmp_path / "a" / "bc[1].parquet"
+    other.parent.mkdir()
+    table = pa.table({"value": [42]})
+    pq.write_table(table, path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+
+    source = ParquetSource(path)
+    assert source.row_count == 1
+    assert source.read_window(0, 2, QueryControl()).table.equals(table)
 
 
 def test_file_row_number_and_partition_named_directories_are_plain_data(

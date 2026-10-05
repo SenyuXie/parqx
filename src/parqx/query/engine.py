@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
-from glob import escape as escape_glob
+from time import perf_counter
 from types import TracebackType
 from typing import Self
 
@@ -15,7 +16,28 @@ from parqx.catalog import SourceIssue, SourceSpec
 from parqx.data.duckdb import QueryCancelledError as QueryCancelledError
 from parqx.data.duckdb import QueryControl as QueryControl
 from parqx.data.duckdb import QueryPreview as QueryPreview
-from parqx.data.duckdb import connect, read_preview
+from parqx.data.duckdb import connect, literal_parquet_path, read_preview
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class QueryResult:
+    """A completed SQL preview, timing and source availability warnings."""
+
+    sql: str
+    preview: QueryPreview
+    elapsed: float
+    issues: tuple[SourceIssue, ...] = ()
+
+
+class QueryExecutionError(Exception):
+    """A failed query with source warnings collected before the failure."""
+
+    def __init__(self, message: str, issues: tuple[SourceIssue, ...] = ()) -> None:
+        """Keep the display message and partial source issues together."""
+        super().__init__(message)
+        self.issues = issues
 
 
 @dataclass(frozen=True)
@@ -98,9 +120,10 @@ class QuerySession:
         for source in self.sources:
             self.control.check()
             try:
-                # DuckDB expands glob syntax even for one path. A source
-                # must read exactly its registered file, including []?*.
-                relation = connection.read_parquet(escape_glob(str(source.path)))
+                literal_path = self._resources.enter_context(
+                    literal_parquet_path(source.path)
+                )
+                relation = connection.read_parquet(literal_path)
             except (
                 duckdb.IOException,
                 duckdb.InvalidInputException,
@@ -147,3 +170,45 @@ class QuerySession:
     ) -> None:
         """Close on the worker thread regardless of how previewing ended."""
         self.close()
+
+
+def execute_query(
+    sources: tuple[SourceSpec, ...],
+    sql: str,
+    control: QueryControl,
+    limits: QueryLimits | None = None,
+    *,
+    unavailable: tuple[SourceIssue, ...] = (),
+) -> QueryResult:
+    """Run one query on its worker thread and close resources before returning.
+
+    The lifecycle signals describe native work, independent of any cancelled
+    async caller. Errors retain source warnings; cancellation produces no result.
+    """
+    control.started.set()
+    started = perf_counter()
+    session: QuerySession | None = None
+    try:
+        control.check()
+        session = QuerySession(sources, sql, control, limits)
+        with session:
+            preview = session.preview()
+        control.check()
+        return QueryResult(
+            sql=sql,
+            preview=preview,
+            elapsed=perf_counter() - started,
+            issues=unavailable + session.issues,
+        )
+    except QueryCancelledError:
+        raise
+    except Exception as exc:
+        control.check()
+        if not isinstance(
+            exc, (duckdb.Error, pa.ArrowException, OSError, ValueError, MemoryError)
+        ):
+            logger.exception("Unexpected query failure")
+        issues = unavailable + (session.issues if session is not None else ())
+        raise QueryExecutionError(str(exc) or type(exc).__name__, issues) from exc
+    finally:
+        control.finished.set()

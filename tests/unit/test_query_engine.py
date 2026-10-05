@@ -12,14 +12,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from parqx.catalog import SourceCatalog, SourceSpec
+from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.data import duckdb as engine
 from parqx.data.batch import bounded_prefix
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
+    QueryExecutionError,
     QueryLimits,
     QuerySession,
+    execute_query,
 )
 
 
@@ -32,6 +34,109 @@ def table_values(table: pa.Table) -> dict[str, list[object]]:
         name: [value.as_py() for value in table.column(name)]
         for name in table.column_names
     }
+
+
+def test_execute_query_returns_result_after_cleanup(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = sources(small_parquet)
+    unavailable = (SourceIssue(inputs[0], "Earlier source warning"),)
+    control = QueryControl()
+    closed: list[bool] = []
+    original_close = QuerySession.close
+
+    def close(session: QuerySession) -> None:
+        assert control.started.is_set()
+        assert not control.finished.is_set()
+        original_close(session)
+        closed.append(True)
+
+    monkeypatch.setattr(QuerySession, "close", close)
+    result = execute_query(
+        inputs, "SELECT 42 AS answer", control, unavailable=unavailable
+    )
+    assert table_values(result.preview.table) == {"answer": [42]}
+    assert result.sql == "SELECT 42 AS answer"
+    assert result.elapsed >= 0
+    assert result.issues == unavailable
+    assert closed == [True]
+    assert control.finished.is_set()
+
+
+@pytest.mark.parametrize("sql", ["SELECT 42 AS answer", "SELECT * FROM missing"])
+def test_execute_query_retains_unavailable_sources_on_success_and_failure(
+    tmp_path: Path, sql: str
+) -> None:
+    inputs = sources(tmp_path / "missing.parquet")
+    unavailable = (SourceIssue(inputs[0], "Still loading"),)
+    control = QueryControl()
+    if "missing" in sql:
+        with pytest.raises(QueryExecutionError) as raised:
+            execute_query(inputs, sql, control, unavailable=unavailable)
+        assert isinstance(raised.value.__cause__, duckdb.CatalogException)
+        issues = raised.value.issues
+    else:
+        result = execute_query(inputs, sql, control, unavailable=unavailable)
+        assert table_values(result.preview.table) == {"answer": [42]}
+        issues = result.issues
+    assert len(issues) == 2
+    assert issues[0] == unavailable[0]
+    assert issues[1].source == inputs[0]
+    assert control.started.is_set()
+    assert control.finished.is_set()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("unexpected"), MemoryError()])
+def test_execute_query_wraps_constructor_failure_and_logs_unexpected_once(
+    failure: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    control = QueryControl()
+    with (
+        patch("parqx.query.engine.QuerySession", side_effect=failure),
+        pytest.raises(QueryExecutionError) as raised,
+    ):
+        execute_query((), "SELECT 42", control)
+    assert str(raised.value) == (str(failure) or type(failure).__name__)
+    assert raised.value.__cause__ is failure
+    assert control.started.is_set()
+    assert control.finished.is_set()
+    records = [
+        record for record in caplog.records if record.name == "parqx.query.engine"
+    ]
+    assert len(records) == (1 if isinstance(failure, RuntimeError) else 0)
+    if records:
+        assert records[0].exc_info is not None
+        assert records[0].exc_info[1] is failure
+
+
+def test_execute_query_cancelled_before_start_opens_no_connection() -> None:
+    control = QueryControl()
+    control.cancel()
+    with (
+        patch.object(duckdb, "connect", side_effect=AssertionError("opened")),
+        pytest.raises(QueryCancelledError),
+    ):
+        execute_query((), "SELECT 42", control)
+    assert control.started.is_set()
+    assert control.finished.is_set()
+
+
+def test_execute_query_normalizes_native_cancellation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    control = QueryControl()
+
+    def interrupted_preview(session: QuerySession) -> None:
+        control.cancel()
+        raise duckdb.InterruptException("Interrupted")
+
+    with (
+        patch.object(QuerySession, "preview", interrupted_preview),
+        pytest.raises(QueryCancelledError),
+    ):
+        execute_query((), "SELECT 42", control)
+    assert control.finished.is_set()
+    assert not caplog.records
 
 
 @pytest.mark.parametrize(
@@ -78,6 +183,97 @@ def test_literal_parent_path_and_missing_source_cannot_match_neighbors(
         QuerySession(inputs, 'SELECT * FROM "items[1]"', QueryControl()),
     ):
         pass
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+@pytest.mark.parametrize(
+    ("literal", "neighbor"),
+    [
+        (r"a\bc[1].parquet", "a/bc[1].parquet"),
+        (r"a\?b.parquet", "a/?b.parquet"),
+        (r"a\*b.parquet", "a/*b.parquet"),
+        (r"batch\[1]/items.parquet", "batch/[1]/items.parquet"),
+    ],
+)
+def test_posix_backslash_and_glob_sources_remain_literal(
+    tmp_path: Path, literal: str, neighbor: str
+) -> None:
+    path = tmp_path / literal
+    other = tmp_path / neighbor
+    path.parent.mkdir(parents=True, exist_ok=True)
+    other.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"value": [42]}), path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+    inputs = sources(path)
+
+    with QuerySession(
+        inputs, f"SELECT * FROM {inputs[0].quoted_name}", QueryControl()
+    ) as session:
+        assert table_values(session.preview().table) == {"value": [42]}
+        assert not session.issues
+    path.unlink()
+    with QuerySession(inputs, "SELECT 42 AS answer", QueryControl()) as session:
+        assert table_values(session.preview().table) == {"answer": [42]}
+        assert len(session.issues) == 1
+        assert session.issues[0].source == inputs[0]
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+def test_literal_source_removed_during_registration_does_not_read_neighbor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / r"a\bc[1].parquet"
+    other = tmp_path / "a" / "bc[1].parquet"
+    other.parent.mkdir()
+    pq.write_table(pa.table({"value": [42]}), path)
+    pq.write_table(pa.table({"value": [99, 100]}), other)
+    inputs = sources(path)
+    original_read = duckdb.DuckDBPyConnection.read_parquet
+
+    def remove_before_binding(
+        connection: duckdb.DuckDBPyConnection, literal_path: str
+    ) -> duckdb.DuckDBPyRelation:
+        path.unlink()
+        return original_read(connection, literal_path)
+
+    monkeypatch.setattr(
+        duckdb.DuckDBPyConnection, "read_parquet", remove_before_binding
+    )
+    with QuerySession(inputs, "SELECT 42 AS answer", QueryControl()) as session:
+        assert table_values(session.preview().table) == {"answer": [42]}
+        assert len(session.issues) == 1
+        assert session.issues[0].source == inputs[0]
+
+
+@pytest.mark.skipif(os_name == "nt", reason="Backslashes are Windows separators")
+@pytest.mark.parametrize("fail", [False, True])
+def test_literal_source_alias_lives_until_session_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    path = tmp_path / r"a\bc[1].parquet"
+    pq.write_table(pa.table({"value": [42]}), path)
+    inputs = sources(path)
+    directories: list[Path] = []
+
+    def create_temporary(
+        *, prefix: str, dir: str | None = None
+    ) -> TemporaryDirectory[str]:
+        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
+        directories.append(Path(temporary.name))
+        return temporary
+
+    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
+    sql = f"SELECT {'missing' if fail else '*'} FROM {inputs[0].quoted_name}"
+    session = QuerySession(inputs, sql, QueryControl())
+    if fail:
+        with pytest.raises(duckdb.BinderException), session:
+            pass
+    else:
+        with session:
+            assert table_values(session.preview().table) == {"value": [42]}
+            assert all(directory.exists() for directory in directories)
+    assert len(directories) == 2
+    assert not any(directory.exists() for directory in directories)
 
 
 @pytest.mark.parametrize(

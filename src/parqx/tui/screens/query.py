@@ -3,17 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Callable
-from dataclasses import dataclass
 from functools import partial
-from time import perf_counter
-from typing import ClassVar, cast
+from typing import ClassVar
 
-import duckdb
-import pyarrow as pa
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.events import Resize
@@ -24,26 +18,11 @@ from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
+    QueryExecutionError,
     QueryLimits,
-    QueryPreview,
-    QuerySession,
+    QueryResult,
+    execute_query,
 )
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class QueryResult:
-    """A completed SQL preview and the information displayed with its table."""
-
-    sql: str
-    """SQL text executed to produce this preview."""
-    preview: QueryPreview
-    """Bounded Arrow result and its truncation reason, if any."""
-    elapsed: float
-    """Seconds spent executing, previewing and closing the query session."""
-    issues: tuple[SourceIssue, ...] = ()
-    """Unavailable sources reported alongside the completed preview."""
 
 
 class QueryScreen(ModalScreen[QueryResult]):
@@ -189,57 +168,38 @@ class QueryScreen(ModalScreen[QueryResult]):
         self._set_current_control(control)
         self._run_query(sources, sql, control, unavailable)
 
-    def _publish(self, callback: Callable[[], None]) -> None:
-        """Deliver a worker update while tolerating concurrent app shutdown."""
-        # Textual's app getter omits the generic return type.
-        app = cast(App[object], self.app)  # pyright: ignore[reportUnknownMemberType]
-        if not app.is_running:
-            return
-        try:
-            app.call_from_thread(callback)
-        except RuntimeError:
-            if app.is_running:
-                raise
-
-    @work(thread=True, group="query")
-    def _run_query(
+    @work(group="query")
+    async def _run_query(
         self,
         sources: tuple[SourceSpec, ...],
         sql: str,
         control: QueryControl,
         unavailable: tuple[SourceIssue, ...],
     ) -> None:
-        control.started.set()
-        started = perf_counter()
-        session: QuerySession | None = None
         try:
-            session = QuerySession(sources, sql, control, self._query_limits)
-            with session:
-                preview = session.preview()
-            control.check()
-            result = QueryResult(
-                sql=sql,
-                preview=preview,
-                elapsed=perf_counter() - started,
-                issues=unavailable + session.issues,
+            result = await asyncio.get_running_loop().run_in_executor(
+                None,
+                partial(
+                    execute_query,
+                    sources,
+                    sql,
+                    control,
+                    self._query_limits,
+                    unavailable=unavailable,
+                ),
             )
+        except asyncio.CancelledError:
+            control.cancel()
+            raise
         except QueryCancelledError:
             return
-        except Exception as exc:
-            if not isinstance(
-                exc, (duckdb.Error, pa.ArrowException, OSError, ValueError, MemoryError)
-            ):
-                logger.exception("Unexpected query failure")
-            if not control.cancelled.is_set():
-                message = str(exc) or type(exc).__name__
-                issues = unavailable + (session.issues if session is not None else ())
-                if issues:
-                    message += "\nUnavailable sources:\n" + "\n".join(map(str, issues))
-                self._publish(partial(self._on_query_error, control, message))
+        except QueryExecutionError as exc:
+            message = str(exc)
+            if exc.issues:
+                message += "\nUnavailable sources:\n" + "\n".join(map(str, exc.issues))
+            self._on_query_error(control, message)
         else:
-            self._publish(partial(self._on_query_ok, control, result))
-        finally:
-            control.finished.set()
+            self._on_query_ok(control, result)
 
     def _is_current(self, control: QueryControl) -> bool:
         return control is self._current_control and self.is_active
@@ -260,7 +220,7 @@ class QueryScreen(ModalScreen[QueryResult]):
         self.editor.focus()
 
     def _cancel_request(self) -> None:
-        # Invalidate first so even an already queued worker callback is harmless.
+        # Invalidate first so a completed query waiting for delivery is harmless.
         control = self._current_control
         self._set_current_control(None)
         if control is not None:
