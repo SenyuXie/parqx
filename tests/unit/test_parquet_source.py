@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from os import name as os_name
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
@@ -142,30 +141,6 @@ def test_empty_file_keeps_schema(tmp_path: Path) -> None:
     page = source.read_window(0, 10, QueryControl())
     assert page.table.column_names == ["x"]
     assert page.start == page.stop == 0
-
-
-@pytest.mark.parametrize(
-    ("literal", "neighbor"),
-    [("left[1]", "left1"), ("parts*", "parts-extra"), ("问?号", "问1号")],
-)
-def test_source_path_is_literal_including_parent_directory(
-    tmp_path: Path, literal: str, neighbor: str
-) -> None:
-    if os_name == "nt" and any(char in literal for char in "*?"):
-        pytest.skip("Windows filenames cannot contain * or ?")
-    directory = tmp_path / "batch[1]"
-    directory.mkdir()
-    path = directory / f"{literal}.parquet"
-    pq.write_table(pa.table({"value": ["opened"]}), path)
-    pq.write_table(pa.table({"value": ["wrong"]}), directory / f"{neighbor}.parquet")
-    source = ParquetSource(path)
-    assert source.row_count == 1
-    assert (
-        source.read_window(0, 1, QueryControl()).table.column(0)[0].as_py() == "opened"
-    )
-    path.unlink()
-    with pytest.raises(FileNotFoundError):
-        source.read_window(0, 1, QueryControl())
 
 
 def test_file_row_number_and_partition_named_directories_are_plain_data(

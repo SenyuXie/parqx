@@ -2,6 +2,8 @@
 
 import asyncio
 import gc
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, get_ident
 from unittest.mock import patch
@@ -13,11 +15,12 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
 
+from parqx.catalog import SourceCatalog
 from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
 from parqx.tui.app import ParqxApp
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.widgets import ArrowTable, SourcePane
 from tests.helpers import open_query, wait_for
 
 
@@ -368,8 +371,9 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
         await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
         with patch.object(ParquetSource, "read_window", record_read):
             # Deliver multiple requests before any new worker can start.
+            pane = app.query_one(SourcePane)
             for start in (5_000, 7_000, 9_000):
-                app._on_window_requested(  # pyright: ignore[reportPrivateUsage]
+                pane._on_window_requested(  # pyright: ignore[reportPrivateUsage]
                     ArrowTable.WindowRequested(table, table.data, start, start + 100)
                 )
             await wait_for(lambda: table.data.peek(9_999, 0) is not None, pilot)
@@ -418,7 +422,9 @@ async def test_window_error_waits_for_navigation_before_retry(
             assert notify.call_args.kwargs["severity"] == "error"
             assert notify.call_args.kwargs["markup"] is False
             record = next(
-                record for record in caplog.records if record.name == "parqx.tui.app"
+                record
+                for record in caplog.records
+                if record.name == "parqx.tui.widgets.source_pane"
             )
             assert record.exc_info is not None
             assert record.exc_info[0] is error_type
@@ -455,3 +461,108 @@ async def test_shutdown_cancels_pending_source_window(small_parquet: Path) -> No
             await wait_for(started.is_set, pilot)
     assert all(event.is_set() for event in cancellation)
     assert finished.wait(timeout=2)
+
+
+async def test_source_pane_removal_cancels_read_and_releases_cache(
+    small_parquet: Path,
+) -> None:
+    started, release, returned = Event(), Event(), Event()
+    controls: list[QueryControl] = []
+    source = ParquetSource(small_parquet)
+    spec = SourceCatalog([small_parquet]).entries[0].spec
+
+    def delayed_read(
+        source: ParquetSource, start: int, stop: int, control: QueryControl
+    ) -> DataPage:
+        controls.append(control)
+        started.set()
+        try:
+            assert release.wait(timeout=10)
+            return DataPage(start, pa.table({"late": [99]}))
+        finally:
+            returned.set()
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as executor,
+        patch.object(ParquetSource, "read_window", delayed_read),
+    ):
+        pane = SourcePane(spec.display_name, spec, executor)
+
+        class PaneApp(App[None]):
+            def compose(self) -> ComposeResult:
+                yield pane
+
+        app = PaneApp()
+        try:
+            async with app.run_test() as pilot:
+                await pane.set_source(source)
+                await wait_for(started.is_set, pilot)
+                assert pane.table is not None
+                cache = weakref.ref(pane.table.data)
+                page_worker = next(
+                    worker for worker in app.workers if worker.group == "page"
+                )
+                assert page_worker.node is pane
+
+                await pane.remove()
+                await wait_for(controls[0].cancelled.is_set, pilot)
+                assert pane.table is None
+                assert not returned.is_set()
+
+                def cache_released() -> bool:
+                    gc.collect()
+                    return cache() is None
+
+                await wait_for(cache_released, pilot)
+                release.set()
+                await wait_for(returned.is_set, pilot)
+        finally:
+            release.set()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_replacing_source_data_discards_pending_page_and_error(
+    small_parquet: Path, fail: bool
+) -> None:
+    started, release = Event(), Event()
+
+    def delayed_read(
+        source: ParquetSource, start: int, stop: int, control: QueryControl
+    ) -> DataPage:
+        started.set()
+        assert release.wait(timeout=10)
+        if fail:
+            raise OSError("obsolete data failed")
+        return DataPage(start, pa.table({"obsolete": [99]}))
+
+    app = ParqxApp([small_parquet])
+    with (
+        patch.object(ParquetSource, "read_window", delayed_read),
+        patch.object(app, "notify", wraps=app.notify) as notify,
+    ):
+        try:
+            async with app.run_test() as pilot:
+                await wait_for(started.is_set, pilot)
+                table = app.query_one(ArrowTable)
+                old_data = weakref.ref(table.data)
+                table.replace_table(pa.table({"current": [42]}))
+                with (
+                    patch.object(
+                        table, "accept_page", wraps=table.accept_page
+                    ) as accept,
+                    patch.object(
+                        table, "fail_window", wraps=table.fail_window
+                    ) as error,
+                ):
+                    release.set()
+                    await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
+                    await pilot.pause()
+                    assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
+                    assert table.data.cache_bytes == 0
+                    gc.collect()
+                    assert old_data() is None
+                    accept.assert_not_called()
+                    error.assert_not_called()
+                    notify.assert_not_called()
+        finally:
+            release.set()

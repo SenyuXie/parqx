@@ -19,7 +19,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
 from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
-from parqx.tui.widgets import ArrowTable, ResultPane
+from parqx.tui.widgets import ArrowTable, SourcePane
 from tests.helpers import (
     open_query,
     run_query,
@@ -43,7 +43,7 @@ async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
         assert tabs.active == "source-1"
-        assert [pane.id for pane in tabs.query(ResultPane)] == ["source-1", "source-2"]
+        assert [pane.id for pane in tabs.query(SourcePane)] == ["source-1", "source-2"]
         specs = app.catalog.snapshot()
         assert [spec.path for spec in specs] == [orders.resolve(), users.resolve()]
         labels: list[str] = []
@@ -181,7 +181,7 @@ async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_source
                 pilot,
             )
             assert [entry.state for entry in app.catalog.entries] == ["failed", "ready"]
-            pane = app.query_one("#source-1", ResultPane)
+            pane = app.query_one("#source-1", SourcePane)
             assert not pane.loading
             error = pane.query_one(".source-error", Static)
             assert error.display

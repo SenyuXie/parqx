@@ -67,6 +67,10 @@ class JsonScalar(Scalar):
     @property
     def value(self) -> Scalar | None: ...
 
+class UnionScalar(Scalar):
+    @property
+    def value(self) -> Scalar | None: ...
+
 class UuidScalar(Scalar): ...
 
 class Buffer:

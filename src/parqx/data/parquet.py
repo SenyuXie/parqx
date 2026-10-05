@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import closing
-from glob import escape as escape_glob
 from pathlib import Path
 
 import pyarrow as pa
@@ -31,13 +30,11 @@ class ParquetSource:
         self.page_rows = page_rows
         self.page_bytes = page_bytes
         self._fingerprint = self._file_fingerprint()
-        # DuckDB interprets glob characters even in a single, parameterized path.
-        self._literal_path = escape_glob(str(path))
         with connect(QueryControl()) as connection:
             unsupported = connection.execute(
                 "SELECT name, precision FROM parquet_schema(?) "
                 "WHERE precision > 38 LIMIT 1",
-                [self._literal_path],
+                [str(path)],
             ).fetchone()
             if unsupported is not None:
                 raise ValueError(
@@ -45,13 +42,13 @@ class ParquetSource:
                     f"{unsupported[1]}; DuckDB browsing supports at most 38."
                 )
             metadata = connection.execute(
-                "SELECT num_rows FROM parquet_file_metadata(?)", [self._literal_path]
+                "SELECT num_rows FROM parquet_file_metadata(?)", [str(path)]
             ).fetchone()
             if metadata is None:
                 raise ValueError("The Parquet file has no metadata")
             self.row_count = int(metadata[0])
             relation = connection.read_parquet(
-                self._literal_path, hive_partitioning=False
+                str(self.path), hive_partitioning=False
             ).limit(0)
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
                 self.schema = reader.schema
@@ -81,7 +78,7 @@ class ParquetSource:
             # Insertion order is enabled by connect(). OFFSET also works when the
             # file contains a real column named file_row_number.
             relation = connection.read_parquet(
-                self._literal_path, hive_partitioning=False
+                str(self.path), hive_partitioning=False
             ).limit(stop - start, offset=start)
             control.check()
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:

@@ -3,13 +3,15 @@
 
 import weakref
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import pyarrow as pa
 import pytest
 from rich.cells import cell_len
+from rich.style import Style
 from rich.text import Text
 from textual.coordinate import Coordinate
+from textual.geometry import Size
 
 from parqx.data.view import DataPage, TableData
 from parqx.tui.cell_formatter import CellFormatter
@@ -83,6 +85,82 @@ def test_wide_table_formats_only_accessed_cells() -> None:
         assert fmt.call_count == 1
         widget._get_cell_renderable(0, 499)
         assert fmt.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("row", "column", "width", "padding", "expected"),
+    [
+        (0, 0, 8, 0, "界界界界"),
+        (0, 0, 8, 1, " 界界 … "),
+        (0, 0, 8, 2, "  界 …  "),
+        (-1, 0, 8, 1, " text   "),
+        (0, -1, 3, 1, " 0 "),
+        (-1, -1, 3, 1, "   "),
+    ],
+)
+def test_single_line_cell_preserves_padding_styles_and_metadata(
+    row: int, column: int, width: int, padding: int, expected: str
+) -> None:
+    widget = ArrowTable(pa.table({"text": ["界界界界"]}), cell_padding=padding)
+    base_style = Style(color="yellow", bgcolor="black")
+
+    segments = widget._render_cell(row, column, base_style, width)
+
+    assert "".join(segment.text for segment in segments) == expected
+    assert sum(segment.cell_length for segment in segments) == width
+    for segment in segments:
+        assert segment.style is not None
+        assert segment.style.color == base_style.color
+        assert segment.style.bgcolor == base_style.bgcolor
+        assert segment.style.meta == {"row": row, "column": column}
+    if row == 0 and column == -1:
+        assert any(segment.style and segment.style.dim for segment in segments)
+
+
+def test_horizontal_crop_preserves_fixed_index_styles_and_coordinates() -> None:
+    widget = ArrowTable(
+        pa.table({"first": ["界界界界"], "second": ["abcdef"], "third": ["tail"]}),
+        show_cursor=False,
+        max_column_content_width=6,
+    )
+    base_style = Style(color="yellow")
+    header_style = Style(color="blue")
+    with (
+        patch.object(
+            ArrowTable, "size", new_callable=PropertyMock, return_value=Size(12, 4)
+        ),
+        patch.object(
+            widget, "get_component_styles", return_value=Mock(rich_style=header_style)
+        ),
+    ):
+        initial = widget._render_line(1, 0, 12, base_style)
+        # Start halfway through a double-width character, keeping the row index fixed.
+        cropped = widget._render_line(1, 2, 14, base_style)
+        header = widget._render_line(0, 2, 14, base_style)
+        next_column = widget._render_line(1, 8, 20, base_style)
+        # A different crop of a cached row must not mutate its stored segments.
+        widget._line_cache.clear()
+        restored = widget._render_line(1, 0, 12, base_style)
+
+    assert initial.text == restored.text == " 0  界界 …  "
+    assert cropped.text == " 0  界 …  ab"
+    assert header.text == "   irst   se"
+    assert next_column.text == " 0  abcdef  "
+    for strip, row, columns in (
+        (cropped, 0, [-1] * 3 + [0] * 6 + [1] * 3),
+        (header, -1, [-1] * 3 + [0] * 6 + [1] * 3),
+        (next_column, 0, [-1] * 3 + [1] * 8 + [2]),
+    ):
+        assert strip.cell_length == 12
+        rendered_columns: list[int] = []
+        for segment in strip:
+            assert segment.style is not None
+            assert segment.style.meta["row"] == row
+            column = segment.style.meta["column"]
+            rendered_columns.extend([column] * segment.cell_length)
+            expected_style = header_style if row == -1 or column == -1 else base_style
+            assert segment.style.color == expected_style.color
+        assert rendered_columns == columns
 
 
 def test_numeric_width_measurement_is_bounded() -> None:
