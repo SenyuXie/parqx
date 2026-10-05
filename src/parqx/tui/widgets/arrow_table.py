@@ -14,7 +14,6 @@ import contextlib
 import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from itertools import chain
 from math import ceil
 from typing import ClassVar, Literal, NamedTuple, Self
 
@@ -654,14 +653,11 @@ class ArrowTable(ScrollView, can_focus=True):
         """Formatter shared by width measurement and cell rendering."""
 
         self._row_render_cache: LRUCache[
-            RowCacheKey, tuple[list[list[Segment]], list[list[Segment]]]
+            RowCacheKey, tuple[list[Segment], list[Segment]]
         ] = LRUCache(1000)
-        """For each row, we maintain a cache of the fixed and scrollable lines within that row 
-        to minimize how often we need to re-render it. """
-        self._cell_render_cache: LRUCache[CellCacheKey, list[list[Segment]]] = LRUCache(
-            10000
-        )
-        """Cache for individual cells."""
+        """Cache the fixed and scrollable segments for each single-line row."""
+        self._cell_render_cache: LRUCache[CellCacheKey, list[Segment]] = LRUCache(10000)
+        """Cache single-line segments for individual cells."""
         self._cell_renderable_cache: LRUCache[Coordinate, Text] = LRUCache(10000)
         """Format only accessed cells; bound the cache independently of table width."""
         self._line_cache: LRUCache[LineCacheKey, Strip] = LRUCache(1000)
@@ -1434,7 +1430,7 @@ class ArrowTable(ScrollView, can_focus=True):
         width: int,
         cursor: bool = False,
         hover: bool = False,
-    ) -> list[list[Segment]]:
+    ) -> list[Segment]:
         """Render the given cell.
 
         Args:
@@ -1446,7 +1442,7 @@ class ArrowTable(ScrollView, can_focus=True):
             hover: Whether this cell is affected by hover cursor highlighting.
 
         Returns:
-            A list of segments per line.
+            The segments for the cell's single rendered line.
         """
         is_header_cell = row_index == self._header_row_index
         is_row_index_cell = column_index == self._index_column_index
@@ -1465,8 +1461,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
         # LRUCache records stats in get()/__getitem__, but `in` bypasses misses.
         # Use get() here so cell cache hit/miss stats stay accurate.
-        if (lines := self._cell_render_cache.get(cache_key)) is not None:
-            return lines
+        if (segments := self._cell_render_cache.get(cache_key)) is not None:
+            return segments
 
         try:
             console = self.app.console  # pyright: ignore
@@ -1491,17 +1487,17 @@ class ArrowTable(ScrollView, can_focus=True):
             no_wrap=True, overflow="ellipsis"
         )
 
-        lines = console.render_lines(
+        segments = console.render_lines(
             Styled(
                 Padding(cell, (0, self.cell_padding)),
                 pre_style=base_style + component_style,
                 post_style=post_style,
             ),
             options,
-        )
+        )[0]
 
-        self._cell_render_cache[cache_key] = lines
-        return lines
+        self._cell_render_cache[cache_key] = segments
+        return segments
 
     def _get_styles_to_render_cell(
         self,
@@ -1571,7 +1567,7 @@ class ArrowTable(ScrollView, can_focus=True):
         hover_location: Coordinate,
         column1: int,
         column2: int,
-    ) -> tuple[list[list[Segment]], list[list[Segment]]]:
+    ) -> tuple[list[Segment], list[Segment]]:
         """Render a single line from a row in the ArrowTable.
 
         Args:
@@ -1585,7 +1581,7 @@ class ArrowTable(ScrollView, can_focus=True):
                 Columns outside `[column1, column2)` are skipped entirely.
 
         Returns:
-            Lines for fixed cells, and Lines for scrollable cells.
+            Single-line segments for fixed cells and scrollable cells.
         """
         cursor_type = self.cursor_type
         show_cursor = self.show_cursor
@@ -1618,12 +1614,12 @@ class ArrowTable(ScrollView, can_focus=True):
         header_style = self.get_component_styles("arrowtable--header").rich_style
 
         # If the row has a index, add it to fixed_row here with correct style.
-        fixed_row: list[list[Segment]] = []
+        fixed_row: list[Segment] = []
 
         if self.show_row_index:
             # The width of the row index is updated again on idle
             cell_location = Coordinate(row_index, self._index_column_index)
-            index_cell_lines = self._render_cell(
+            index_cell_segments = self._render_cell(
                 row_index,
                 self._index_column_index,
                 header_style,
@@ -1634,17 +1630,17 @@ class ArrowTable(ScrollView, can_focus=True):
                 hover=self._should_highlight(
                     hover_location, cell_location, cursor_type
                 ),
-            )[0]  # Only single line for a cell.
-            fixed_row.append(index_cell_lines)
+            )
+            fixed_row.extend(index_cell_segments)
 
         row_style = self._get_row_style(row_index, base_style)
 
-        scrollable_row: list[list[Segment]] = []
+        scrollable_row: list[Segment] = []
 
         for column_index in range(column1, column2):
             column = self.columns[column_index]
             cell_location = Coordinate(row_index, column_index)
-            cell_lines = self._render_cell(
+            cell_segments = self._render_cell(
                 row_index,
                 column_index,
                 row_style,
@@ -1655,8 +1651,8 @@ class ArrowTable(ScrollView, can_focus=True):
                 hover=self._should_highlight(
                     hover_location, cell_location, cursor_type
                 ),
-            )[0]
-            scrollable_row.append(cell_lines)
+            )
+            scrollable_row.extend(cell_segments)
 
         row_pair = (fixed_row, scrollable_row)
         self._row_render_cache[cache_key] = row_pair
@@ -1725,10 +1721,7 @@ class ArrowTable(ScrollView, can_focus=True):
             column2=column2,
         )
 
-        fixed_line: list[Segment] = list(chain.from_iterable(fixed)) if fixed else []
-        scrollable_line: list[Segment] = list(chain.from_iterable(scrollable))
-
-        # The virtual left starting point of the scrollable_line is offsets[column1] (not 0).
+        # The scrollable segments begin at offsets[column1], not virtual column 0.
         offsets = self._get_column_offsets()
         virtual_left = offsets[column1] if column1 < len(offsets) else 0
         crop_start = max(0, x1 - virtual_left)
@@ -1737,8 +1730,8 @@ class ArrowTable(ScrollView, can_focus=True):
             (offsets[column2] - offsets[column1]) if column2 > column1 else 0
         )
 
-        segments = fixed_line + list(
-            Strip(scrollable_line, visible_cols_total).crop(crop_start, crop_end)
+        segments = fixed + list(
+            Strip(scrollable, visible_cols_total).crop(crop_start, crop_end)
         )
         strip = Strip(segments).adjust_cell_length(width, base_style).simplify()
 
