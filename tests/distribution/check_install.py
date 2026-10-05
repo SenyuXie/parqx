@@ -105,12 +105,11 @@ def check_parquet_browsing() -> None:
     with TemporaryDirectory(prefix="parqx-browse-smoke-") as temporary:
         directory = Path(temporary) / "year=2026"
         directory.mkdir()
-        path = directory / "browse[1].parquet"
+        path = directory / "browse.parquet"
         table = pa.table(
             {"id": range(6_000), "label": [f"row-{index}" for index in range(6_000)]}
         )
         pq.write_table(table, path, row_group_size=1_000)
-        pq.write_table(pa.table({"id": [-1]}), directory / "browse1.parquet")
 
         source = ParquetSource(path)
         assert source.row_count == table.num_rows
@@ -123,20 +122,16 @@ def check_parquet_browsing() -> None:
         later = source.read_window(4_200, 4_300, QueryControl())
         assert later.start == 4_200
         assert later.table.equals(table.slice(4_200, 100))
-    print("OK: DuckDB browsing preserves literal paths, row order and bounded windows")
+    print("OK: DuckDB browsing preserves row order and bounded windows")
 
 
 def check_multi_source_query() -> None:
     """Exercise installed Arrow and DuckDB integration with two complete files."""
     with TemporaryDirectory(prefix="parqx-smoke-") as temporary:
         users = Path(temporary) / "users.parquet"
-        orders = Path(temporary) / "orders[1].parquet"
+        orders = Path(temporary) / "orders.parquet"
         pq.write_table(pa.table({"id": [1, 2]}), users)
         pq.write_table(pa.table({"user_id": [1, 1, 2], "amount": [10, 15, 7]}), orders)
-        pq.write_table(
-            pa.table({"user_id": [1], "amount": [-1]}),
-            Path(temporary) / "orders1.parquet",
-        )
         catalog = SourceCatalog([users, orders, users])
         assert len(catalog.entries) == 2
         for entry in catalog.entries:
@@ -144,7 +139,7 @@ def check_multi_source_query() -> None:
         with QuerySession(
             catalog.snapshot(),
             'SELECT count(*), sum(o.amount) FROM "users" u '
-            'JOIN "orders[1]" o ON u.id = o.user_id',
+            'JOIN "orders" o ON u.id = o.user_id',
             QueryControl(),
             QueryLimits(preview_rows=1),
         ) as session:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from parqx.data.duckdb import QueryControl, connect, literal_parquet_path, read_preview
+from parqx.data.duckdb import QueryControl, connect, read_preview
 from parqx.data.view import DataPage
 
 _BATCH_ROWS = 256
@@ -30,14 +30,11 @@ class ParquetSource:
         self.page_rows = page_rows
         self.page_bytes = page_bytes
         self._fingerprint = self._file_fingerprint()
-        with (
-            literal_parquet_path(path) as literal_path,
-            connect(QueryControl()) as connection,
-        ):
+        with connect(QueryControl()) as connection:
             unsupported = connection.execute(
                 "SELECT name, precision FROM parquet_schema(?) "
                 "WHERE precision > 38 LIMIT 1",
-                [literal_path],
+                [str(path)],
             ).fetchone()
             if unsupported is not None:
                 raise ValueError(
@@ -45,13 +42,13 @@ class ParquetSource:
                     f"{unsupported[1]}; DuckDB browsing supports at most 38."
                 )
             metadata = connection.execute(
-                "SELECT num_rows FROM parquet_file_metadata(?)", [literal_path]
+                "SELECT num_rows FROM parquet_file_metadata(?)", [str(path)]
             ).fetchone()
             if metadata is None:
                 raise ValueError("The Parquet file has no metadata")
             self.row_count = int(metadata[0])
             relation = connection.read_parquet(
-                literal_path, hive_partitioning=False
+                str(self.path), hive_partitioning=False
             ).limit(0)
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
                 self.schema = reader.schema
@@ -77,14 +74,11 @@ class ParquetSource:
         if start == stop:
             return DataPage(start, pa.Table.from_batches([], schema=self.schema))
         self._check_unchanged()
-        with (
-            literal_parquet_path(self.path) as literal_path,
-            connect(control) as connection,
-        ):
+        with connect(control) as connection:
             # Insertion order is enabled by connect(). OFFSET also works when the
             # file contains a real column named file_row_number.
             relation = connection.read_parquet(
-                literal_path, hive_partitioning=False
+                str(self.path), hive_partitioning=False
             ).limit(stop - start, offset=start)
             control.check()
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
