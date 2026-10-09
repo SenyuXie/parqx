@@ -20,7 +20,7 @@ from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
 from parqx.tui.app import ParqxApp
-from parqx.tui.widgets import ArrowTable, SourcePane
+from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import open_query, wait_for
 
 
@@ -371,7 +371,7 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
         await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
         with patch.object(ParquetSource, "read_window", record_read):
             # Deliver multiple requests before any new worker can start.
-            pane = app.query_one(SourcePane)
+            pane = app.query_one(TablePane)
             for start in (5_000, 7_000, 9_000):
                 pane._on_window_requested(  # pyright: ignore[reportPrivateUsage]
                     ArrowTable.WindowRequested(table, table.data, start, start + 100)
@@ -424,7 +424,7 @@ async def test_window_error_waits_for_navigation_before_retry(
             record = next(
                 record
                 for record in caplog.records
-                if record.name == "parqx.tui.widgets.source_pane"
+                if record.name == "parqx.tui.widgets.table_pane"
             )
             assert record.exc_info is not None
             assert record.exc_info[0] is error_type
@@ -486,7 +486,7 @@ async def test_source_pane_removal_cancels_read_and_releases_cache(
         ThreadPoolExecutor(max_workers=1) as executor,
         patch.object(ParquetSource, "read_window", delayed_read),
     ):
-        pane = SourcePane(spec.display_name, spec, executor)
+        pane = TablePane(spec.display_name, spec, id=spec.source_id, executor=executor)
 
         class PaneApp(App[None]):
             def compose(self) -> ComposeResult:

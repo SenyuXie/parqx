@@ -11,7 +11,8 @@ lowest layer that can verify it:
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
 `data.duckdb` provides shared connection setup, cancellation and bounded Arrow
-previews. `data.parquet` reads file metadata and browsing windows through DuckDB;
+previews, including private batch budgeting and compaction helpers.
+`data.parquet` reads file metadata and browsing windows through DuckDB;
 each request owns a short-lived connection. Paths are passed directly to DuckDB;
 callers supply paths that DuckDB can read without escaping or aliases.
 `query.engine.execute_query` owns SQL execution, timing, source issues and errors
@@ -19,12 +20,12 @@ on the same shared primitives. Arrow holds cached pages and supplies display
 values. Keep paging order, type conversions, budgets and cancellation tests at
 these boundaries; distribution checks exercise both browsing and SQL.
 
-`TablePane` owns the shared table layout and releases cached data on unmount.
-`SourcePane` owns its paging worker, while `ResultPane` displays a completed SQL
-preview. The app owns source metadata loading and the catalog, so closing a tab
-does not remove a source from SQL. `QueryScreen` awaits query execution and only
-delivers results for the current request. Cover these ownership and lifecycle
-boundaries in integration tests, using events to coordinate native reads.
+`TablePane` displays loaded Arrow data or a source awaiting metadata. Source tabs
+own their paging workers; every tab releases cached data on unmount. The app owns
+source metadata loading and the catalog, so closing a tab does not remove a source
+from SQL. `QueryScreen` awaits query execution and only delivers results for the
+current request. Cover these ownership and lifecycle boundaries in integration
+tests, using events to coordinate native reads.
 
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and
 Windows on Python 3.12. Detailed UI scenarios run once; the other jobs run

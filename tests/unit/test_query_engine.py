@@ -13,7 +13,6 @@ import pytest
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.data import duckdb as engine
-from parqx.data.batch import bounded_prefix
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
@@ -175,6 +174,7 @@ def test_cancel_during_preview_and_after_close(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     control = QueryControl()
+    bounded_prefix = engine._bounded_prefix  # pyright: ignore[reportPrivateUsage]
 
     def cancel_after_first_batch(
         batch: pa.RecordBatch, budget: int, *, allow_one: bool
@@ -182,7 +182,7 @@ def test_cancel_during_preview_and_after_close(
         control.cancel()
         return bounded_prefix(batch, budget, allow_one=allow_one)
 
-    monkeypatch.setattr(engine, "bounded_prefix", cancel_after_first_batch)
+    monkeypatch.setattr(engine, "_bounded_prefix", cancel_after_first_batch)
     with (
         QuerySession(
             sources(small_parquet),

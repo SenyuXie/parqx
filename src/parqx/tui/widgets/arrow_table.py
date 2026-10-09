@@ -575,7 +575,7 @@ class ArrowTable(ScrollView, can_focus=True):
             self.arrow_table = arrow_table
             """The data table."""
             self.row_index = row_index
-            """The index for the column."""
+            """The index for the row."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:

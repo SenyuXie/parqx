@@ -1,7 +1,10 @@
+# Inspect preview internals to enforce Arrow allocation and precision guarantees.
+# pyright: reportPrivateUsage=false
+
 import pyarrow as pa
 import pytest
 
-from parqx.data.batch import bounded_prefix, compact_batch
+from parqx.data.duckdb import _bounded_prefix, _compact_batch
 
 
 def test_dictionary_prefix_budget_excludes_later_references() -> None:
@@ -9,8 +12,8 @@ def test_dictionary_prefix_budget_excludes_later_references() -> None:
         pa.array([0, 0, 0, 1], type=pa.int8()), pa.array(["ok", "x" * 8192])
     )
     batch = pa.RecordBatch.from_arrays([column], names=["category"])
-    assert bounded_prefix(batch, 10, allow_one=False) == 3
-    kept = compact_batch(batch.slice(0, 3))
+    assert _bounded_prefix(batch, 10, allow_one=False) == 3
+    kept = _compact_batch(batch.slice(0, 3))
     assert kept.nbytes == 10
     assert kept.column(0)[0].as_py() == column[0].as_py()
     assert pa.Table.from_batches([kept]).get_total_buffer_size() < 128
@@ -28,15 +31,15 @@ def test_dictionary_compaction_preserves_order_nulls_and_nested_precision() -> N
         metadata={"table": "kept"},
     )
     batch = pa.RecordBatch.from_arrays([column], schema=schema)
-    compact = compact_batch(batch)
+    compact = _compact_batch(batch)
     assert compact.schema.equals(schema, check_metadata=True)
     kept = compact.column(0)
     assert isinstance(kept, pa.DictionaryArray)
     assert [index.as_py() for index in kept.indices] == [2, None, 0, 2, 1]
     assert len(kept.dictionary) == 3
     assert list(kept.dictionary_decode()) == list(column.dictionary_decode())
-    assert bounded_prefix(batch, compact.nbytes, allow_one=False) == batch.num_rows
-    assert bounded_prefix(batch, compact.nbytes - 1, allow_one=False) < batch.num_rows
+    assert _bounded_prefix(batch, compact.nbytes, allow_one=False) == batch.num_rows
+    assert _bounded_prefix(batch, compact.nbytes - 1, allow_one=False) < batch.num_rows
 
 
 def test_all_null_dictionary_drops_every_value() -> None:
@@ -44,13 +47,13 @@ def test_all_null_dictionary_drops_every_value() -> None:
         pa.array([None] * 16, type=pa.int8()), pa.array(["x" * 8192])
     )
     batch = pa.RecordBatch.from_arrays([column], names=["category"])
-    compact = compact_batch(batch)
+    compact = _compact_batch(batch)
     kept = compact.column(0)
     assert isinstance(kept, pa.DictionaryArray)
     assert len(kept.dictionary) == 0
     assert kept.null_count == 16
     assert compact.nbytes == 18
-    assert bounded_prefix(batch, 18, allow_one=False) == 16
+    assert _bounded_prefix(batch, 18, allow_one=False) == 16
     assert pa.Table.from_batches([compact]).get_total_buffer_size() < 128
 
 
@@ -79,7 +82,7 @@ def test_nested_dictionary_types_preserve_masks_and_fields(kind: str) -> None:
         values = [["ok"], None, ["x" * 8192]]
     array = pa.array(values, type=data_type)
     batch = pa.RecordBatch.from_arrays([array], names=["nested"])
-    result = compact_batch(batch.slice(0, 2))
+    result = _compact_batch(batch.slice(0, 2))
     assert result.schema.equals(batch.schema, check_metadata=True)
     assert not result.column(0)[1].is_valid
     assert result.nbytes < 128
@@ -92,7 +95,7 @@ def test_nested_dictionary_types_preserve_masks_and_fields(kind: str) -> None:
         assert kept.field("time")[0] == array.field("time")[0]
     else:
         assert result.column(0)[0].as_py() == array[0].as_py()
-    assert bounded_prefix(batch, result.nbytes, allow_one=False) == 2
+    assert _bounded_prefix(batch, result.nbytes, allow_one=False) == 2
 
 
 @pytest.mark.parametrize(
@@ -124,7 +127,7 @@ def test_dictionary_budget_measurement_has_bounded_allocations(
     pool = pa.proxy_memory_pool(parent)
     try:
         pa.set_memory_pool(pool)
-        keep = bounded_prefix(batch, 4096, allow_one=True)
+        keep = _bounded_prefix(batch, 4096, allow_one=True)
         peak = pool.max_memory()
     finally:
         pa.set_memory_pool(parent)

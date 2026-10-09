@@ -25,7 +25,7 @@ from parqx.catalog import SourceCatalog, SourceIssue
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryLimits, QueryResult
 from parqx.tui.screens.query import QueryScreen
-from parqx.tui.widgets import ArrowTable, ResultPane, SourcePane, TablePane
+from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,9 @@ class ParqxApp(App[Any]):
                 title = source.display_name
                 if name_counts[title.casefold()] > 1:
                     title += f" · {source.quoted_name}"
-                pane = SourcePane(title, source, self._source_pool)
+                pane = TablePane(
+                    title, source, id=source.source_id, executor=self._source_pool
+                )
                 await self._tabs.add_pane(pane)
                 self._tabs.get_tab(source.source_id).tooltip = Content(str(source.path))
                 if entry.issue is not None:
@@ -189,14 +191,14 @@ class ParqxApp(App[Any]):
         pane = self._tabs.active_pane
         return pane.table if isinstance(pane, TablePane) else None
 
-    def _source_pane(self, source_id: str) -> SourcePane | None:
+    def _source_pane(self, source_id: str) -> TablePane | None:
         if not self._tabs.is_mounted:
             return None
         try:
             pane = self._tabs.get_pane(source_id)
         except NoMatches:
             return None
-        return pane if isinstance(pane, SourcePane) else None
+        return pane if isinstance(pane, TablePane) else None
 
     def _focus_active_table(self) -> None:
         if not self.screen.is_modal and (table := self._active_table()) is not None:
@@ -261,10 +263,8 @@ class ParqxApp(App[Any]):
             async with self._tab_lock:
                 self._query_number += 1
                 pane_id = f"query-{self._query_number}"
-                pane = ResultPane(
-                    f"Query {self._query_number}",
-                    id=pane_id,
-                    table=result.preview.table,
+                pane = TablePane(
+                    f"Query {self._query_number}", result.preview.table, id=pane_id
                 )
                 await self._tabs.add_pane(pane)
                 self._tabs.get_tab(pane_id).tooltip = Content(
