@@ -1,8 +1,8 @@
 # Parqx 原生组件重构计划
 
-状态：待实施。目标分支：`refactor`。
+状态：已完成本地实现与验证。目标分支：`refactor`。
 
-本文汇总本次架构调整的设计决定，包括统一配置、移除主动中断、分页防抖，以及直接使用 Arrow 数据。文中接口表示目标设计，不代表当前代码已经完成迁移。
+本文汇总本次架构调整的设计决定，包括统一配置、移除主动中断、分页防抖，以及直接使用 Arrow 数据。文中接口已完成迁移；本次没有新增依赖、CLI 参数或配置文件机制。
 
 ## 1. 目标与设计边界
 
@@ -155,3 +155,12 @@ app = ParqxApp(paths, config=config)
 防抖和并发测试使用可控的完成信号与 timer 回调验证提交顺序，避免依赖长时间真实休眠。无需为纯转发或命名变化增加测试。
 
 完成完整 pytest、Ruff lint/format 检查、mypy、使用项目解释器的 Pyright，以及现有 wheel/sdist 分发安装检查。本次不新增功能、配置文件机制、性能基准或截图测试项目。
+
+
+### 实施记录
+
+- [#24](https://github.com/SenyuXie/parqx/issues/24)：统一 `ParqxConfig`，贯通 App、SQL、来源连接、分页预算、缓存和来源线程池。
+- [#25](https://github.com/SenyuXie/parqx/issues/25)：移除主动中断和 `QuerySession`，使用 Textual 线程 worker；完成单次 timer 防抖与每 pane 一个已提交读取的调度。
+- [#26](https://github.com/SenyuXie/parqx/issues/26)：结果直接使用 `pa.Table`，来源使用 `PageCache`，展平 `QueryResult`，统一 `replace_data`。
+- 本地验收：pytest、Ruff lint/format、mypy、Pyright，以及 wheel/sdist 的隔离安装检查。平台验证在当前 macOS / Python 3.12 环境完成，其他系统及 Python 版本由现有 CI 矩阵覆盖。
+- 查询执行期间 Esc 和关闭动作禁用；退出时已开始的原生读取自然完成，不承诺立即结束进程。

@@ -47,16 +47,15 @@ def _open_source(path: Path, config: ParqxConfig) -> ParquetSource:
 
 def _query_result_details(result: QueryResult) -> str:
     """Format preview status, SQL and source warnings for a result tab."""
-    preview = result.preview
     status = (
-        f"preview, {preview.reason} · total unknown"
-        if preview.truncated
+        f"preview, {result.truncation_reason} · total unknown"
+        if result.truncation_reason is not None
         else "complete"
     )
     if result.issues:
         status += f" · warning: {len(result.issues)} sources unavailable"
     details = (
-        f"{preview.table.num_rows:,} rows · {status} · {result.elapsed:.2f}s"
+        f"{result.table.num_rows:,} rows · {status} · {result.elapsed:.2f}s"
         f"\n\n{result.sql}"
     )
     if result.issues:
@@ -277,7 +276,7 @@ class ParqxApp(App[Any]):
                 pane_id = f"query-{self._query_number}"
                 pane = TablePane(
                     f"Query {self._query_number}",
-                    result.preview.table,
+                    result.table,
                     id=pane_id,
                     config=self.config,
                 )

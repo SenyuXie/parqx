@@ -140,15 +140,14 @@ def check_multi_source_query() -> None:
         assert len(catalog.entries) == 2
         for entry in catalog.entries:
             catalog.mark_ready(entry.spec.source_id)
-        session = execute_query(
+        result = execute_query(
             catalog.snapshot(),
             'SELECT count(*), sum(o.amount) FROM "users" u JOIN "orders" o ON u.id = o.user_id',
             config=ParqxConfig(preview_rows=1),
         )
-        preview = session.preview
-        assert preview.table.column(0)[0].as_py() == 3
-        assert preview.table.column(1)[0].as_py() == 32
-        assert not preview.truncated
+        assert result.table.column(0)[0].as_py() == 3
+        assert result.table.column(1)[0].as_py() == 32
+        assert result.truncation_reason is None
     print("OK: multi-source JOIN reads complete inputs with a bounded preview")
 
 

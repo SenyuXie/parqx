@@ -12,7 +12,7 @@ import pyarrow as pa
 
 from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import QueryPreview, connect, read_preview
+from parqx.data.duckdb import connect, read_preview
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,10 @@ class QueryResult:
     """A completed SQL preview, timing and source availability warnings."""
 
     sql: str
-    preview: QueryPreview
+    table: pa.Table
     elapsed: float
     issues: tuple[SourceIssue, ...] = ()
+    truncation_reason: str | None = None
 
 
 class QueryExecutionError(Exception):
@@ -70,12 +71,12 @@ def execute_query(
                 relation.create_view(source.table_name, replace=False)
             relation = connection.sql(sql)
             with closing(relation.to_arrow_reader(config.query_batch_rows)) as reader:
-                preview = read_preview(
+                table, reason = read_preview(
                     reader,
                     row_limit=config.preview_rows,
                     byte_limit=config.preview_bytes,
                 )
-        return QueryResult(sql, preview, perf_counter() - started, tuple(issues))
+        return QueryResult(sql, table, perf_counter() - started, tuple(issues), reason)
     except Exception as exc:
         if not isinstance(
             exc, (duckdb.Error, pa.ArrowException, OSError, ValueError, MemoryError)

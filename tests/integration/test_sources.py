@@ -17,7 +17,7 @@ from textual.widgets import Static, TabbedContent
 
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import DataPage
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import (
@@ -242,10 +242,12 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                     tabs.get_pane("source-1").query_one(ArrowTable).data
                 )
                 second_table = tabs.get_pane("source-2").query_one(ArrowTable)
+                second_cache = second_table.data
+                assert isinstance(second_cache, PageCache)
                 await select_tab(tabs, "source-2", pilot)
-                await wait_for(lambda: second_table.data.peek(0, 0) is not None, pilot)
+                await wait_for(lambda: second_cache.peek(0, 0) is not None, pilot)
                 assert second_table.get_cell_at(Coordinate(0, 0)).as_py() == 10_000
-                assert second_table.data.peek(4_999, 0) is None
+                assert second_cache.peek(4_999, 0) is None
                 assert not first_returned.is_set()
 
                 second_table.focus()
@@ -264,11 +266,9 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 await wait_for(first_returned.is_set, pilot)
                 await pilot.pause()
                 assert not tabs.query("#source-1")
-                assert second_table.data.peek(4_999, 0) is None
+                assert second_cache.peek(4_999, 0) is None
                 second_release.set()
-                await wait_for(
-                    lambda: second_table.data.peek(4_999, 0) is not None, pilot
-                )
+                await wait_for(lambda: second_cache.peek(4_999, 0) is not None, pilot)
                 assert second_table.get_cell_at(Coordinate(4_999, 0)).as_py() == 14_999
                 assert not app.load_errors
                 notify.assert_not_called()

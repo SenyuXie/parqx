@@ -17,13 +17,13 @@ from textual.coordinate import Coordinate
 from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import DataPage, TableData
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import open_query, wait_for
 
 
-async def test_replace_table_resets_mounted_layout() -> None:
+async def test_replace_data_resets_mounted_layout() -> None:
     table = ArrowTable(
         pa.table({f"old_{index}": list(range(200)) for index in range(30)}),
         cursor_type="cell",
@@ -46,7 +46,7 @@ async def test_replace_table_resets_mounted_layout() -> None:
         assert table.hover_coordinate != Coordinate(0, 0)
         old_size = table.virtual_size
 
-        table.replace_table(pa.table({"new": ["replacement", "second"]}))
+        table.replace_data(pa.table({"new": ["replacement", "second"]}))
         await pilot.pause()
 
         assert (table.row_count, table.column_count) == (2, 1)
@@ -65,13 +65,13 @@ async def test_replace_table_resets_mounted_layout() -> None:
         assert "replacement" in table.render_line(1).text
 
         # Empty results still expose their schema and can be replaced again.
-        table.replace_table(pa.table({"empty": pa.array([], type=pa.int64())}))
+        table.replace_data(pa.table({"empty": pa.array([], type=pa.int64())}))
         await pilot.pause()
         assert table.row_count == 0
         assert table.virtual_size.height == 1
         assert "empty" in table.render_line(0).text
 
-        table.replace_table(pa.table({"restored": [42]}))
+        table.replace_data(pa.table({"restored": [42]}))
         await pilot.pause()
         assert table.virtual_size.height == 2
         assert "restored" in table.render_line(0).text
@@ -80,7 +80,7 @@ async def test_replace_table_resets_mounted_layout() -> None:
 
 async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -> None:
     schema = pa.table({"value": [0]}).schema
-    data = TableData(schema, 10_000, cache_bytes=32 * 1024 * 1024)
+    data = PageCache(schema, 10_000, cache_bytes=32 * 1024 * 1024)
     table = ArrowTable(data)
     requests: list[ArrowTable.WindowRequested] = []
     selected: list[ArrowTable.CellSelected] = []
@@ -135,7 +135,7 @@ async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -
 
 
 async def test_small_cache_does_not_reload_visible_rows_forever() -> None:
-    data = TableData(pa.table({"value": [0]}).schema, 1_000, cache_bytes=8)
+    data = PageCache(pa.table({"value": [0]}).schema, 1_000, cache_bytes=8)
     table = ArrowTable(data)
     requests: list[int] = []
 
@@ -205,20 +205,22 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
         async with app.run_test(size=(60, 15)) as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             table = app.query_one(ArrowTable)
+            cache = table.data
+            assert isinstance(cache, PageCache)
             assert table.row_count == 100_000
-            await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
-            assert table.data.peek(50_000, 0) is None
+            await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
+            assert cache.peek(50_000, 0) is None
             await pilot.press("ctrl+end")
-            await wait_for(lambda: table.data.peek(99_999, 0) is not None, pilot)
+            await wait_for(lambda: cache.peek(99_999, 0) is not None, pilot)
             assert table.get_cell_at(Coordinate(99_999, 0)).as_py() == 99_999
             assert table.cursor_row == 99_999
             assert len(reads) <= 4
             assert all(0 < stop - start <= 4_096 for start, stop in reads)
-            assert table.data.cache_bytes <= table.data.cache_budget
+            assert cache.cache_bytes <= cache.cache_budget
 
             table.focus()
             await pilot.press("ctrl+home")
-            await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+            await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
             assert table.get_cell_at(Coordinate(0, 0)).as_py() == 0
 
 
@@ -237,9 +239,11 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
         async with app.run_test(size=(60, 15)) as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             table = app.query_one(ArrowTable)
-            await wait_for(lambda: table.data.peek(4_095, 0) is not None, pilot)
+            cache = table.data
+            assert isinstance(cache, PageCache)
+            await wait_for(lambda: cache.peek(4_095, 0) is not None, pilot)
             assert reads == [(0, 4_096)]
-            assert table.data.peek(4_096, 0) is None
+            assert cache.peek(4_096, 0) is None
 
             for row in (256, 512, 1_024, 2_048, 4_000):
                 table.move_cursor(row=row, animate=False)
@@ -249,10 +253,10 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
                 assert reads == [(0, 4_096)]
 
             table.move_cursor(row=4_096, animate=False)
-            await wait_for(lambda: table.data.peek(4_096, 0) is not None, pilot)
+            await wait_for(lambda: cache.peek(4_096, 0) is not None, pilot)
             assert reads == [(0, 4_096), (4_096, 8_192)]
             assert table.get_cell_at(Coordinate(4_096, 0)).as_py() == 4_096
-            assert table.data.cache_bytes <= table.data.cache_budget
+            assert cache.cache_bytes <= cache.cache_budget
 
 
 async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> None:
@@ -270,13 +274,15 @@ async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> N
             try:
                 await wait_for(started.is_set, pilot)
                 table = app.query_one(ArrowTable)
-                assert table.data.peek(0, 0) is None
+                cache = table.data
+                assert isinstance(cache, PageCache)
+                assert cache.peek(0, 0) is None
                 await pilot.press("down", "right", "enter")
                 assert table.cursor_coordinate == Coordinate(1, 1)
                 query = await open_query(app, pilot)
                 screen = app.screen
                 release.set()
-                await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+                await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
                 assert app.screen is screen
                 assert query.editor.has_focus
                 assert table.cursor_coordinate == Coordinate(1, 1)
@@ -300,15 +306,17 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         table = app.query_one(ArrowTable)
-        await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+        cache = table.data
+        assert isinstance(cache, PageCache)
+        await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
         with patch.object(ParquetSource, "read_window", record_read):
             # Deliver multiple requests before any new worker can start.
             pane = app.query_one(TablePane)
             for start in (5_000, 7_000, 9_000):
                 pane._on_window_requested(  # pyright: ignore[reportPrivateUsage]
-                    ArrowTable.WindowRequested(table, table.data, start, start + 100)
+                    ArrowTable.WindowRequested(table, cache, start, start + 100)
                 )
-            await wait_for(lambda: table.data.peek(9_999, 0) is not None, pilot)
+            await wait_for(lambda: cache.peek(9_999, 0) is not None, pilot)
             assert reads == [9_000]
             assert table.get_cell_at(Coordinate(9_999, 0)).as_py() == 9_999
             await pilot.pause()
@@ -344,6 +352,8 @@ async def test_window_error_waits_for_navigation_before_retry(
         async with app.run_test() as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
             table = app.query_one(ArrowTable)
+            cache = table.data
+            assert isinstance(cache, PageCache)
             await wait_for(lambda: notify.called, pilot)
             message = str(notify.call_args.args[0])
             assert "temporarily unavailable" in message
@@ -364,7 +374,7 @@ async def test_window_error_waits_for_navigation_before_retry(
             assert calls == 1
             assert not app.load_errors
             await pilot.press("ctrl+end")
-            await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
+            await wait_for(lambda: cache.peek(999, 0) is not None, pilot)
             assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
             assert notify.call_count == 1
 
@@ -456,7 +466,7 @@ async def test_replacing_source_data_discards_pending_page_and_error(
                 await wait_for(started.is_set, pilot)
                 table = app.query_one(ArrowTable)
                 old_data = weakref.ref(table.data)
-                table.replace_table(pa.table({"current": [42]}))
+                table.replace_data(pa.table({"current": [42]}))
                 with (
                     patch.object(
                         table, "accept_page", wraps=table.accept_page
@@ -469,7 +479,7 @@ async def test_replacing_source_data_discards_pending_page_and_error(
                     await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                     await pilot.pause()
                     assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
-                    assert table.data.cache_bytes == 0
+                    assert isinstance(table.data, pa.Table)
                     gc.collect()
                     assert old_data() is None
                     accept.assert_not_called()

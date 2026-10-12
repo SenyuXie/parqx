@@ -36,7 +36,7 @@ def test_error_does_not_poison_next_execution(small_parquet: Path) -> None:
         )
     assert isinstance(raised.value.__cause__, duckdb.BinderException)
     result = execute_query(sources(small_parquet), "SELECT 42", config=ParqxConfig())
-    assert result.preview.table.column(0)[0].as_py() == 42
+    assert result.table.column(0)[0].as_py() == 42
     assert result.sql == "SELECT 42"
     assert result.elapsed >= 0
 
@@ -113,7 +113,7 @@ def test_native_resources_close_in_order_even_after_failures(
                 )
         else:
             result = execute_query((), "SELECT 42", config=ParqxConfig())
-            assert result.preview.table.column(0)[0].as_py() == 42
+            assert result.table.column(0)[0].as_py() == 42
     assert closed == (
         ["connection"] if failure == "query" else ["reader", "connection"]
     )
@@ -133,7 +133,7 @@ def test_source_warnings_survive_success_error_and_recovery(
     result = execute_query(
         inputs, "SELECT count(*) FROM smoke", config=ParqxConfig(), unavailable=earlier
     )
-    assert result.preview.table.column(0)[0].as_py() == 5
+    assert result.table.column(0)[0].as_py() == 5
     assert len(result.issues) == 2
     assert result.issues[0] == earlier[0]
     assert result.issues[1].source == inputs[1]
@@ -151,7 +151,7 @@ def test_source_warnings_survive_success_error_and_recovery(
     recovered = execute_query(
         inputs, "SELECT count(*) FROM unavailable", config=ParqxConfig()
     )
-    assert recovered.preview.table.column(0)[0].as_py() == 5
+    assert recovered.table.column(0)[0].as_py() == 5
     assert not recovered.issues
 
 
@@ -174,8 +174,8 @@ def test_join_and_three_source_cte(small_parquet: Path, tmp_path: Path) -> None:
         config=ParqxConfig(),
     )
     assert {
-        name: [value.as_py() for value in result.preview.table.column(name)]
-        for name in result.preview.table.column_names
+        name: [value.as_py() for value in result.table.column(name)]
+        for name in result.table.column_names
     } == {"id": [1, 3], "cost": [31, 7]}
     assert result.issues == ()
 
@@ -192,10 +192,10 @@ def test_preview_limit_preserves_full_multi_source_input(
         config=ParqxConfig(preview_rows=1),
     )
     assert {
-        name: [value.as_py() for value in result.preview.table.column(name)]
-        for name in result.preview.table.column_names
+        name: [value.as_py() for value in result.table.column(name)]
+        for name in result.table.column_names
     } == {"n": [7], "total": [45]}
-    assert not result.preview.truncated
+    assert not result.truncation_reason is not None
 
 
 def test_no_implicit_data_alias_but_actual_data_file_is_available(
@@ -210,7 +210,7 @@ def test_no_implicit_data_alias_but_actual_data_file_is_available(
     result = execute_query(
         sources(path), "SELECT count(*) FROM data", config=ParqxConfig()
     )
-    assert result.preview.table.column(0)[0].as_py() == 5
+    assert result.table.column(0)[0].as_py() == 5
 
 
 @pytest.mark.parametrize("name", ['销售 many.dots-"items"', "select"])
@@ -221,7 +221,7 @@ def test_sql_identifiers_are_registered_without_rewriting(
     result = execute_query(
         (source,), f"SELECT count(*) FROM {source.quoted_name}", config=ParqxConfig()
     )
-    assert result.preview.table.column(0)[0].as_py() == 5
+    assert result.table.column(0)[0].as_py() == 5
 
 
 def test_python_variables_are_not_implicit_query_sources() -> None:

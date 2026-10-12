@@ -21,17 +21,22 @@ previews, including private batch budgeting and compaction helpers.
 each request owns a short-lived connection. Paths are passed directly to DuckDB;
 callers supply paths that DuckDB can read without escaping or aliases.
 `query.engine.execute_query` owns SQL execution, timing, source issues and errors
-on the same shared primitives. Arrow holds cached pages and supplies display
-values. Keep paging order, type conversions, budgets and resource cleanup tests at
+on the same shared primitives. Loaded results remain native `pa.Table` objects.
+`PageCache` only holds source
+metadata and bounded `DataPage` windows. `ArrowTable.replace_data` accepts either
+kind and resets navigation and rendering when data changes. Keep paging order,
+type conversions, budgets and resource cleanup tests at
 these boundaries; distribution checks exercise both browsing and SQL.
 
 `TablePane` displays loaded Arrow data or a source awaiting metadata. Source tabs
 own one submitted page read and one latest pending window, using Textual timers
 for trailing debounce; every tab releases cached data on unmount. The app owns
 source metadata loading and the catalog, so closing a tab does not remove a source
-from SQL. `QueryScreen` runs a Textual thread worker and handles its completion message
+from SQL. `QueryScreen` runs a Textual thread worker and handles its completion
+message
 on the UI thread. Editing, closing and resubmitting stay disabled until delivery.
-Native reads finish naturally after UI exit, with no interrupt or shutdown deadline. Cover these ownership and lifecycle boundaries in integration
+Native reads finish naturally after UI exit, with no interrupt or shutdown
+deadline. Cover these ownership and lifecycle boundaries in integration
 tests, using events to coordinate native reads.
 
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and

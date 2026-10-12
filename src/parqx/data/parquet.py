@@ -92,8 +92,8 @@ class ParquetSource:
                 str(self.path), hive_partitioning=False
             ).limit(stop - start, offset=start)
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
-                preview = read_preview(
+                table, _ = read_preview(
                     reader, row_limit=stop - start, byte_limit=self.page_bytes
                 )
         self._check_unchanged()
-        return DataPage(start, preview.table)
+        return DataPage(start, table)

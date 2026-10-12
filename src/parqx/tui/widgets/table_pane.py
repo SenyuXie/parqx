@@ -17,7 +17,7 @@ from textual.widgets import Static, TabPane
 from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import TableData
+from parqx.data.view import PageCache
 from parqx.tui.widgets.arrow_table import ArrowTable
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class TablePane(TabPane):
     def __init__(
         self,
         title: str,
-        data: pa.Table | TableData | SourceSpec,
+        data: pa.Table | SourceSpec,
         *,
         id: str,
         config: ParqxConfig,
@@ -68,7 +68,7 @@ class TablePane(TabPane):
         self._source: ParquetSource | None = None
         self._page_timer: Timer | None = None
         self._pending_window: (
-            tuple[int, int, weakref.ReferenceType[TableData]] | None
+            tuple[int, int, weakref.ReferenceType[PageCache]] | None
         ) = None
         self._request_number = 0
         self._reading = False
@@ -95,7 +95,7 @@ class TablePane(TabPane):
         self._clear_pending()
         self._source = source
         self._error.display = False
-        data = TableData(
+        data = PageCache(
             source.schema, source.row_count, cache_bytes=self._config.page_cache_bytes
         )
         if self.table is None:
@@ -176,7 +176,7 @@ class TablePane(TabPane):
         start: int,
         stop: int,
         request: int,
-        data: weakref.ReferenceType[TableData],
+        data: weakref.ReferenceType[PageCache],
     ) -> None:
         # Native work receives no widget or cache. Unmount can cancel the async
         # wait (and queued work); an already running native read finishes naturally.
@@ -206,7 +206,7 @@ class TablePane(TabPane):
         self,
         source: ParquetSource,
         request: int,
-        data: weakref.ReferenceType[TableData],
+        data: weakref.ReferenceType[PageCache],
     ) -> ArrowTable | None:
         if (
             self.is_mounted
@@ -224,5 +224,5 @@ class TablePane(TabPane):
         self._clear_pending()
         self._source = None
         if self.table is not None:
-            self.table.replace_table(pa.table({}))
+            self.table.replace_data(pa.table({}))
             self.table = None

@@ -13,7 +13,7 @@ from textual.timer import Timer
 from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import DataPage
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import wait_for
 
@@ -71,11 +71,13 @@ async def test_latest_window_waits_for_both_timer_and_native_completion(
                     await pane.set_source(source)
                     table = pane.table
                     assert table is not None
+                    cache = table.data
+                    assert isinstance(cache, PageCache)
                     with patch.object(
                         pane, "set_timer", return_value=Mock(spec=Timer)
                     ) as timer:
                         pane.post_message(
-                            ArrowTable.WindowRequested(table, table.data, 0, 1)
+                            ArrowTable.WindowRequested(table, cache, 0, 1)
                         )
                         await pilot.pause()
                         if debounce:
@@ -86,7 +88,7 @@ async def test_latest_window_waits_for_both_timer_and_native_completion(
                             for start in (2, 4):
                                 pane.post_message(
                                     ArrowTable.WindowRequested(
-                                        table, table.data, start, start + 1
+                                        table, cache, start, start + 1
                                     )
                                 )
                             await pilot.pause()
@@ -101,7 +103,7 @@ async def test_latest_window_waits_for_both_timer_and_native_completion(
                         for start in (2, 4, 0):
                             pane.post_message(
                                 ArrowTable.WindowRequested(
-                                    table, table.data, start, start + 1
+                                    table, cache, start, start + 1
                                 )
                             )
                         await pilot.pause()
@@ -116,12 +118,25 @@ async def test_latest_window_waits_for_both_timer_and_native_completion(
                         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                         if debounce and not timer_first:
                             assert reads == [0]
-                            assert table.data.peek(0, 0) is None
+                            assert cache.peek(0, 0) is None
                             timer.call_args.args[1]()
-                        await wait_for(lambda: table.data.peek(0, 0) is not None, pilot)
+                        await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
                         assert reads == [0, 0]
-                        assert table.data.peek(0, 0).as_py() == 42  # type: ignore[union-attr]  # pyright: ignore[reportOptionalMemberAccess]
+                        scalar = cache.peek(0, 0)
+                        assert scalar is not None
+                        assert scalar.as_py() == 42
                         notify.assert_not_called()
+                        if debounce:
+                            pane.post_message(
+                                ArrowTable.WindowRequested(table, cache, 4, 5)
+                            )
+                            await pilot.pause()
+                            timer.return_value.stop.reset_mock()
+                            await pane.remove()
+                            timer.return_value.stop.assert_called_once()
+                            timer.call_args.args[1]()
+                            await pilot.pause()
+                            assert reads == [0, 0]
             finally:
                 pool_release.set()
                 release.set()

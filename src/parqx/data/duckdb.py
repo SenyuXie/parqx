@@ -4,27 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
 from tempfile import TemporaryDirectory
 from typing import cast
 
 import duckdb
 import pyarrow as pa
-
-
-@dataclass(frozen=True)
-class QueryPreview:
-    """A bounded result; truncation does not limit the query's input."""
-
-    table: pa.Table
-    """Result rows retained within the preview budgets."""
-    reason: str | None = None
-    """Budget that stopped reading, or None for a complete result."""
-
-    @property
-    def truncated(self) -> bool:
-        """Whether a preview budget stopped reading the result."""
-        return self.reason is not None
 
 
 @contextmanager
@@ -53,7 +37,7 @@ def connect(
 
 def read_preview(
     reader: pa.RecordBatchReader, *, row_limit: int, byte_limit: int
-) -> QueryPreview:
+) -> tuple[pa.Table, str | None]:
     """Read bounded Arrow rows, leaving reader cleanup to the caller.
 
     One oversized row is admitted. Decoder and engine allocations are separate
@@ -86,7 +70,7 @@ def read_preview(
         if keep < batch.num_rows:
             reason = "row limit" if rows >= row_limit else "byte budget"
             break
-    return QueryPreview(pa.Table.from_batches(batches, schema=schema), reason=reason)
+    return pa.Table.from_batches(batches, schema=schema), reason
 
 
 class _BudgetExceededError(Exception):

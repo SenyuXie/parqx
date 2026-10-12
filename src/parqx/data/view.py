@@ -23,12 +23,11 @@ class DataPage:
         return self.start + self.table.num_rows
 
 
-class TableData:
+class PageCache:
     """UI-owned metadata and a bounded Arrow page cache, without I/O on lookup.
 
     A missing cell returns None, distinct from an Arrow null scalar. Lazy views
-    keep an empty width sample; the widget measures pages as they arrive.
-    Already loaded tables keep their existing buffers through from_table.
+    retain only source metadata until bounded pages arrive.
     """
 
     def __init__(self, schema: pa.Schema, row_count: int, *, cache_bytes: int) -> None:
@@ -39,23 +38,12 @@ class TableData:
         self.row_count = row_count
         self.cache_budget = cache_bytes
         self.cache_bytes = 0
-        self.sample = pa.Table.from_batches([], schema=schema)
-        self._table: pa.Table | None = None
         self._pages: OrderedDict[int, DataPage] = OrderedDict()
-
-    @classmethod
-    def from_table(cls, table: pa.Table) -> TableData:
-        """Adapt an already loaded table without copying its Arrow buffers."""
-        data = cls(table.schema, table.num_rows, cache_bytes=max(1, table.nbytes))
-        data._table = data.sample = table
-        return data
 
     def peek(self, row: int, column: int) -> pa.Scalar | None:
         """Return cached data only, preserving the difference between null and miss."""
         if not (0 <= row < self.row_count and 0 <= column < len(self.schema)):
             raise IndexError((row, column))
-        if self._table is not None:
-            return self._table.column(column)[row]
         for key in reversed(self._pages):
             page = self._pages[key]
             if page.start <= row < page.stop:

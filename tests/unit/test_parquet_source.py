@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import TableData
+from parqx.data.view import PageCache
 
 
 def test_metadata_and_ordered_cross_group_windows(tmp_path: Path) -> None:
@@ -157,7 +157,7 @@ def test_window_does_not_retain_discarded_buffers(tmp_path: Path) -> None:
     assert page.table.num_rows == 1
     assert page.table.column(0)[0].as_py() == "small"
     assert page.table.get_total_buffer_size() < 1024
-    cache = TableData(source.schema, source.row_count, cache_bytes=32 * 1024 * 1024)
+    cache = PageCache(source.schema, source.row_count, cache_bytes=32 * 1024 * 1024)
     cache.add_page(page)
     assert cache.cache_bytes <= 16
 
