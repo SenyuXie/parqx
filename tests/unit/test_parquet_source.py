@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from threading import Event, Thread
 from unittest.mock import patch
 
 import duckdb
@@ -11,7 +10,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from parqx.data.duckdb import QueryCancelledError, QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import TableData
 
@@ -30,7 +28,7 @@ def test_metadata_and_ordered_cross_group_windows(tmp_path: Path) -> None:
         )
         assert source.row_count == 100
         for start, stop in [(-2, 2), (15, 22), (51, 80), (99, 101), (100, 100)]:
-            page = source.read_window(start, stop, QueryControl())
+            page = source.read_window(start, stop)
             assert page.start == max(start, 0)
             assert page.table.schema.equals(source.schema)
             assert page.table.equals(
@@ -61,7 +59,7 @@ def test_metadata_does_not_decode_column_data(tmp_path: Path) -> None:
     assert source.row_count == 1000
     assert source.schema.names == ["n"]
     with pytest.raises(duckdb.Error):
-        source.read_window(0, 256, QueryControl())
+        source.read_window(0, 256)
 
 
 def test_page_row_limit_is_independent_of_requested_window(tmp_path: Path) -> None:
@@ -75,7 +73,7 @@ def test_page_row_limit_is_independent_of_requested_window(tmp_path: Path) -> No
         memory_limit="256MB",
         threads=2,
     )
-    page = source.read_window(0, 8192, QueryControl())
+    page = source.read_window(0, 8192)
     assert page.table.equals(table.slice(0, 4096))
     assert (
         ParquetSource(
@@ -85,16 +83,13 @@ def test_page_row_limit_is_independent_of_requested_window(tmp_path: Path) -> No
             memory_limit="256MB",
             threads=2,
         )
-        .read_window(35, 80, QueryControl())
+        .read_window(35, 80)
         .stop
         == 39
     )
 
 
-@pytest.mark.parametrize("cancelled", [False, True])
-def test_empty_or_cancelled_request_creates_no_resources(
-    small_parquet: Path, cancelled: bool
-) -> None:
+def test_empty_request_creates_no_resources(small_parquet: Path) -> None:
     source = ParquetSource(
         small_parquet,
         page_rows=4096,
@@ -102,20 +97,13 @@ def test_empty_or_cancelled_request_creates_no_resources(
         memory_limit="256MB",
         threads=2,
     )
-    control = QueryControl()
-    if cancelled:
-        control.cancel()
     with (
         patch.object(Path, "stat", side_effect=AssertionError("stat")),
         patch("parqx.data.duckdb.duckdb.connect", side_effect=AssertionError("open")),
     ):
-        if cancelled:
-            with pytest.raises(QueryCancelledError):
-                source.read_window(0, 5, control)
-        else:
-            page = source.read_window(3, 2, control)
-            assert page.start == page.stop == 3
-            assert page.table.schema.equals(source.schema)
+        page = source.read_window(3, 2)
+        assert page.start == page.stop == 3
+        assert page.table.schema.equals(source.schema)
 
 
 def test_source_file_changes_are_rejected(small_parquet: Path) -> None:
@@ -128,7 +116,7 @@ def test_source_file_changes_are_rejected(small_parquet: Path) -> None:
     )
     small_parquet.write_bytes(b"changed")
     with pytest.raises(OSError, match=r"source file changed.*Reopen"):
-        source.read_window(0, 5, QueryControl())
+        source.read_window(0, 5)
 
 
 def test_window_byte_budget_applies_across_batches(tmp_path: Path) -> None:
@@ -139,13 +127,11 @@ def test_window_byte_budget_applies_across_batches(tmp_path: Path) -> None:
     source = ParquetSource(
         path, page_bytes=budget, page_rows=4096, memory_limit="256MB", threads=2
     )
-    page = source.read_window(0, 4096, QueryControl())
+    page = source.read_window(0, 4096)
     assert 256 < page.stop < 500
     assert page.table.equals(table.slice(0, page.stop))
     assert page.table.nbytes <= budget
-    assert source.read_window(page.stop, 4096, QueryControl()).table.equals(
-        table.slice(page.stop)
-    )
+    assert source.read_window(page.stop, 4096).table.equals(table.slice(page.stop))
 
 
 def test_single_oversized_value_can_be_read(tmp_path: Path) -> None:
@@ -155,12 +141,10 @@ def test_single_oversized_value_can_be_read(tmp_path: Path) -> None:
     source = ParquetSource(
         path, page_bytes=16, page_rows=4096, memory_limit="256MB", threads=2
     )
-    page = source.read_window(0, 2, QueryControl())
+    page = source.read_window(0, 2)
     assert page.table.num_rows == 1
     assert page.table.column(0)[0].as_py() == value
-    assert (
-        source.read_window(1, 2, QueryControl()).table.column(0)[0].as_py() == "small"
-    )
+    assert source.read_window(1, 2).table.column(0)[0].as_py() == "small"
 
 
 def test_window_does_not_retain_discarded_buffers(tmp_path: Path) -> None:
@@ -169,7 +153,7 @@ def test_window_does_not_retain_discarded_buffers(tmp_path: Path) -> None:
     source = ParquetSource(
         path, page_bytes=16, page_rows=4096, memory_limit="256MB", threads=2
     )
-    page = source.read_window(0, 2, QueryControl())
+    page = source.read_window(0, 2)
     assert page.table.num_rows == 1
     assert page.table.column(0)[0].as_py() == "small"
     assert page.table.get_total_buffer_size() < 1024
@@ -189,7 +173,7 @@ def test_empty_file_keeps_schema(tmp_path: Path) -> None:
         threads=2,
     )
     assert source.row_count == 0
-    page = source.read_window(0, 10, QueryControl())
+    page = source.read_window(0, 10)
     assert page.table.column_names == ["x"]
     assert page.start == page.stop == 0
 
@@ -210,7 +194,7 @@ def test_file_row_number_and_partition_named_directories_are_plain_data(
         threads=2,
     )
     assert source.schema.names == table.schema.names
-    assert source.read_window(1, 3, QueryControl()).table.equals(table.slice(1))
+    assert source.read_window(1, 3).table.equals(table.slice(1))
 
 
 def test_metadata_and_pages_share_duckdb_type_semantics(tmp_path: Path) -> None:
@@ -235,7 +219,7 @@ def test_metadata_and_pages_share_duckdb_type_semantics(tmp_path: Path) -> None:
         memory_limit="256MB",
         threads=2,
     )
-    page = source.read_window(0, 1, QueryControl())
+    page = source.read_window(0, 1)
     assert page.table.schema.equals(source.schema)
     assert source.schema.names == ["time", "category", "A", "a_1"]
     assert source.schema.field("category").type == pa.string()
@@ -280,12 +264,10 @@ def test_supported_decimal_precision_preserves_values(tmp_path: Path) -> None:
         memory_limit="256MB",
         threads=2,
     )
-    assert source.read_window(0, 1, QueryControl()).table.column(0)[0].as_py() == value
+    assert source.read_window(0, 1).table.column(0)[0].as_py() == value
 
 
-def test_cancellation_interrupts_a_native_window_and_next_read_succeeds(
-    small_parquet: Path,
-) -> None:
+def test_failed_read_closes_reader_before_connection(small_parquet: Path) -> None:
     source = ParquetSource(
         small_parquet,
         page_rows=4096,
@@ -293,68 +275,8 @@ def test_cancellation_interrupts_a_native_window_and_next_read_succeeds(
         memory_limit="256MB",
         threads=2,
     )
-    control = QueryControl()
-    entered, release, finished = Event(), Event(), Event()
-    errors: list[BaseException] = []
-    original_reader = duckdb.DuckDBPyRelation.to_arrow_reader
-
-    def gated_reader(
-        relation: duckdb.DuckDBPyRelation, batch_rows: int
-    ) -> pa.RecordBatchReader:
-        entered.set()
-        assert release.wait(timeout=10)
-        expensive = relation.query(
-            "source_rows",
-            "SELECT sum(sin(i)) AS value FROM source_rows, range(1000000000) t(i)",
-        )
-        return original_reader(expensive, batch_rows)
-
-    def read() -> None:
-        try:
-            source.read_window(0, 5, control)
-        except BaseException as exc:
-            errors.append(exc)
-        finally:
-            finished.set()
-
-    with patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", gated_reader):
-        thread = Thread(target=read, daemon=True)
-        thread.start()
-        try:
-            assert entered.wait(timeout=10)
-            control.cancel()
-            release.set()
-            assert finished.wait(timeout=5), "Native browsing query did not stop"
-            assert len(errors) == 1
-            assert isinstance(
-                errors[0], (QueryCancelledError, duckdb.InterruptException)
-            )
-        finally:
-            release.set()
-            control.cancel()
-            thread.join(timeout=5)
-            assert not thread.is_alive()
-    assert source.read_window(0, 1, QueryControl()).table.num_rows == 1
-
-
-def test_failed_read_detaches_before_closing_reader_and_connection(
-    small_parquet: Path,
-) -> None:
-    source = ParquetSource(
-        small_parquet,
-        page_rows=4096,
-        page_bytes=4 * 1024 * 1024,
-        memory_limit="256MB",
-        threads=2,
-    )
-    control = QueryControl()
     closed: list[str] = []
-    original_detach = control.detach
     original_close = duckdb.DuckDBPyConnection.close
-
-    def detach() -> None:
-        original_detach()
-        closed.append("control")
 
     def close_connection(connection: duckdb.DuckDBPyConnection) -> None:
         original_close(connection)
@@ -370,11 +292,10 @@ def test_failed_read_detaches_before_closing_reader_and_connection(
             closed.append("reader")
 
     with (
-        patch.object(control, "detach", detach),
         patch.object(duckdb.DuckDBPyConnection, "close", close_connection),
         patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()),
         pytest.raises(RuntimeError, match="read failed"),
     ):
-        source.read_window(0, 1, control)
-    assert closed.index("control") < closed.index("reader") < closed.index("connection")
+        source.read_window(0, 1)
+    assert closed.index("reader") < closed.index("connection")
     assert closed.count("reader") == closed.count("connection") == 1

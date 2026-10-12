@@ -28,9 +28,8 @@ import pyarrow.parquet as pq
 
 from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QuerySession
+from parqx.query.engine import execute_query
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
@@ -119,12 +118,12 @@ def check_parquet_browsing() -> None:
         )
         assert source.row_count == table.num_rows
         assert source.schema.names == table.column_names
-        first = source.read_window(0, table.num_rows, QueryControl())
+        first = source.read_window(0, table.num_rows)
         assert first.start == 0
         assert first.table.num_rows == 4_096
         assert first.table.nbytes <= 4 * 1024 * 1024
         assert first.table.equals(table.slice(0, 4_096))
-        later = source.read_window(4_200, 4_300, QueryControl())
+        later = source.read_window(4_200, 4_300)
         assert later.start == 4_200
         assert later.table.equals(table.slice(4_200, 100))
     print("OK: DuckDB browsing preserves row order and bounded windows")
@@ -141,14 +140,12 @@ def check_multi_source_query() -> None:
         assert len(catalog.entries) == 2
         for entry in catalog.entries:
             catalog.mark_ready(entry.spec.source_id)
-        with QuerySession(
+        session = execute_query(
             catalog.snapshot(),
-            'SELECT count(*), sum(o.amount) FROM "users" u '
-            'JOIN "orders" o ON u.id = o.user_id',
-            QueryControl(),
-            ParqxConfig(preview_rows=1),
-        ) as session:
-            preview = session.preview()
+            'SELECT count(*), sum(o.amount) FROM "users" u JOIN "orders" o ON u.id = o.user_id',
+            config=ParqxConfig(preview_rows=1),
+        )
+        preview = session.preview
         assert preview.table.column(0)[0].as_py() == 3
         assert preview.table.column(1)[0].as_py() == 32
         assert not preview.truncated

@@ -8,7 +8,6 @@ from pathlib import Path
 from threading import Event, get_ident
 from unittest.mock import patch
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -17,7 +16,6 @@ from textual.coordinate import Coordinate
 
 from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
 from parqx.tui.app import ParqxApp
@@ -192,12 +190,10 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
     reads: list[tuple[int, int]] = []
     original_read = ParquetSource.read_window
 
-    def record_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def record_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         assert get_ident() != ui_thread
         reads.append((start, stop))
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([path])
     with (
@@ -232,11 +228,9 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
     reads: list[tuple[int, int]] = []
     original_read = ParquetSource.read_window
 
-    def record_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def record_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         reads.append((start, stop))
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([path])
     with patch.object(ParquetSource, "read_window", record_read):
@@ -265,12 +259,10 @@ async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> N
     started, release = Event(), Event()
     original_read = ParquetSource.read_window
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         started.set()
         release.wait(timeout=5)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([small_parquet])
     with patch.object(ParquetSource, "read_window", delayed_read):
@@ -292,65 +284,6 @@ async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> N
                 release.set()
 
 
-async def test_new_window_cancels_old_read_and_discards_late_error(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "superseded.parquet"
-    pq.write_table(pa.table({"n": range(1_000)}), path, row_group_size=100)
-    started, release, returned, interrupted = Event(), Event(), Event(), Event()
-    cancellation: list[Event] = []
-    original_read = ParquetSource.read_window
-    original_interrupt = duckdb.DuckDBPyConnection.interrupt
-
-    def record_interrupt(connection: duckdb.DuckDBPyConnection) -> None:
-        original_interrupt(connection)
-        interrupted.set()
-
-    def delayed_first_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
-        if not started.is_set():
-            cancellation.append(control.cancelled)
-            with duckdb.connect() as connection:
-                control.attach(connection)
-                started.set()
-                try:
-                    assert release.wait(timeout=15)
-                    # Native work can finish after its worker was cancelled.
-                    raise OSError("obsolete window failed")
-                finally:
-                    control.detach()
-                    returned.set()
-        return original_read(source, start, stop, control)
-
-    app = ParqxApp([path])
-    with (
-        patch.object(ParquetSource, "read_window", delayed_first_read),
-        patch.object(duckdb.DuckDBPyConnection, "interrupt", record_interrupt),
-        patch.object(app, "notify", wraps=app.notify) as notify,
-    ):
-        async with app.run_test(size=(80, 18)) as pilot:
-            try:
-                await wait_for(started.is_set, pilot)
-                table = app.query_one(ArrowTable)
-                await pilot.press("ctrl+end")
-                await wait_for(lambda: table.data.peek(999, 0) is not None, pilot)
-                assert cancellation[0].is_set()
-                assert interrupted.is_set()
-                assert not returned.is_set()
-                assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
-
-                release.set()
-                await wait_for(returned.is_set, pilot)
-                await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
-                await pilot.pause()
-                assert table.data.peek(0, 0) is None
-                assert table.get_cell_at(Coordinate(999, 0)).as_py() == 999
-                notify.assert_not_called()
-            finally:
-                release.set()
-
-
 async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
     tmp_path: Path, recwarn: pytest.WarningsRecorder
 ) -> None:
@@ -359,11 +292,9 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
     reads: list[int] = []
     original_read = ParquetSource.read_window
 
-    def record_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def record_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         reads.append(start)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([path])
     async with app.run_test() as pilot:
@@ -398,14 +329,12 @@ async def test_window_error_waits_for_navigation_before_retry(
     original_read = ParquetSource.read_window
     calls = 0
 
-    def fail_first_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def fail_first_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise error_type("window temporarily unavailable")
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([path])
     with (
@@ -440,35 +369,10 @@ async def test_window_error_waits_for_navigation_before_retry(
             assert notify.call_count == 1
 
 
-async def test_shutdown_cancels_pending_source_window(small_parquet: Path) -> None:
-    started, finished = Event(), Event()
-    cancellation: list[Event] = []
-    original_read = ParquetSource.read_window
-
-    def wait_for_cancel(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
-        cancellation.append(control.cancelled)
-        started.set()
-        control.cancelled.wait(timeout=5)
-        try:
-            return original_read(source, start, stop, control)
-        finally:
-            finished.set()
-
-    app = ParqxApp([small_parquet])
-    with patch.object(ParquetSource, "read_window", wait_for_cancel):
-        async with app.run_test() as pilot:
-            await wait_for(started.is_set, pilot)
-    assert all(event.is_set() for event in cancellation)
-    assert finished.wait(timeout=2)
-
-
-async def test_source_pane_removal_cancels_read_and_releases_cache(
+async def test_source_pane_removal_releases_cache_while_read_finishes(
     small_parquet: Path,
 ) -> None:
     started, release, returned = Event(), Event(), Event()
-    controls: list[QueryControl] = []
     source = ParquetSource(
         small_parquet,
         page_rows=4096,
@@ -478,10 +382,7 @@ async def test_source_pane_removal_cancels_read_and_releases_cache(
     )
     spec = SourceCatalog([small_parquet]).entries[0].spec
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
-        controls.append(control)
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         started.set()
         try:
             assert release.wait(timeout=10)
@@ -518,7 +419,6 @@ async def test_source_pane_removal_cancels_read_and_releases_cache(
                 assert page_worker.node is pane
 
                 await pane.remove()
-                await wait_for(controls[0].cancelled.is_set, pilot)
                 assert pane.table is None
                 assert not returned.is_set()
 
@@ -539,9 +439,7 @@ async def test_replacing_source_data_discards_pending_page_and_error(
 ) -> None:
     started, release = Event(), Event()
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         started.set()
         assert release.wait(timeout=10)
         if fail:

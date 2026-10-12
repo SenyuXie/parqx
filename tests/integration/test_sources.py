@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event, Lock
 from unittest.mock import patch
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -15,10 +16,8 @@ from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
-from parqx.query.engine import QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import (
@@ -213,15 +212,10 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
     pq.write_table(pa.table({"n": range(10_000, 15_000)}), second, row_group_size=100)
     first_started, first_release, first_returned = Event(), Event(), Event()
     second_started, second_release = Event(), Event()
-    first_cancellations: list[Event] = []
-    second_cancellations: list[Event] = []
     original_read = ParquetSource.read_window
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         if source.path == first.resolve():
-            first_cancellations.append(control.cancelled)
             first_started.set()
             try:
                 assert first_release.wait(timeout=15)
@@ -230,10 +224,9 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
             finally:
                 first_returned.set()
         if start >= 4_096:
-            second_cancellations.append(control.cancelled)
             second_started.set()
             assert second_release.wait(timeout=15)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([first, second])
     with (
@@ -254,18 +247,13 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 assert second_table.get_cell_at(Coordinate(0, 0)).as_py() == 10_000
                 assert second_table.data.peek(4_999, 0) is None
                 assert not first_returned.is_set()
-                assert not any(event.is_set() for event in first_cancellations)
 
                 second_table.focus()
                 await pilot.press("ctrl+end")
                 await wait_for(second_started.is_set, pilot)
-                pending_second = second_cancellations[-1]
-                assert not pending_second.is_set()
                 await select_tab(tabs, "source-1", pilot)
                 await pilot.press("ctrl+w")
                 await wait_for(lambda: not tabs.query("#source-1"), pilot)
-                assert all(event.is_set() for event in first_cancellations)
-                assert not pending_second.is_set()
 
                 def cache_released() -> bool:
                     gc.collect()
@@ -277,7 +265,6 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 await pilot.pause()
                 assert not tabs.query("#source-1")
                 assert second_table.data.peek(4_999, 0) is None
-                assert not pending_second.is_set()
                 second_release.set()
                 await wait_for(
                     lambda: second_table.data.peek(4_999, 0) is not None, pilot
@@ -298,18 +285,14 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
         pq.write_table(pa.table({"n": [1, 2, 3]}), path)
     release, queued = Event(), Event()
     started = {path.resolve(): Event() for path in paths}
-    cancellations: list[Event] = []
     queued_cancelled: list[Callable[[], bool]] = []
     original_read = ParquetSource.read_window
     original_submit = ThreadPoolExecutor.submit
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
-        cancellations.append(control.cancelled)
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         started[source.path].set()
         assert release.wait(timeout=15)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     def track_submit[T, **P](
         executor: ThreadPoolExecutor,
@@ -342,7 +325,6 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
                 result = await run_query(app, pilot, "SELECT 42 AS answer")
                 assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
                 assert not release.is_set()
-                assert not any(event.is_set() for event in cancellations)
                 await select_tab(tabs, "source-5", pilot)
                 await wait_for(queued.is_set, pilot)
                 assert not started[paths[-1].resolve()].is_set()
@@ -354,7 +336,6 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
                     lambda: all(is_cancelled() for is_cancelled in queued_cancelled),
                     pilot,
                 )
-                assert not any(event.is_set() for event in cancellations)
                 release.set()
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                 assert not started[paths[-1].resolve()].is_set()
@@ -428,7 +409,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
     pending.write_bytes(small_parquet.read_bytes())
     metadata_started, metadata_release = Event(), Event()
     query_started, query_release = Event(), Event()
-    original_enter = QuerySession.__enter__
+    original_sql = duckdb.DuckDBPyConnection.sql
 
     def delayed_metadata(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == pending.resolve():
@@ -442,15 +423,17 @@ async def test_running_query_uses_frozen_sources_until_retried(
             threads=2,
         )
 
-    def delayed_enter(session: QuerySession) -> QuerySession:
+    def delayed_sql(
+        connection: duckdb.DuckDBPyConnection, sql: str
+    ) -> duckdb.DuckDBPyRelation:
         query_started.set()
         assert query_release.wait(timeout=15)
-        return original_enter(session)
+        return original_sql(connection, sql)
 
     app = ParqxApp([small_parquet, pending])
     with (
         patch("parqx.tui.app._open_source", delayed_metadata),
-        patch.object(QuerySession, "__enter__", delayed_enter),
+        patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
         patch.object(app, "notify", wraps=app.notify) as notify,
     ):
         async with app.run_test(size=(100, 24)) as pilot:

@@ -1,9 +1,8 @@
+"""SQL behavior and resource ownership at the execution/native boundary."""
+
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Thread, current_thread
-from time import monotonic
-from typing import cast
 from unittest.mock import patch
 
 import duckdb
@@ -14,90 +13,45 @@ import pytest
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data import duckdb as engine
-from parqx.query.engine import (
-    QueryCancelledError,
-    QueryControl,
-    QueryExecutionError,
-    QuerySession,
-    execute_query,
-)
+from parqx.query.engine import QueryExecutionError, execute_query
 
 
 def sources(*paths: Path) -> tuple[SourceSpec, ...]:
     return tuple(entry.spec for entry in SourceCatalog(paths).entries)
 
 
-def table_values(table: pa.Table) -> dict[str, list[object]]:
-    return {
-        name: [value.as_py() for value in table.column(name)]
-        for name in table.column_names
-    }
+@pytest.mark.parametrize(
+    "sql", ["", "SELECT 1; SELECT 2", "CREATE TABLE x AS SELECT 1"]
+)
+def test_rejects_statements_without_a_single_query(sql: str) -> None:
+    with pytest.raises(QueryExecutionError, match="one SELECT") as raised:
+        execute_query((), sql, config=ParqxConfig())
+    assert isinstance(raised.value.__cause__, ValueError)
 
 
-def test_execute_query_returns_result_after_cleanup(
-    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    inputs = sources(small_parquet)
-    unavailable = (SourceIssue(inputs[0], "Earlier source warning"),)
-    control = QueryControl()
-    closed: list[bool] = []
-    original_close = QuerySession.close
-
-    def close(session: QuerySession) -> None:
-        assert control.started.is_set()
-        assert not control.finished.is_set()
-        original_close(session)
-        closed.append(True)
-
-    monkeypatch.setattr(QuerySession, "close", close)
-    result = execute_query(
-        inputs, "SELECT 42 AS answer", control, unavailable=unavailable
-    )
-    assert table_values(result.preview.table) == {"answer": [42]}
-    assert result.sql == "SELECT 42 AS answer"
+def test_error_does_not_poison_next_execution(small_parquet: Path) -> None:
+    with pytest.raises(QueryExecutionError) as raised:
+        execute_query(
+            sources(small_parquet), "SELECT missing FROM smoke", config=ParqxConfig()
+        )
+    assert isinstance(raised.value.__cause__, duckdb.BinderException)
+    result = execute_query(sources(small_parquet), "SELECT 42", config=ParqxConfig())
+    assert result.preview.table.column(0)[0].as_py() == 42
+    assert result.sql == "SELECT 42"
     assert result.elapsed >= 0
-    assert result.issues == unavailable
-    assert closed == [True]
-    assert control.finished.is_set()
-
-
-@pytest.mark.parametrize("sql", ["SELECT 42 AS answer", "SELECT * FROM missing"])
-def test_execute_query_retains_unavailable_sources_on_success_and_failure(
-    tmp_path: Path, sql: str
-) -> None:
-    inputs = sources(tmp_path / "missing.parquet")
-    unavailable = (SourceIssue(inputs[0], "Still loading"),)
-    control = QueryControl()
-    if "missing" in sql:
-        with pytest.raises(QueryExecutionError) as raised:
-            execute_query(inputs, sql, control, unavailable=unavailable)
-        assert isinstance(raised.value.__cause__, duckdb.CatalogException)
-        issues = raised.value.issues
-    else:
-        result = execute_query(inputs, sql, control, unavailable=unavailable)
-        assert table_values(result.preview.table) == {"answer": [42]}
-        issues = result.issues
-    assert len(issues) == 2
-    assert issues[0] == unavailable[0]
-    assert issues[1].source == inputs[0]
-    assert control.started.is_set()
-    assert control.finished.is_set()
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("unexpected"), MemoryError()])
-def test_execute_query_wraps_constructor_failure_and_logs_unexpected_once(
+def test_native_failure_is_wrapped_and_unexpected_error_logged_once(
     failure: Exception, caplog: pytest.LogCaptureFixture
 ) -> None:
-    control = QueryControl()
     with (
-        patch("parqx.query.engine.QuerySession", side_effect=failure),
+        patch.object(duckdb, "connect", side_effect=failure),
         pytest.raises(QueryExecutionError) as raised,
     ):
-        execute_query((), "SELECT 42", control)
+        execute_query((), "SELECT 42", config=ParqxConfig())
     assert str(raised.value) == (str(failure) or type(failure).__name__)
     assert raised.value.__cause__ is failure
-    assert control.started.is_set()
-    assert control.finished.is_set()
     records = [
         record for record in caplog.records if record.name == "parqx.query.engine"
     ]
@@ -107,305 +61,102 @@ def test_execute_query_wraps_constructor_failure_and_logs_unexpected_once(
         assert records[0].exc_info[1] is failure
 
 
-def test_execute_query_cancelled_before_start_opens_no_connection() -> None:
-    control = QueryControl()
-    control.cancel()
-    with (
-        patch.object(duckdb, "connect", side_effect=AssertionError("opened")),
-        pytest.raises(QueryCancelledError),
-    ):
-        execute_query((), "SELECT 42", control)
-    assert control.started.is_set()
-    assert control.finished.is_set()
-
-
-def test_execute_query_normalizes_native_cancellation(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize("failure", [None, "query", "read", "reader", "connection"])
+def test_native_resources_close_in_order_even_after_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
 ) -> None:
-    control = QueryControl()
-
-    def interrupted_preview(session: QuerySession) -> None:
-        control.cancel()
-        raise duckdb.InterruptException("Interrupted")
-
-    with (
-        patch.object(QuerySession, "preview", interrupted_preview),
-        pytest.raises(QueryCancelledError),
-    ):
-        execute_query((), "SELECT 42", control)
-    assert control.finished.is_set()
-    assert not caplog.records
-
-
-@pytest.mark.parametrize(
-    "sql", ["", "SELECT 1; SELECT 2", "CREATE TABLE x AS SELECT 1"]
-)
-def test_rejects_statements_without_a_single_query(sql: str) -> None:
-    with (
-        pytest.raises(ValueError, match="one SELECT"),
-        QuerySession((), sql, QueryControl()),
-    ):
-        pass
-
-
-def test_error_does_not_poison_next_session(small_parquet: Path) -> None:
-    control = QueryControl()
-    with (
-        pytest.raises(duckdb.Error),
-        QuerySession(sources(small_parquet), "SELECT missing FROM smoke", control),
-    ):
-        pass
-    control.cancel()  # A closed connection must no longer receive interrupts.
-    with QuerySession(sources(small_parquet), "SELECT 42", QueryControl()) as session:
-        assert session.preview().table.column(0)[0].as_py() == 42
-
-
-def test_cancel_before_start(small_parquet: Path) -> None:
-    control = QueryControl()
-    control.cancel()
-    with (
-        pytest.raises(QueryCancelledError),
-        QuerySession(sources(small_parquet), "SELECT * FROM smoke", control),
-    ):
-        pass
-
-
-def test_cancel_during_preview_and_after_close(
-    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    control = QueryControl()
-    bounded_prefix = engine._bounded_prefix  # pyright: ignore[reportPrivateUsage]
-
-    def cancel_after_first_batch(
-        batch: pa.RecordBatch, budget: int, *, allow_one: bool
-    ) -> int:
-        control.cancel()
-        return bounded_prefix(batch, budget, allow_one=allow_one)
-
-    monkeypatch.setattr(engine, "_bounded_prefix", cancel_after_first_batch)
-    with (
-        QuerySession(
-            sources(small_parquet),
-            "SELECT * FROM smoke",
-            control,
-            ParqxConfig(query_batch_rows=1),
-        ) as session,
-        pytest.raises(QueryCancelledError),
-    ):
-        session.preview()
-    control.cancel()
-
-
-@pytest.mark.parametrize(
-    "before_native", [True, False], ids=["before-native", "unpaused-entry"]
-)
-def test_cancel_interrupts_native_query(
-    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, before_native: bool
-) -> None:
-    ready_to_cancel = Event()
-    enter_native = Event()
-    query_finished = Event()
-    errors: list[BaseException] = []
-    original_reader = duckdb.DuckDBPyRelation.to_arrow_reader
-
-    def start_reader(
-        relation: duckdb.DuckDBPyRelation, batch_rows: int
-    ) -> pa.RecordBatchReader:
-        ready_to_cancel.set()
-        if before_native:
-            assert enter_native.wait(timeout=10), "Native-entry gate was not released"
-        return original_reader(relation, batch_rows)
-
-    monkeypatch.setattr(duckdb.DuckDBPyRelation, "to_arrow_reader", start_reader)
-    control = QueryControl()
-
-    def query() -> None:
-        try:
-            with QuerySession(
-                sources(small_parquet),
-                "SELECT sum(sin(i)) FROM range(1000000000) t(i)",
-                control,
-            ) as session:
-                session.preview()
-        except BaseException as exc:
-            errors.append(exc)
-        finally:
-            query_finished.set()
-
-    worker = Thread(target=query, daemon=True)
-    worker.start()
-    try:
-        assert ready_to_cancel.wait(timeout=10), (
-            "DuckDB did not reach cancellation point"
-        )
-        assert worker.is_alive(), "The query finished before cancellation"
-        control.cancel()
-        enter_native.set()
-        assert query_finished.wait(timeout=5), (
-            "DuckDB did not stop after one cancellation"
-        )
-        worker.join(timeout=1)
-        assert not worker.is_alive(), "Query worker did not exit"
-        assert len(errors) == 1
-        assert isinstance(errors[0], duckdb.InterruptException)
-    finally:
-        # Cleanup happens only after the single-cancel assertion has passed or
-        # failed. A second interrupt here cannot make a lost-cancel test pass.
-        enter_native.set()
-        deadline = monotonic() + 5
-        while worker.is_alive() and monotonic() < deadline:
-            control.cancel()
-            worker.join(timeout=0.01)
-
-    with QuerySession(sources(small_parquet), "SELECT 42", QueryControl()) as session:
-        assert session.preview().table.column(0)[0].as_py() == 42
-
-
-def test_query_without_sources_does_not_start_interrupt_thread() -> None:
-    with patch.object(engine, "Thread", wraps=Thread) as create_thread:
-        control = QueryControl()
-        with QuerySession((), "SELECT 42", control) as session:
-            assert session.preview().table.column(0)[0].as_py() == 42
-            assert session.sources == ()
-            assert session.issues == ()
-        control.cancel()
-        create_thread.assert_not_called()
-
-
-def test_repeated_cancel_uses_one_thread_and_detach_joins_it() -> None:
-    caller = current_thread()
-    retried = Event()
-    interrupts: list[Thread] = []
-
-    class Connection:
-        closed = False
-
-        def interrupt(self) -> None:
-            assert not self.closed, "An interrupt reached the closed connection"
-            thread = current_thread()
-            interrupts.append(thread)
-            if thread is not caller:
-                retried.set()
-
-    connection = Connection()
-    control = QueryControl()
-    control.attach(cast(duckdb.DuckDBPyConnection, connection))
-    with patch.object(engine, "Thread", wraps=Thread) as create_thread:
-        try:
-            control.cancel()
-            retry_thread = control._interrupt_thread  # pyright: ignore[reportPrivateUsage]
-            assert retry_thread is not None
-            assert retried.wait(timeout=2), "Cancellation did not retry interruption"
-            control.cancel()
-            control.cancel()
-            create_thread.assert_called_once()
-            assert control._interrupt_thread is retry_thread  # pyright: ignore[reportPrivateUsage]
-            with patch.object(retry_thread, "join", wraps=retry_thread.join) as join:
-                control.detach()
-                join.assert_called_once()
-            assert not retry_thread.is_alive()
-
-            connection.closed = True
-            count = len(interrupts)
-            control.cancel()
-            assert len(interrupts) == count
-            create_thread.assert_called_once()
-        finally:
-            control.detach()
-
-
-@pytest.mark.parametrize("sql", ["SELECT * FROM smoke", "SELECT missing FROM smoke"])
-def test_session_cleans_spill_directory_on_success_or_error(
-    small_parquet: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sql: str
-) -> None:
-    directories: list[Path] = []
-
-    def create_temporary(*, prefix: str) -> TemporaryDirectory[str]:
-        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
-        directories.append(Path(temporary.name))
-        return temporary
-
-    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
-    try:
-        with QuerySession(sources(small_parquet), sql, QueryControl()) as session:
-            session.preview()
-            assert directories[0].exists()
-    except duckdb.BinderException:
-        assert "missing" in sql
-    assert len(directories) == 1
-    assert not directories[0].exists()
-
-
-@pytest.mark.parametrize("failure", ["reader", "connection"])
-def test_cleanup_failure_still_releases_remaining_resources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
-) -> None:
-    directories: list[Path] = []
     closed: list[str] = []
-    control = QueryControl()
-    original_detach = control.detach
+    directories: list[Path] = []
     original_close = duckdb.DuckDBPyConnection.close
-
-    def create_temporary(*, prefix: str) -> TemporaryDirectory[str]:
-        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
-        directories.append(Path(temporary.name))
-        return temporary
-
-    def detach() -> None:
-        original_detach()
-        closed.append("control")
-
-    def close_connection(connection: duckdb.DuckDBPyConnection) -> None:
-        original_close(connection)
-        closed.append("connection")
-        if failure == "connection":
-            raise OSError("connection cleanup failed")
+    batch = pa.RecordBatch.from_arrays([pa.array([42])], names=["answer"])
 
     class Reader:
+        schema = batch.schema
+        exhausted = False
+
+        def read_next_batch(self) -> pa.RecordBatch:
+            assert directories[0].exists()
+            if failure == "read":
+                raise OSError("read failed")
+            if self.exhausted:
+                raise StopIteration
+            self.exhausted = True
+            return batch
+
         def close(self) -> None:
             closed.append("reader")
             if failure == "reader":
-                raise OSError("reader cleanup failed")
+                raise OSError("reader failed")
 
-    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
-    monkeypatch.setattr(control, "detach", detach)
-    monkeypatch.setattr(duckdb.DuckDBPyConnection, "close", close_connection)
-    session = QuerySession((), "SELECT 42", control)
-    with (
-        patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()),
-        pytest.raises(OSError, match=f"{failure} cleanup failed"),
-        session,
+    def close(connection: duckdb.DuckDBPyConnection) -> None:
+        original_close(connection)
+        closed.append("connection")
+        if failure == "connection":
+            raise OSError("connection failed")
+
+    def temporary(*, prefix: str) -> TemporaryDirectory[str]:
+        directory = TemporaryDirectory(prefix=prefix, dir=tmp_path)
+        directories.append(Path(directory.name))
+        return directory
+
+    monkeypatch.setattr(engine, "TemporaryDirectory", temporary)
+    monkeypatch.setattr(duckdb.DuckDBPyConnection, "close", close)
+    with patch.object(
+        duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()
     ):
-        pass
-    assert closed.index("control") < closed.index("reader") < closed.index("connection")
+        if failure:
+            with pytest.raises(QueryExecutionError):
+                execute_query(
+                    (),
+                    "SELECT missing" if failure == "query" else "SELECT 42",
+                    config=ParqxConfig(),
+                )
+        else:
+            result = execute_query((), "SELECT 42", config=ParqxConfig())
+            assert result.preview.table.column(0)[0].as_py() == 42
+    assert closed == (
+        ["connection"] if failure == "query" else ["reader", "connection"]
+    )
     assert len(directories) == 1
     assert not directories[0].exists()
-    with pytest.raises(RuntimeError, match="not open"):
-        session.preview()
-    session.close()
-    assert closed.count("reader") == closed.count("connection") == 1
-    control.cancel()
 
 
-@pytest.mark.parametrize(
-    ("rows", "size", "batch", "threads"),
-    [(0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 0, 1), (1, 1, 1, 0)],
-)
-def test_rejects_nonpositive_budgets(
-    rows: int, size: int, batch: int, threads: int
+@pytest.mark.parametrize("invalid_file", [False, True])
+def test_source_warnings_survive_success_error_and_recovery(
+    small_parquet: Path, tmp_path: Path, invalid_file: bool
 ) -> None:
-    with pytest.raises(ValueError, match="positive"):
-        ParqxConfig(
-            preview_rows=rows,
-            preview_bytes=size,
-            query_batch_rows=batch,
-            threads=threads,
+    unavailable = tmp_path / "unavailable.parquet"
+    if invalid_file:
+        unavailable.write_text("Not a Parquet file")
+    inputs = sources(small_parquet, unavailable)
+    earlier = (SourceIssue(inputs[1], "Still loading"),)
+    result = execute_query(
+        inputs, "SELECT count(*) FROM smoke", config=ParqxConfig(), unavailable=earlier
+    )
+    assert result.preview.table.column(0)[0].as_py() == 5
+    assert len(result.issues) == 2
+    assert result.issues[0] == earlier[0]
+    assert result.issues[1].source == inputs[1]
+    with pytest.raises(QueryExecutionError, match="unavailable") as raised:
+        execute_query(
+            inputs,
+            "SELECT * FROM unavailable",
+            config=ParqxConfig(),
+            unavailable=earlier,
         )
+    assert isinstance(raised.value.__cause__, duckdb.CatalogException)
+    assert len(raised.value.issues) == 2
+    assert raised.value.issues[0] == earlier[0]
+    unavailable.write_bytes(small_parquet.read_bytes())
+    recovered = execute_query(
+        inputs, "SELECT count(*) FROM unavailable", config=ParqxConfig()
+    )
+    assert recovered.preview.table.column(0)[0].as_py() == 5
+    assert not recovered.issues
 
 
 def test_join_and_three_source_cte(small_parquet: Path, tmp_path: Path) -> None:
-    orders = tmp_path / "orders.parquet"
-    products = tmp_path / "a 'quoted' file.parquet"
+    orders, products = tmp_path / "orders.parquet", tmp_path / "a 'quoted' file.parquet"
     pq.write_table(
         pa.table(
             {"user_id": [1, 3, 1], "product_id": [8, 9, 9], "quantity": [2, 1, 3]}
@@ -414,83 +165,52 @@ def test_join_and_three_source_cte(small_parquet: Path, tmp_path: Path) -> None:
     )
     pq.write_table(pa.table({"id": [8, 9], "price": [5, 7]}), products)
     inputs = sources(small_parquet, orders, products)
-    with QuerySession(
+    result = execute_query(
         inputs,
-        "WITH totals AS ("
-        "SELECT s.id, sum(o.quantity * p.price) AS cost FROM smoke s "
+        "WITH totals AS (SELECT s.id, sum(o.quantity * p.price) AS cost FROM smoke s "
         "JOIN orders o ON s.id = o.user_id "
-        f"JOIN {inputs[2].quoted_name} p ON p.id = o.product_id GROUP BY s.id"
-        ") SELECT * FROM totals ORDER BY id",
-        QueryControl(),
-    ) as session:
-        assert table_values(session.preview().table) == {"id": [1, 3], "cost": [31, 7]}
-        assert session.sources == inputs
-        assert session.issues == ()
+        f"JOIN {inputs[2].quoted_name} p ON p.id = o.product_id GROUP BY s.id) "
+        "SELECT * FROM totals ORDER BY id",
+        config=ParqxConfig(),
+    )
+    assert {
+        name: [value.as_py() for value in result.preview.table.column(name)]
+        for name in result.preview.table.column_names
+    } == {"id": [1, 3], "cost": [31, 7]}
+    assert result.issues == ()
 
 
-def test_union_and_preview_limit_preserve_full_multi_source_input(
+def test_preview_limit_preserves_full_multi_source_input(
     small_parquet: Path, tmp_path: Path
 ) -> None:
     extra = tmp_path / "extra.parquet"
     pq.write_table(pa.table({"value": [10, 20]}), extra)
-    with QuerySession(
+    result = execute_query(
         sources(small_parquet, extra),
-        "WITH all_values AS (SELECT id AS value FROM smoke "
-        "UNION ALL SELECT value FROM extra) "
+        "WITH all_values AS (SELECT id AS value FROM smoke UNION ALL SELECT value FROM extra) "
         "SELECT count(*) AS n, sum(value) AS total FROM all_values",
-        QueryControl(),
-        ParqxConfig(preview_rows=1),
-    ) as session:
-        preview = session.preview()
-        assert table_values(preview.table) == {"n": [7], "total": [45]}
-        assert not preview.truncated
-
-
-@pytest.mark.parametrize("invalid_file", [False, True])
-def test_unavailable_source_warns_without_blocking_other_queries(
-    small_parquet: Path, tmp_path: Path, invalid_file: bool
-) -> None:
-    unavailable = tmp_path / "unavailable.parquet"
-    if invalid_file:
-        unavailable.write_text("Not a Parquet file")
-    inputs = sources(small_parquet, unavailable)
-    with QuerySession(
-        inputs, "SELECT count(*) AS n FROM smoke", QueryControl()
-    ) as session:
-        assert table_values(session.preview().table) == {"n": [5]}
-        assert len(session.issues) == 1
-        assert session.issues[0].source == inputs[1]
-        assert str(unavailable) in str(session.issues[0])
-        assert session.issues[0].message
-
-    failed = QuerySession(inputs, "SELECT * FROM unavailable", QueryControl())
-    with pytest.raises(duckdb.CatalogException, match="unavailable"), failed:
-        pass
-    assert len(failed.issues) == 1
-    assert failed.issues[0].source == inputs[1]
-
-    unavailable.write_bytes(small_parquet.read_bytes())
-    with QuerySession(
-        inputs, "SELECT count(*) AS n FROM unavailable", QueryControl()
-    ) as recovered:
-        assert table_values(recovered.preview().table) == {"n": [5]}
-        assert recovered.issues == ()
+        config=ParqxConfig(preview_rows=1),
+    )
+    assert {
+        name: [value.as_py() for value in result.preview.table.column(name)]
+        for name in result.preview.table.column_names
+    } == {"n": [7], "total": [45]}
+    assert not result.preview.truncated
 
 
 def test_no_implicit_data_alias_but_actual_data_file_is_available(
     small_parquet: Path, tmp_path: Path
 ) -> None:
-    with (
-        pytest.raises(duckdb.CatalogException, match="data"),
-        QuerySession(sources(small_parquet), "SELECT * FROM data", QueryControl()),
-    ):
-        pass
+    with pytest.raises(QueryExecutionError, match="data"):
+        execute_query(
+            sources(small_parquet), "SELECT * FROM data", config=ParqxConfig()
+        )
     path = tmp_path / "data.parquet"
     path.write_bytes(small_parquet.read_bytes())
-    with QuerySession(
-        sources(path), "SELECT count(*) AS n FROM data", QueryControl()
-    ) as session:
-        assert table_values(session.preview().table) == {"n": [5]}
+    result = execute_query(
+        sources(path), "SELECT count(*) FROM data", config=ParqxConfig()
+    )
+    assert result.preview.table.column(0)[0].as_py() == 5
 
 
 @pytest.mark.parametrize("name", ['销售 many.dots-"items"', "select"])
@@ -498,96 +218,45 @@ def test_sql_identifiers_are_registered_without_rewriting(
     small_parquet: Path, name: str
 ) -> None:
     source = replace(sources(small_parquet)[0], table_name=name)
-    with QuerySession(
-        (source,), f"SELECT count(*) AS n FROM {source.quoted_name}", QueryControl()
-    ) as session:
-        assert table_values(session.preview().table) == {"n": [5]}
+    result = execute_query(
+        (source,), f"SELECT count(*) FROM {source.quoted_name}", config=ParqxConfig()
+    )
+    assert result.preview.table.column(0)[0].as_py() == 5
 
 
 def test_python_variables_are_not_implicit_query_sources() -> None:
     replacement_input = pa.table({"value": [42]})
     assert replacement_input.num_rows == 1
-    with (
-        pytest.raises(duckdb.CatalogException, match="replacement_input"),
-        QuerySession((), "SELECT * FROM replacement_input", QueryControl()),
-    ):
-        pass
+    with pytest.raises(QueryExecutionError, match="replacement_input"):
+        execute_query((), "SELECT * FROM replacement_input", config=ParqxConfig())
 
 
 @pytest.mark.parametrize(
     ("operation", "failure"),
     [
         ("read_parquet", duckdb.OutOfMemoryException("memory budget")),
-        ("read_parquet", duckdb.InterruptException("cancelled")),
+        ("read_parquet", duckdb.InterruptException("interrupted")),
         ("create_view", duckdb.InvalidInputException("invalid view")),
     ],
 )
-def test_fatal_registration_errors_propagate_and_close_resources(
-    small_parquet: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    failure: duckdb.Error,
+def test_fatal_registration_errors_propagate(
+    small_parquet: Path, operation: str, failure: duckdb.Error
 ) -> None:
-    directories: list[Path] = []
-
-    def create_temporary(*, prefix: str) -> TemporaryDirectory[str]:
-        temporary = TemporaryDirectory(prefix=prefix, dir=tmp_path)
-        directories.append(Path(temporary.name))
-        return temporary
-
-    monkeypatch.setattr(engine, "TemporaryDirectory", create_temporary)
     owner = (
         duckdb.DuckDBPyConnection
         if operation == "read_parquet"
         else duckdb.DuckDBPyRelation
     )
-    control = QueryControl()
-    session = QuerySession(sources(small_parquet), "SELECT 42", control)
-    original_close = duckdb.DuckDBPyConnection.close
-    closed: list[duckdb.DuckDBPyConnection] = []
-
-    def close(connection: duckdb.DuckDBPyConnection) -> None:
-        closed.append(connection)
-        original_close(connection)
-
-    monkeypatch.setattr(duckdb.DuckDBPyConnection, "close", close)
     with (
         patch.object(owner, operation, side_effect=failure),
-        pytest.raises(type(failure), match=str(failure)),
-        session,
+        pytest.raises(QueryExecutionError) as raised,
     ):
-        pass
-    assert session.issues == ()
-    assert len(closed) == 1
-    assert len(directories) == 1
-    assert not directories[0].exists()
-    control.cancel()
-
-
-def test_cancellation_during_registration_is_not_a_source_warning(
-    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    control = QueryControl()
-
-    def cancel_during_read(
-        _connection: duckdb.DuckDBPyConnection, _path: str
-    ) -> duckdb.DuckDBPyRelation:
-        control.cancel()
-        raise duckdb.IOException("Interrupted while opening")
-
-    monkeypatch.setattr(duckdb.DuckDBPyConnection, "read_parquet", cancel_during_read)
-    session = QuerySession(sources(small_parquet), "SELECT 42", control)
-    with pytest.raises(QueryCancelledError), session:
-        pass
-    assert session.issues == ()
-    control.cancel()
+        execute_query(sources(small_parquet), "SELECT 42", config=ParqxConfig())
+    assert raised.value.__cause__ is failure
+    assert raised.value.issues == ()
 
 
 def test_registration_does_not_replace_a_prior_view(small_parquet: Path) -> None:
     source = sources(small_parquet)[0]
-    with (
-        pytest.raises(duckdb.CatalogException, match="already exists"),
-        QuerySession((source, source), "SELECT 42", QueryControl()),
-    ):
-        pass
+    with pytest.raises(QueryExecutionError, match="already exists"):
+        execute_query((source, source), "SELECT 42", config=ParqxConfig())

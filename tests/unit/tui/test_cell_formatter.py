@@ -4,7 +4,8 @@ import pyarrow as pa
 import pytest
 from rich.cells import cell_len
 
-from parqx.query.engine import QueryControl, QuerySession
+from parqx.config import ParqxConfig
+from parqx.query.engine import execute_query
 from parqx.tui.cell_formatter import CellFormatter
 
 
@@ -197,8 +198,8 @@ def test_dictionary_containers_preserve_temporal_precision_and_depth() -> None:
     ],
 )
 def test_query_union_members_are_displayed(expression: str, expected: str) -> None:
-    with QuerySession((), f"SELECT {expression} AS value", QueryControl()) as session:
-        scalar = session.preview().table.column(0)[0]
+    session = execute_query((), f"SELECT {expression} AS value", config=ParqxConfig())
+    scalar = session.preview.table.column(0)[0]
 
     assert CellFormatter(inline_limit=32)(scalar).plain == expected
 
@@ -208,8 +209,8 @@ def test_query_union_members_are_displayed(expression: str, expected: str) -> No
     ["union_value(a := NULL::INTEGER)", "NULL::UNION(a INTEGER, b VARCHAR)"],
 )
 def test_query_union_nulls_keep_null_formatting(expression: str) -> None:
-    with QuerySession((), f"SELECT {expression} AS value", QueryControl()) as session:
-        scalar = session.preview().table.column(0)[0]
+    session = execute_query((), f"SELECT {expression} AS value", config=ParqxConfig())
+    scalar = session.preview.table.column(0)[0]
 
     result = CellFormatter(inline_limit=16)(scalar)
 
@@ -227,19 +228,19 @@ def test_query_union_nulls_keep_null_formatting(expression: str) -> None:
 def test_query_union_large_members_use_bounded_previews(
     member: str, expected: str
 ) -> None:
-    with QuerySession(
-        (), f"SELECT union_value(a := {member}) AS value", QueryControl()
-    ) as session:
-        scalar = session.preview().table.column(0)[0]
+    session = execute_query(
+        (), f"SELECT union_value(a := {member}) AS value", config=ParqxConfig()
+    )
+    scalar = session.preview.table.column(0)[0]
 
     assert CellFormatter(inline_limit=16)(scalar).plain == expected
 
 
 def test_query_union_containers_respect_nested_depth() -> None:
-    with QuerySession(
-        (), "SELECT union_value(a := [1, 2, 3]) AS value", QueryControl()
-    ) as session:
-        scalar = session.preview().table.column(0)[0]
+    session = execute_query(
+        (), "SELECT union_value(a := [1, 2, 3]) AS value", config=ParqxConfig()
+    )
+    scalar = session.preview.table.column(0)[0]
 
     assert CellFormatter(inline_limit=32)(scalar).plain == "[1, 2, 3]"
     assert CellFormatter(inline_limit=32, max_nested_depth=0)(scalar).plain == "<list>"

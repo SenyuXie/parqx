@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from parqx.data.duckdb import QueryControl, connect, read_preview
+from parqx.data.duckdb import connect, read_preview
 from parqx.data.view import DataPage
 
 _BATCH_ROWS = 256
@@ -16,8 +16,8 @@ _BATCH_ROWS = 256
 class ParquetSource:
     """A file's metadata snapshot, with no retained connection or decoded data.
 
-    Each window owns its DuckDB connection, so cancelling an obsolete read does
-    not interrupt a newer read. Arrow retains only the bounded result for the UI.
+    Each window owns its DuckDB connection and finishes on its worker thread.
+    Arrow retains only the bounded result for the UI.
     """
 
     def __init__(
@@ -39,7 +39,7 @@ class ParquetSource:
         self.page_bytes = page_bytes
         self._fingerprint = self._file_fingerprint()
         with connect(
-            QueryControl(), memory_limit=self._memory_limit, threads=self._threads
+            memory_limit=self._memory_limit, threads=self._threads
         ) as connection:
             unsupported = connection.execute(
                 "SELECT name, precision FROM parquet_schema(?) "
@@ -72,37 +72,28 @@ class ParquetSource:
         if self._file_fingerprint() != self._fingerprint:
             raise OSError("The source file changed. Reopen it to continue browsing.")
 
-    def read_window(self, start: int, stop: int, control: QueryControl) -> DataPage:
+    def read_window(self, start: int, stop: int) -> DataPage:
         """Read an ordered window within the row and retained-byte budgets.
 
         One oversized row is allowed to ensure forward progress. DuckDB execution
         memory and Arrow decoding are separate from the retained-byte budget.
         """
-        control.check()
         start = max(0, min(start, self.row_count))
         stop = min(max(start, stop), start + self.page_rows, self.row_count)
         if start == stop:
             return DataPage(start, pa.Table.from_batches([], schema=self.schema))
         self._check_unchanged()
         with connect(
-            control, memory_limit=self._memory_limit, threads=self._threads
+            memory_limit=self._memory_limit, threads=self._threads
         ) as connection:
             # Insertion order is enabled by connect(). OFFSET also works when the
             # file contains a real column named file_row_number.
             relation = connection.read_parquet(
                 str(self.path), hive_partitioning=False
             ).limit(stop - start, offset=start)
-            control.check()
             with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
-                try:
-                    preview = read_preview(
-                        reader,
-                        control,
-                        row_limit=stop - start,
-                        byte_limit=self.page_bytes,
-                    )
-                finally:
-                    control.detach()
-        control.check()
+                preview = read_preview(
+                    reader, row_limit=stop - start, byte_limit=self.page_bytes
+                )
         self._check_unchanged()
         return DataPage(start, preview.table)

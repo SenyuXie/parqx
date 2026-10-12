@@ -11,14 +11,11 @@ import pyarrow as pa
 from textual import on, work
 from textual.app import ComposeResult
 from textual.content import Content
+from textual.timer import Timer
 from textual.widgets import Static, TabPane
-from textual.worker import (
-    get_current_worker,  # pyright: ignore[reportUnknownVariableType]
-)
 
 from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import QueryCancelledError, QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import TableData
 from parqx.tui.widgets.arrow_table import ArrowTable
@@ -69,6 +66,12 @@ class TablePane(TabPane):
         self._config = config
         self._executor = executor
         self._source: ParquetSource | None = None
+        self._page_timer: Timer | None = None
+        self._pending_window: (
+            tuple[int, int, weakref.ReferenceType[TableData]] | None
+        ) = None
+        self._request_number = 0
+        self._reading = False
         self._spec: SourceSpec | None = None
         self.table: ArrowTable | None = None
         if isinstance(data, SourceSpec):
@@ -89,6 +92,7 @@ class TablePane(TabPane):
         """Attach loaded metadata and enable background reads for a source tab."""
         if self._spec is None:
             raise ValueError("Only source tabs can load a Parquet source")
+        self._clear_pending()
         self._source = source
         self._error.display = False
         data = TableData(
@@ -114,33 +118,74 @@ class TablePane(TabPane):
             return
         event.stop()
         if self.is_mounted and self._source is not None:
-            self._read_page(event.start_row, event.stop_row, weakref.ref(event.data))
+            self._clear_pending()
+            self._pending_window = (
+                event.start_row,
+                event.stop_row,
+                weakref.ref(event.data),
+            )
+            if self._config.page_debounce_seconds:
+                request = self._request_number
+                self._page_timer = self.set_timer(
+                    self._config.page_debounce_seconds,
+                    lambda: self._page_ready(request),
+                )
+            else:
+                self._submit_pending()
 
-    @work(exclusive=True, group="page", description="Read source page")
+    def _clear_pending(self) -> None:
+        self._request_number += 1
+        self._pending_window = None
+        if self._page_timer is not None:
+            self._page_timer.stop()
+            self._page_timer = None
+
+    def _page_ready(self, request: int) -> None:
+        if request == self._request_number:
+            self._page_timer = None
+            self._submit_pending()
+
+    def _submit_pending(self) -> None:
+        if (
+            self._reading
+            or self._page_timer is not None
+            or self._pending_window is None
+        ):
+            return
+        start, stop, data = self._pending_window
+        self._pending_window = None
+        source, spec = self._source, self._spec
+        request = self._request_number
+        if (
+            source is None
+            or spec is None
+            or self._current_table(source, request, data) is None
+        ):
+            return
+        # Reserve the slot before Textual schedules the worker, including pool wait.
+        self._reading = True
+        self._read_page(
+            source, spec, start, max(stop, start + source.page_rows), request, data
+        )
+
+    @work(group="page", description="Read source page")
     async def _read_page(
-        self, start: int, stop: int, data: weakref.ReferenceType[TableData]
+        self,
+        source: ParquetSource,
+        spec: SourceSpec,
+        start: int,
+        stop: int,
+        request: int,
+        data: weakref.ReferenceType[TableData],
     ) -> None:
-        cancelled = get_current_worker().cancelled_event
-        source = self._source
-        spec = self._spec
-        if source is None or spec is None or cancelled.is_set():
-            return
-        control = QueryControl(cancelled=cancelled)
-        if self._current_table(source, control, data) is None:
-            return
-        # Native work receives the source and control, never the table or cache.
-        prefetch_stop = max(stop, start + source.page_rows)
+        # Native work receives no widget or cache. Unmount can cancel the async
+        # wait (and queued work); an already running native read finishes naturally.
         try:
             page = await asyncio.get_running_loop().run_in_executor(
-                self._executor, source.read_window, start, prefetch_stop, control
+                self._executor, source.read_window, start, stop
             )
-        except asyncio.CancelledError:
-            control.cancel()
-            raise
-        except QueryCancelledError:
-            return
         except Exception as exc:
-            if (table := self._current_table(source, control, data)) is not None:
+            if (table := self._current_table(source, request, data)) is not None:
                 logger.exception("Failed to read parquet window: %s", source.path)
                 table.fail_window()
                 self.notify(
@@ -150,19 +195,23 @@ class TablePane(TabPane):
                     markup=False,
                 )
         else:
-            if (table := self._current_table(source, control, data)) is not None:
+            if (table := self._current_table(source, request, data)) is not None:
                 table.accept_page(page)
+        # CancelledError intentionally skips this: cancelling the waiter does not
+        # mean native work finished, and must never free a slot for another read.
+        self._reading = False
+        self._submit_pending()
 
     def _current_table(
         self,
         source: ParquetSource,
-        control: QueryControl,
+        request: int,
         data: weakref.ReferenceType[TableData],
     ) -> ArrowTable | None:
         if (
             self.is_mounted
             and self._source is source
-            and not control.cancelled.is_set()
+            and request == self._request_number
             and self.table is not None
             and self.table.data is data()
         ):
@@ -172,6 +221,7 @@ class TablePane(TabPane):
     def on_unmount(self) -> None:
         """Release Arrow buffers even if Textual briefly retains the closed widget."""
         # Textual cancels this pane's workers when it is removed.
+        self._clear_pending()
         self._source = None
         if self.table is not None:
             self.table.replace_table(pa.table({}))
