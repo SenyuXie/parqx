@@ -5,6 +5,7 @@ from pathlib import Path
 from textual.coordinate import Coordinate
 from textual.widgets import TabbedContent
 
+from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import run_query, wait_for
@@ -16,7 +17,9 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
         source = tabs.get_pane("source-1").query_one(ArrowTable)
-        await wait_for(lambda: source.data.peek(0, 0) is not None, pilot)
+        cache = source.data
+        assert isinstance(cache, PageCache)
+        await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
         assert (source.row_count, source.column_count) == (5, 3)
 
         source.focus()

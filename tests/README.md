@@ -5,26 +5,39 @@ lowest layer that can verify it:
 
 | Directory | Responsibility | CI coverage |
 | --- | --- | --- |
-| `unit/` | Source identity, Arrow data and memory bounds, SQL engine, CLI arguments, widget logic and shutdown coordination without mounting an app | Every test job |
+| `unit/` | Source identity, Arrow data and memory bounds, SQL engine, CLI arguments, widget logic and native resource cleanup without mounting an app | Every test job |
 | `integration/` | Mounted Textual widgets, multi-file workflows, input/focus, background reads and query lifecycle races | Linux / Python 3.12 |
 | `smoke/` | Open a real Parquet file, navigate, run SQL, close a result and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
-`data.duckdb` provides shared connection setup, cancellation and bounded Arrow
-previews. `data.parquet` reads file metadata and browsing windows through DuckDB;
+`parqx.config.ParqxConfig` defines immutable application budgets. The app passes
+one instance to its components; native data helpers receive explicit settings.
+Configuration validation belongs in unit tests, and budget wiring belongs in
+mounted integration tests.
+
+`data.duckdb` provides shared connection setup and bounded Arrow
+previews, including private batch budgeting and compaction helpers.
+`data.parquet` reads file metadata and browsing windows through DuckDB;
 each request owns a short-lived connection. Paths are passed directly to DuckDB;
 callers supply paths that DuckDB can read without escaping or aliases.
 `query.engine.execute_query` owns SQL execution, timing, source issues and errors
-on the same shared primitives. Arrow holds cached pages and supplies display
-values. Keep paging order, type conversions, budgets and cancellation tests at
+on the same shared primitives. Loaded results remain native `pa.Table` objects.
+`PageCache` only holds source
+metadata and bounded `DataPage` windows. `ArrowTable.replace_data` accepts either
+kind and resets navigation and rendering when data changes. Keep paging order,
+type conversions, budgets and resource cleanup tests at
 these boundaries; distribution checks exercise both browsing and SQL.
 
-`TablePane` owns the shared table layout and releases cached data on unmount.
-`SourcePane` owns its paging worker, while `ResultPane` displays a completed SQL
-preview. The app owns source metadata loading and the catalog, so closing a tab
-does not remove a source from SQL. `QueryScreen` awaits query execution and only
-delivers results for the current request. Cover these ownership and lifecycle
-boundaries in integration tests, using events to coordinate native reads.
+`TablePane` displays loaded Arrow data or a source awaiting metadata. Source tabs
+own one submitted page read and one latest pending window, using Textual timers
+for trailing debounce; every tab releases cached data on unmount. The app owns
+source metadata loading and the catalog, so closing a tab does not remove a source
+from SQL. `QueryScreen` runs a Textual thread worker and handles its completion
+message
+on the UI thread. Editing, closing and resubmitting stay disabled until delivery.
+Native reads finish naturally after UI exit, with no interrupt or shutdown
+deadline. Cover these ownership and lifecycle boundaries in integration
+tests, using events to coordinate native reads.
 
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and
 Windows on Python 3.12. Detailed UI scenarios run once; the other jobs run

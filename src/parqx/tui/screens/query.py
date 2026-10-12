@@ -1,28 +1,21 @@
-"""Persistent SQL editor with cancellable preview execution."""
+"""Persistent SQL editor with threaded preview execution."""
 
 from __future__ import annotations
 
-import asyncio
-from functools import partial
 from typing import ClassVar
 
-from textual import work
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Footer, LoadingIndicator, TextArea
+from textual.worker import Worker, WorkerState
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
-from parqx.query.engine import (
-    QueryCancelledError,
-    QueryControl,
-    QueryExecutionError,
-    QueryLimits,
-    QueryResult,
-    execute_query,
-)
+from parqx.config import ParqxConfig
+from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 
 
 class QueryScreen(ModalScreen[QueryResult]):
@@ -58,31 +51,25 @@ class QueryScreen(ModalScreen[QueryResult]):
     }
     """
 
-    _SHUTDOWN_TIMEOUT: ClassVar[float] = 5.0
-
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("enter", "run_query", "Run SQL", priority=True),
         Binding("shift+enter", "newline", "New line", priority=True),
         Binding("escape", "close", "Close", priority=True),
     ]
 
-    def __init__(
-        self, catalog: SourceCatalog, query_limits: QueryLimits | None = None
-    ) -> None:
+    def __init__(self, catalog: SourceCatalog, *, config: ParqxConfig) -> None:
         """Create the editor without opening a connection or reading the file."""
         super().__init__()
         self._catalog = catalog
-        self._query_limits = query_limits or QueryLimits()
+        self._config = config
         self._dialog = Vertical(id="query-dialog")
         self._dialog.border_title = "SQL query"
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
         self._loading = LoadingIndicator(id="query-loading")
         self._loading.display = False
         self._footer = Footer(show_command_palette=False)
-        self._current_control: QueryControl | None = None
-        """Only this request may dismiss the modal or update its state."""
-        self._query_controls: list[QueryControl] = []
-        """Track queued and unfinished requests, including cancelled older ones."""
+        self._current_worker: Worker[QueryResult] | None = None
+        """Only this worker may finish the dialog's current request."""
 
     def compose(self) -> ComposeResult:
         """Yield the expanding editor, loading indicator and shortcut footer."""
@@ -93,7 +80,7 @@ class QueryScreen(ModalScreen[QueryResult]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Keep unavailable editor actions visible but dimmed during execution."""
-        if self.running and action in {"run_query", "newline"}:
+        if self.running and action in {"run_query", "newline", "close"}:
             return None
         return super().check_action(action, parameters)
 
@@ -133,10 +120,10 @@ class QueryScreen(ModalScreen[QueryResult]):
     @property
     def running(self) -> bool:
         """Whether a request still owns the query dialog."""
-        return self._current_control is not None
+        return self._current_worker is not None
 
-    def _set_current_control(self, control: QueryControl | None) -> None:
-        self._current_control = control
+    def _set_current_worker(self, worker: Worker[QueryResult] | None) -> None:
+        self._current_worker = worker
         running = self.running
         self.editor.read_only = running
         self._loading.display = running
@@ -154,103 +141,53 @@ class QueryScreen(ModalScreen[QueryResult]):
         sql = self.editor.text
         if self.running or not sql.strip():
             return
-        control = QueryControl()
-        self._query_controls = [
-            item for item in self._query_controls if not item.finished.is_set()
-        ]
-        self._query_controls.append(control)
         sources = self._catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
             for entry in self._catalog.entries
             if entry.state != "ready"
         )
-        self._set_current_control(control)
-        self._run_query(sources, sql, control, unavailable)
+        self._set_current_worker(self._run_query(sources, sql, unavailable))
 
-    @work(group="query")
-    async def _run_query(
+    @work(thread=True, exit_on_error=False, group="query")
+    def _run_query(
         self,
         sources: tuple[SourceSpec, ...],
         sql: str,
-        control: QueryControl,
         unavailable: tuple[SourceIssue, ...],
-    ) -> None:
-        try:
-            result = await asyncio.get_running_loop().run_in_executor(
-                None,
-                partial(
-                    execute_query,
-                    sources,
-                    sql,
-                    control,
-                    self._query_limits,
-                    unavailable=unavailable,
-                ),
-            )
-        except asyncio.CancelledError:
-            control.cancel()
-            raise
-        except QueryCancelledError:
+    ) -> QueryResult:
+        return execute_query(sources, sql, config=self._config, unavailable=unavailable)
+
+    @on(Worker.StateChanged)
+    def _on_query_state_changed(self, event: Worker.StateChanged) -> None:
+        worker = self._current_worker
+        # Textual omits the result type on StateChanged.worker.
+        if event.worker is not worker or worker is None or not self.is_mounted:  # pyright: ignore[reportUnknownMemberType]
             return
-        except QueryExecutionError as exc:
-            message = str(exc)
-            if exc.issues:
-                message += "\nUnavailable sources:\n" + "\n".join(map(str, exc.issues))
-            self._on_query_error(control, message)
+        if event.state not in {WorkerState.SUCCESS, WorkerState.ERROR}:
+            return
+        self._set_current_worker(None)
+        if not self.is_active:
+            return
+        if event.state == WorkerState.SUCCESS:
+            self.dismiss(worker.result)
         else:
-            self._on_query_ok(control, result)
-
-    def _is_current(self, control: QueryControl) -> bool:
-        return control is self._current_control and self.is_active
-
-    def _on_query_ok(self, control: QueryControl, result: QueryResult) -> None:
-        if not self._is_current(control):
-            return
-        self._set_current_control(None)
-        self.dismiss(result)
-
-    def _on_query_error(self, control: QueryControl, message: str) -> None:
-        if not self._is_current(control):
-            return
-        self._set_current_control(None)
-        self.notify(
-            message, title="SQL error", severity="error", timeout=4, markup=False
-        )
-        self.editor.focus()
-
-    def _cancel_request(self) -> None:
-        # Invalidate first so a completed query waiting for delivery is harmless.
-        control = self._current_control
-        self._set_current_control(None)
-        if control is not None:
-            control.cancel()
+            error = worker.error
+            message = str(error) or type(error).__name__
+            if isinstance(error, QueryExecutionError) and error.issues:
+                message += "\nUnavailable sources:\n" + "\n".join(
+                    map(str, error.issues)
+                )
+            self.notify(
+                message, title="SQL error", severity="error", timeout=4, markup=False
+            )
+            self.editor.focus()
 
     def action_close(self) -> None:
-        """Cancel any pending execution and close without returning a result."""
-        self._cancel_request()
-        self.dismiss()
+        """Close the editor only while it is idle."""
+        if not self.running:
+            self.dismiss(None)
 
-    def on_screen_suspend(self) -> None:
-        """Interrupt execution if another screen unexpectedly covers the editor."""
-        if self.running and not self.is_active:
-            self._cancel_request()
-
-    async def on_unmount(self) -> None:
-        """Interrupt unfinished queries and let their worker-owned resources close."""
-        self._current_control = None
-        controls = tuple(self._query_controls)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._SHUTDOWN_TIMEOUT
-        for control in controls:
-            control.cancel()
-        # The default executor also runs SQL; do not queue cleanup waits on it.
-        # This bounds cooperative waiting, not the lifetime of native threads.
-        while any(
-            control.started.is_set() and not control.finished.is_set()
-            for control in controls
-        ):
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(0.01, remaining))
+    def on_unmount(self) -> None:
+        """Forget delivery ownership while native work finishes independently."""
+        self._current_worker = None

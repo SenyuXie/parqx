@@ -38,7 +38,7 @@ from textual.strip import Strip
 from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
 
-from parqx.data.view import DataPage, TableData
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter
 
 logger = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """Request background data after coalescing render-time cache misses."""
 
         def __init__(
-            self, table: ArrowTable, data: TableData, start: int, stop: int
+            self, table: ArrowTable, data: PageCache, start: int, stop: int
         ) -> None:
             """Identify the table and data so replaced views can reject old reads."""
             self.arrow_table = table
@@ -575,7 +575,7 @@ class ArrowTable(ScrollView, can_focus=True):
             self.arrow_table = arrow_table
             """The data table."""
             self.row_index = row_index
-            """The index for the column."""
+            """The index for the row."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -589,7 +589,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def __init__(
         self,
-        table: pa.Table | TableData,
+        table: pa.Table | PageCache,
         show_header: bool = True,
         show_row_index: bool = True,
         zebra_stripes: bool = False,
@@ -633,16 +633,14 @@ class ArrowTable(ScrollView, can_focus=True):
         """
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
 
-        self.data = (
-            table if isinstance(table, TableData) else TableData.from_table(table)
-        )
-        """Cache-only access; file reads belong to background workers."""
+        self.data = table
+        """Native loaded data or cache-only source access, without rendering I/O."""
         self._missing_rows: set[int] = set()
         self._requested_window: tuple[int, int] | None = None
         self._window_failed = False
         self._columns: tuple[Column, ...] | None = None
         """Column metadata in source column order. Lazily computed in `self.columns`."""
-        self._widths_measured = bool(self.data.sample.num_rows)
+        self._widths_measured = isinstance(table, pa.Table) and bool(table.num_rows)
         """Whether content is available for widths, independent of header metadata."""
         self._column_offsets: tuple[int, ...] | None = None
         """Lazily computed left-edge cell offsets for data columns only (excludes row-index column).
@@ -725,7 +723,11 @@ class ArrowTable(ScrollView, can_focus=True):
     @property
     def row_count(self) -> int:
         """The total number of rows currently present in the ArrowTable."""
-        return self.data.row_count
+        return (
+            self.data.num_rows
+            if isinstance(self.data, pa.Table)
+            else self.data.row_count
+        )
 
     @property
     def _total_row_height(self) -> int:
@@ -796,7 +798,14 @@ class ArrowTable(ScrollView, can_focus=True):
     def columns(self) -> tuple[Column, ...]:
         """Metadata about the columns of the arrow."""
         if self._columns is None:
-            self._columns = self._measure_columns(self.data.sample)
+            self._columns = (
+                self._measure_columns(self.data)
+                if isinstance(self.data, pa.Table)
+                else tuple(
+                    Column(field.name, content_width=0, auto_width=True)
+                    for field in self.data.schema
+                )
+            )
         return self._columns
 
     def _get_column_render_width(self, column: Column) -> int:
@@ -875,6 +884,8 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_coordinate(coordinate):
             raise CellNotExistError(coordinate)
 
+        if isinstance(self.data, pa.Table):
+            return self.data.column(column)[row]
         value = self.data.peek(row, column)
         if value is None:
             self._queue_window(row)
@@ -893,7 +904,11 @@ class ArrowTable(ScrollView, can_focus=True):
         self._missing_rows.add(row)
 
     def _request_missing_window(self) -> None:
-        if not self._missing_rows or self._window_failed:
+        if (
+            not isinstance(self.data, PageCache)
+            or not self._missing_rows
+            or self._window_failed
+        ):
             return
         # A cursor jump can leave misses from the old viewport in the same frame.
         # Prefer the rows now on screen rather than scanning the gap between them.
@@ -909,6 +924,8 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def accept_page(self, page: DataPage) -> None:
         """Cache a completed window without resetting the table's navigation."""
+        if not isinstance(self.data, PageCache):
+            return
         self.data.add_page(page)
         self._requested_window = None
         self._window_failed = False
@@ -943,25 +960,14 @@ class ArrowTable(ScrollView, can_focus=True):
             self._retry_window()
         super().watch_scroll_y(old_value, new_value)
 
-    def replace_table(self, table: pa.Table) -> None:
-        """Replace the backing table and reset navigation to the first cell.
-
-        Column widths and rendered content are recalculated for the new schema
-        and values. Display settings such as padding and cursor type are kept.
-
-        Args:
-            table: Arrow table to display, which may have a different schema.
-        """
-        self.replace_data(TableData.from_table(table))
-
-    def replace_data(self, data: TableData) -> None:
+    def replace_data(self, data: pa.Table | PageCache) -> None:
         """Replace the data view and discard old windows, requests, and rendering."""
         self.data = data
         self._missing_rows.clear()
         self._requested_window = None
         self._window_failed = False
         self._columns = None
-        self._widths_measured = bool(data.sample.num_rows)
+        self._widths_measured = isinstance(data, pa.Table) and bool(data.num_rows)
         self._column_offsets = None
         self._index_column = None
         self._update_count += 1

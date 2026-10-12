@@ -27,17 +27,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from parqx.catalog import SourceCatalog
-from parqx.data.duckdb import QueryControl
+from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryLimits, QuerySession
+from parqx.query.engine import execute_query
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
     "parqx.cli",
     "parqx.catalog",
+    "parqx.config",
     "parqx.logger",
     "parqx.data",
-    "parqx.data.batch",
     "parqx.data.duckdb",
     "parqx.data.parquet",
     "parqx.data.view",
@@ -49,8 +49,6 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.tui.screens.query",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
-    "parqx.tui.widgets.result_pane",
-    "parqx.tui.widgets.source_pane",
     "parqx.tui.widgets.table_pane",
 )
 
@@ -111,15 +109,21 @@ def check_parquet_browsing() -> None:
         )
         pq.write_table(table, path, row_group_size=1_000)
 
-        source = ParquetSource(path)
+        source = ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
         assert source.row_count == table.num_rows
         assert source.schema.names == table.column_names
-        first = source.read_window(0, table.num_rows, QueryControl())
+        first = source.read_window(0, table.num_rows)
         assert first.start == 0
         assert first.table.num_rows == 4_096
         assert first.table.nbytes <= 4 * 1024 * 1024
         assert first.table.equals(table.slice(0, 4_096))
-        later = source.read_window(4_200, 4_300, QueryControl())
+        later = source.read_window(4_200, 4_300)
         assert later.start == 4_200
         assert later.table.equals(table.slice(4_200, 100))
     print("OK: DuckDB browsing preserves row order and bounded windows")
@@ -136,17 +140,14 @@ def check_multi_source_query() -> None:
         assert len(catalog.entries) == 2
         for entry in catalog.entries:
             catalog.mark_ready(entry.spec.source_id)
-        with QuerySession(
+        result = execute_query(
             catalog.snapshot(),
-            'SELECT count(*), sum(o.amount) FROM "users" u '
-            'JOIN "orders" o ON u.id = o.user_id',
-            QueryControl(),
-            QueryLimits(preview_rows=1),
-        ) as session:
-            preview = session.preview()
-        assert preview.table.column(0)[0].as_py() == 3
-        assert preview.table.column(1)[0].as_py() == 32
-        assert not preview.truncated
+            'SELECT count(*), sum(o.amount) FROM "users" u JOIN "orders" o ON u.id = o.user_id',
+            config=ParqxConfig(preview_rows=1),
+        )
+        assert result.table.column(0)[0].as_py() == 3
+        assert result.table.column(1)[0].as_py() == 32
+        assert result.truncation_reason is None
     print("OK: multi-source JOIN reads complete inputs with a bounded preview")
 
 

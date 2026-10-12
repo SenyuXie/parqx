@@ -8,18 +8,18 @@ from pathlib import Path
 from threading import Event, Lock
 from unittest.mock import patch
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
-from parqx.data.duckdb import QueryControl
+from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import DataPage
-from parqx.query.engine import QuerySession
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.app import ParqxApp
-from parqx.tui.widgets import ArrowTable, SourcePane
+from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import (
     open_query,
     run_query,
@@ -43,7 +43,7 @@ async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
         assert tabs.active == "source-1"
-        assert [pane.id for pane in tabs.query(SourcePane)] == ["source-1", "source-2"]
+        assert [pane.id for pane in tabs.query(TablePane)] == ["source-1", "source-2"]
         specs = app.catalog.snapshot()
         assert [spec.path for spec in specs] == [orders.resolve(), users.resolve()]
         labels: list[str] = []
@@ -168,10 +168,16 @@ async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_source
     failed = small_parquet.with_name("failed.parquet")
     failed.write_bytes(small_parquet.read_bytes())
 
-    def open_source(path: Path) -> ParquetSource:
+    def open_source(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == failed.resolve():
             raise RuntimeError("metadata reader failed unexpectedly")
-        return ParquetSource(path)
+        return ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
     app = ParqxApp([failed, small_parquet])
     with patch("parqx.tui.app._open_source", open_source):
@@ -181,7 +187,7 @@ async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_source
                 pilot,
             )
             assert [entry.state for entry in app.catalog.entries] == ["failed", "ready"]
-            pane = app.query_one("#source-1", SourcePane)
+            pane = app.query_one("#source-1", TablePane)
             assert not pane.loading
             error = pane.query_one(".source-error", Static)
             assert error.display
@@ -206,15 +212,10 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
     pq.write_table(pa.table({"n": range(10_000, 15_000)}), second, row_group_size=100)
     first_started, first_release, first_returned = Event(), Event(), Event()
     second_started, second_release = Event(), Event()
-    first_cancellations: list[Event] = []
-    second_cancellations: list[Event] = []
     original_read = ParquetSource.read_window
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         if source.path == first.resolve():
-            first_cancellations.append(control.cancelled)
             first_started.set()
             try:
                 assert first_release.wait(timeout=15)
@@ -223,10 +224,9 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
             finally:
                 first_returned.set()
         if start >= 4_096:
-            second_cancellations.append(control.cancelled)
             second_started.set()
             assert second_release.wait(timeout=15)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     app = ParqxApp([first, second])
     with (
@@ -242,23 +242,20 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                     tabs.get_pane("source-1").query_one(ArrowTable).data
                 )
                 second_table = tabs.get_pane("source-2").query_one(ArrowTable)
+                second_cache = second_table.data
+                assert isinstance(second_cache, PageCache)
                 await select_tab(tabs, "source-2", pilot)
-                await wait_for(lambda: second_table.data.peek(0, 0) is not None, pilot)
+                await wait_for(lambda: second_cache.peek(0, 0) is not None, pilot)
                 assert second_table.get_cell_at(Coordinate(0, 0)).as_py() == 10_000
-                assert second_table.data.peek(4_999, 0) is None
+                assert second_cache.peek(4_999, 0) is None
                 assert not first_returned.is_set()
-                assert not any(event.is_set() for event in first_cancellations)
 
                 second_table.focus()
                 await pilot.press("ctrl+end")
                 await wait_for(second_started.is_set, pilot)
-                pending_second = second_cancellations[-1]
-                assert not pending_second.is_set()
                 await select_tab(tabs, "source-1", pilot)
                 await pilot.press("ctrl+w")
                 await wait_for(lambda: not tabs.query("#source-1"), pilot)
-                assert all(event.is_set() for event in first_cancellations)
-                assert not pending_second.is_set()
 
                 def cache_released() -> bool:
                     gc.collect()
@@ -269,12 +266,9 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
                 await wait_for(first_returned.is_set, pilot)
                 await pilot.pause()
                 assert not tabs.query("#source-1")
-                assert second_table.data.peek(4_999, 0) is None
-                assert not pending_second.is_set()
+                assert second_cache.peek(4_999, 0) is None
                 second_release.set()
-                await wait_for(
-                    lambda: second_table.data.peek(4_999, 0) is not None, pilot
-                )
+                await wait_for(lambda: second_cache.peek(4_999, 0) is not None, pilot)
                 assert second_table.get_cell_at(Coordinate(4_999, 0)).as_py() == 14_999
                 assert not app.load_errors
                 notify.assert_not_called()
@@ -291,18 +285,14 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
         pq.write_table(pa.table({"n": [1, 2, 3]}), path)
     release, queued = Event(), Event()
     started = {path.resolve(): Event() for path in paths}
-    cancellations: list[Event] = []
     queued_cancelled: list[Callable[[], bool]] = []
     original_read = ParquetSource.read_window
     original_submit = ThreadPoolExecutor.submit
 
-    def delayed_read(
-        source: ParquetSource, start: int, stop: int, control: QueryControl
-    ) -> DataPage:
-        cancellations.append(control.cancelled)
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
         started[source.path].set()
         assert release.wait(timeout=15)
-        return original_read(source, start, stop, control)
+        return original_read(source, start, stop)
 
     def track_submit[T, **P](
         executor: ThreadPoolExecutor,
@@ -335,7 +325,6 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
                 result = await run_query(app, pilot, "SELECT 42 AS answer")
                 assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
                 assert not release.is_set()
-                assert not any(event.is_set() for event in cancellations)
                 await select_tab(tabs, "source-5", pilot)
                 await wait_for(queued.is_set, pilot)
                 assert not started[paths[-1].resolve()].is_set()
@@ -347,7 +336,6 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
                     lambda: all(is_cancelled() for is_cancelled in queued_cancelled),
                     pilot,
                 )
-                assert not any(event.is_set() for event in cancellations)
                 release.set()
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
                 assert not started[paths[-1].resolve()].is_set()
@@ -368,7 +356,7 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
         with lock:
             return active, peak, opened
 
-    def delayed_metadata(path: Path) -> ParquetSource:
+    def delayed_metadata(path: Path, config: ParqxConfig) -> ParquetSource:
         nonlocal active, peak, opened
         with lock:
             active += 1
@@ -376,22 +364,28 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
             peak = max(peak, active)
         try:
             assert release.wait(timeout=15)
-            return ParquetSource(path)
+            return ParquetSource(
+                path,
+                page_rows=4096,
+                page_bytes=4 * 1024 * 1024,
+                memory_limit="256MB",
+                threads=2,
+            )
         finally:
             with lock:
                 active -= 1
 
-    app = ParqxApp(paths)
-    with patch("parqx.tui.app.ParquetSource", delayed_metadata):
+    app = ParqxApp(paths, config=ParqxConfig(source_workers=2))
+    with patch("parqx.tui.app._open_source", delayed_metadata):
         async with app.run_test(size=(120, 24)) as pilot:
             try:
-                await wait_for(lambda: counts()[0] >= 4, pilot)
+                await wait_for(lambda: counts()[0] >= 2, pilot)
                 await pilot.pause()
-                assert counts() == (4, 4, 4)
+                assert counts() == (2, 2, 2)
                 assert not app.catalog.snapshot()
                 result = await run_query(app, pilot, "SELECT 42 AS answer")
                 assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
-                assert counts() == (4, 4, 4)
+                assert counts() == (2, 2, 2)
                 assert not release.is_set()
                 assert all(entry.state == "loading" for entry in app.catalog.entries)
 
@@ -402,7 +396,7 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
                     ),
                     pilot,
                 )
-                assert counts() == (0, 4, 5)
+                assert counts() == (0, 2, 5)
                 assert len(app.catalog.snapshot()) == len(paths)
             finally:
                 release.set()
@@ -415,23 +409,31 @@ async def test_running_query_uses_frozen_sources_until_retried(
     pending.write_bytes(small_parquet.read_bytes())
     metadata_started, metadata_release = Event(), Event()
     query_started, query_release = Event(), Event()
-    original_enter = QuerySession.__enter__
+    original_sql = duckdb.DuckDBPyConnection.sql
 
-    def delayed_metadata(path: Path) -> ParquetSource:
+    def delayed_metadata(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == pending.resolve():
             metadata_started.set()
             assert metadata_release.wait(timeout=15)
-        return ParquetSource(path)
+        return ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
-    def delayed_enter(session: QuerySession) -> QuerySession:
+    def delayed_sql(
+        connection: duckdb.DuckDBPyConnection, sql: str
+    ) -> duckdb.DuckDBPyRelation:
         query_started.set()
         assert query_release.wait(timeout=15)
-        return original_enter(session)
+        return original_sql(connection, sql)
 
     app = ParqxApp([small_parquet, pending])
     with (
-        patch("parqx.tui.app.ParquetSource", delayed_metadata),
-        patch.object(QuerySession, "__enter__", delayed_enter),
+        patch("parqx.tui.app._open_source", delayed_metadata),
+        patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
         patch.object(app, "notify", wraps=app.notify) as notify,
     ):
         async with app.run_test(size=(100, 24)) as pilot:

@@ -13,7 +13,7 @@ from rich.text import Text
 from textual.coordinate import Coordinate
 from textual.geometry import Size
 
-from parqx.data.view import DataPage, TableData
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter
 from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
 
@@ -212,25 +212,25 @@ def test_width_measurement_is_independent_of_chunk_layout(
     assert chunked_widget.columns[0].content_width == expected_width
 
 
-def test_replace_table_invalidates_content_schema_and_layout() -> None:
+def test_replace_data_invalidates_content_schema_and_layout() -> None:
     widget = ArrowTable(pa.table({"before": ["old", "other"]}))
     assert widget._get_cell_renderable(0, 0).plain == "old"
     assert widget._get_cell_renderable(-1, 0).plain == "before"
     old_offsets = widget._get_column_offsets()
-    widget.replace_table(pa.table({"after": ["a much longer value"], "new": [42]}))
+    widget.replace_data(pa.table({"after": ["a much longer value"], "new": [42]}))
     assert widget._get_cell_renderable(0, 0).plain == "a much longer value"
     assert widget._get_cell_renderable(-1, 0).plain == "after"
     assert widget._get_column_offsets() != old_offsets
     assert (widget.row_count, widget.column_count) == (1, 2)
     assert widget.cursor_coordinate == Coordinate(0, 0)
-    widget.replace_table(pa.table({"empty": pa.array([], type=pa.int64())}))
+    widget.replace_data(pa.table({"empty": pa.array([], type=pa.int64())}))
     assert widget.row_count == 0
     assert widget.columns[0].name == "empty"
 
 
 def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -> None:
     page = pa.table({"value": pa.array([None, 12345], type=pa.int64())})
-    widget = ArrowTable(TableData(page.schema, 10_000))
+    widget = ArrowTable(PageCache(page.schema, 10_000, cache_bytes=32 * 1024 * 1024))
     assert widget.row_count == 10_000
     assert widget.columns[0].content_width == 0
     with pytest.raises(CellNotLoadedError):
@@ -248,13 +248,13 @@ def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -
 
 def test_replacing_window_data_discards_cached_cells_and_pending_requests() -> None:
     page = pa.table({"old": ["before"]})
-    data = TableData(page.schema, 1_000)
+    data = PageCache(page.schema, 1_000, cache_bytes=32 * 1024 * 1024)
     widget = ArrowTable(data)
     widget.accept_page(DataPage(0, page))
     assert widget._get_cell_renderable(0, 0).plain == "before"
     widget.fail_window()
 
-    widget.replace_data(TableData.from_table(pa.table({"new": ["after"]})))
+    widget.replace_data(pa.table({"new": ["after"]}))
     assert widget.data is not data
     assert widget._get_cell_renderable(0, 0).plain == "after"
     assert widget.columns[0].name == "new"
@@ -274,7 +274,9 @@ def test_page_widths_match_loaded_data_and_refresh_cached_layout() -> None:
             "payload": ["hello " * 50_000, "x" * 300_000],
         }
     )
-    widget = ArrowTable(TableData(table.schema, table.num_rows))
+    widget = ArrowTable(
+        PageCache(table.schema, table.num_rows, cache_bytes=32 * 1024 * 1024)
+    )
     old_offsets = widget._get_column_offsets()
     widget.accept_page(DataPage(0, table))
 
@@ -287,7 +289,9 @@ def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -
     # A large multi-chunk page must not be combined or copied just for widths.
     chunk = pa.array(["hello " * 50_000])
     table = pa.table({"text": pa.chunked_array([chunk] * 512)})
-    widget = ArrowTable(TableData(table.schema, 1024, cache_bytes=1))
+    widget = ArrowTable(PageCache(table.schema, 1024, cache_bytes=1))
+    cache = widget.data
+    assert isinstance(cache, PageCache)
     reference = weakref.ref(table)
     next_page = DataPage(512, pa.table({"text": ["next"]}))
     calls = 0
@@ -312,7 +316,7 @@ def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -
         peak = pool.max_memory()
         del table
         assert reference() is None
-        assert widget.data.peek(0, 0) is None
+        assert cache.peek(0, 0) is None
     finally:
         pa.set_memory_pool(original_pool)
     assert pool.bytes_allocated() == 0
@@ -322,14 +326,22 @@ def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -
 
 def test_empty_page_and_replacement_allow_first_content_width_measurement() -> None:
     table = pa.table({"n": [12345]})
-    widget = ArrowTable(TableData(table.schema, 1))
+    widget = ArrowTable(PageCache(table.schema, 1, cache_bytes=32 * 1024 * 1024))
     widget.accept_page(DataPage(0, table.slice(0, 0)))
     assert widget.columns[0].content_width == 0
     widget.accept_page(DataPage(0, table))
     assert widget.columns[0].content_width == 5
 
     replacement = pa.table({"n": [123456789]})
-    widget.replace_data(TableData(replacement.schema, 1))
+    widget.replace_data(PageCache(replacement.schema, 1, cache_bytes=32 * 1024 * 1024))
     assert widget.columns[0].content_width == 0
     widget.accept_page(DataPage(0, replacement))
     assert widget.columns[0].content_width == 9
+
+
+def test_loaded_arrow_data_keeps_native_identity_and_scalar_types() -> None:
+    data = pa.table({"value": pa.array([1, None, 123456789], type=pa.timestamp("ns"))})
+    widget = ArrowTable(data)
+    assert widget.data is data
+    assert widget.get_cell_at(Coordinate(2, 0)) == data.column(0)[2]
+    assert not widget.get_cell_at(Coordinate(1, 0)).is_valid
