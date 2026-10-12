@@ -13,11 +13,11 @@ from textual.widgets import Footer, TabbedContent
 from textual.worker import WorkerFailed
 
 from parqx.catalog import SourceIssue, SourceSpec
+from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import (
     QueryControl,
     QueryExecutionError,
-    QueryLimits,
     QueryPreview,
     QueryResult,
     QuerySession,
@@ -149,7 +149,7 @@ async def test_late_outcome_cannot_finish_a_new_query(
         sources: tuple[SourceSpec, ...],
         sql: str,
         control: QueryControl,
-        limits: QueryLimits,
+        limits: ParqxConfig,
         *,
         unavailable: tuple[SourceIssue, ...],
     ) -> QueryResult:
@@ -472,17 +472,29 @@ async def test_metadata_completion_cannot_recreate_closed_source_tabs(
     started = {path: Event() for path in (small_parquet, failed)}
     release = Event()
 
-    def delayed_read(path: Path) -> ParquetSource:
+    def delayed_read(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == healthy:
-            return ParquetSource(path)
+            return ParquetSource(
+                path,
+                page_rows=4096,
+                page_bytes=4 * 1024 * 1024,
+                memory_limit="256MB",
+                threads=2,
+            )
         started[path].set()
         assert release.wait(timeout=10)
         if path == failed:
             raise OSError("obsolete metadata read failed")
-        return ParquetSource(path)
+        return ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
     app = ParqxApp([small_parquet, failed, healthy])
-    with patch("parqx.tui.app.ParquetSource", delayed_read):
+    with patch("parqx.tui.app._open_source", delayed_read):
         async with app.run_test() as pilot:
             try:
                 await wait_for(

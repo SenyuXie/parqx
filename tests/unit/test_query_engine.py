@@ -12,12 +12,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
+from parqx.config import ParqxConfig
 from parqx.data import duckdb as engine
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
     QueryExecutionError,
-    QueryLimits,
     QuerySession,
     execute_query,
 )
@@ -188,7 +188,7 @@ def test_cancel_during_preview_and_after_close(
             sources(small_parquet),
             "SELECT * FROM smoke",
             control,
-            QueryLimits(batch_rows=1),
+            ParqxConfig(query_batch_rows=1),
         ) as session,
         pytest.raises(QueryCancelledError),
     ):
@@ -395,8 +395,11 @@ def test_rejects_nonpositive_budgets(
     rows: int, size: int, batch: int, threads: int
 ) -> None:
     with pytest.raises(ValueError, match="positive"):
-        QueryLimits(
-            preview_rows=rows, preview_bytes=size, batch_rows=batch, threads=threads
+        ParqxConfig(
+            preview_rows=rows,
+            preview_bytes=size,
+            query_batch_rows=batch,
+            threads=threads,
         )
 
 
@@ -436,7 +439,7 @@ def test_union_and_preview_limit_preserve_full_multi_source_input(
         "UNION ALL SELECT value FROM extra) "
         "SELECT count(*) AS n, sum(value) AS total FROM all_values",
         QueryControl(),
-        QueryLimits(preview_rows=1),
+        ParqxConfig(preview_rows=1),
     ) as session:
         preview = session.preview()
         assert table_values(preview.table) == {"n": [7], "total": [45]}

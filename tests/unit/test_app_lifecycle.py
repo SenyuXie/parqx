@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from parqx.catalog import SourceCatalog
+from parqx.config import ParqxConfig
 from parqx.query.engine import QueryCancelledError, QueryControl, QuerySession
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
@@ -19,7 +20,7 @@ def test_empty_source_list_is_rejected() -> None:
 
 
 def screen_with_controls(*controls: QueryControl) -> QueryScreen:
-    screen = QueryScreen(SourceCatalog([]))
+    screen = QueryScreen(SourceCatalog([]), config=ParqxConfig())
     screen._query_controls.extend(controls)  # pyright: ignore[reportPrivateUsage]
     return screen
 

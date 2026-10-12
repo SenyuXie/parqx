@@ -27,14 +27,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from parqx.catalog import SourceCatalog
+from parqx.config import ParqxConfig
 from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryLimits, QuerySession
+from parqx.query.engine import QuerySession
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
     "parqx.cli",
     "parqx.catalog",
+    "parqx.config",
     "parqx.logger",
     "parqx.data",
     "parqx.data.duckdb",
@@ -108,7 +110,13 @@ def check_parquet_browsing() -> None:
         )
         pq.write_table(table, path, row_group_size=1_000)
 
-        source = ParquetSource(path)
+        source = ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
         assert source.row_count == table.num_rows
         assert source.schema.names == table.column_names
         first = source.read_window(0, table.num_rows, QueryControl())
@@ -138,7 +146,7 @@ def check_multi_source_query() -> None:
             'SELECT count(*), sum(o.amount) FROM "users" u '
             'JOIN "orders" o ON u.id = o.user_id',
             QueryControl(),
-            QueryLimits(preview_rows=1),
+            ParqxConfig(preview_rows=1),
         ) as session:
             preview = session.preview()
         assert preview.table.column(0)[0].as_py() == 3

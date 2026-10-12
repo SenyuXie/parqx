@@ -14,6 +14,7 @@ import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
+from parqx.config import ParqxConfig
 from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage
@@ -168,10 +169,16 @@ async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_source
     failed = small_parquet.with_name("failed.parquet")
     failed.write_bytes(small_parquet.read_bytes())
 
-    def open_source(path: Path) -> ParquetSource:
+    def open_source(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == failed.resolve():
             raise RuntimeError("metadata reader failed unexpectedly")
-        return ParquetSource(path)
+        return ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
     app = ParqxApp([failed, small_parquet])
     with patch("parqx.tui.app._open_source", open_source):
@@ -368,7 +375,7 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
         with lock:
             return active, peak, opened
 
-    def delayed_metadata(path: Path) -> ParquetSource:
+    def delayed_metadata(path: Path, config: ParqxConfig) -> ParquetSource:
         nonlocal active, peak, opened
         with lock:
             active += 1
@@ -376,22 +383,28 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
             peak = max(peak, active)
         try:
             assert release.wait(timeout=15)
-            return ParquetSource(path)
+            return ParquetSource(
+                path,
+                page_rows=4096,
+                page_bytes=4 * 1024 * 1024,
+                memory_limit="256MB",
+                threads=2,
+            )
         finally:
             with lock:
                 active -= 1
 
-    app = ParqxApp(paths)
-    with patch("parqx.tui.app.ParquetSource", delayed_metadata):
+    app = ParqxApp(paths, config=ParqxConfig(source_workers=2))
+    with patch("parqx.tui.app._open_source", delayed_metadata):
         async with app.run_test(size=(120, 24)) as pilot:
             try:
-                await wait_for(lambda: counts()[0] >= 4, pilot)
+                await wait_for(lambda: counts()[0] >= 2, pilot)
                 await pilot.pause()
-                assert counts() == (4, 4, 4)
+                assert counts() == (2, 2, 2)
                 assert not app.catalog.snapshot()
                 result = await run_query(app, pilot, "SELECT 42 AS answer")
                 assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
-                assert counts() == (4, 4, 4)
+                assert counts() == (2, 2, 2)
                 assert not release.is_set()
                 assert all(entry.state == "loading" for entry in app.catalog.entries)
 
@@ -402,7 +415,7 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
                     ),
                     pilot,
                 )
-                assert counts() == (0, 4, 5)
+                assert counts() == (0, 2, 5)
                 assert len(app.catalog.snapshot()) == len(paths)
             finally:
                 release.set()
@@ -417,11 +430,17 @@ async def test_running_query_uses_frozen_sources_until_retried(
     query_started, query_release = Event(), Event()
     original_enter = QuerySession.__enter__
 
-    def delayed_metadata(path: Path) -> ParquetSource:
+    def delayed_metadata(path: Path, config: ParqxConfig) -> ParquetSource:
         if path == pending.resolve():
             metadata_started.set()
             assert metadata_release.wait(timeout=15)
-        return ParquetSource(path)
+        return ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
     def delayed_enter(session: QuerySession) -> QuerySession:
         query_started.set()
@@ -430,7 +449,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
 
     app = ParqxApp([small_parquet, pending])
     with (
-        patch("parqx.tui.app.ParquetSource", delayed_metadata),
+        patch("parqx.tui.app._open_source", delayed_metadata),
         patch.object(QuerySession, "__enter__", delayed_enter),
         patch.object(app, "notify", wraps=app.notify) as notify,
     ):

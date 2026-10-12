@@ -13,7 +13,7 @@ from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import Footer, Input, TabbedContent
 
-from parqx.query.engine import QueryLimits
+from parqx.config import ParqxConfig
 from parqx.tui.app import ParqxApp
 from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable
@@ -29,7 +29,7 @@ from tests.helpers import (
 
 
 async def test_bounded_results_and_footer_error_recovery(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet], query_limits=QueryLimits(preview_rows=2))
+    app = ParqxApp([small_parquet], config=ParqxConfig(preview_rows=2))
     async with app.run_test() as pilot:
         tabs = app.query_one("#results", TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)

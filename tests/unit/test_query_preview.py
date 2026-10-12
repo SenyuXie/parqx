@@ -6,7 +6,8 @@ import pyarrow as pa
 import pytest
 
 from parqx.catalog import SourceCatalog, SourceSpec
-from parqx.query.engine import QueryControl, QueryLimits, QuerySession
+from parqx.config import ParqxConfig
+from parqx.query.engine import QueryControl, QuerySession
 
 
 @pytest.fixture
@@ -29,7 +30,7 @@ def test_row_budget_boundaries(
         query_sources,
         "SELECT id FROM smoke ORDER BY id",
         QueryControl(),
-        QueryLimits(preview_rows=row_limit, batch_rows=batch_rows),
+        ParqxConfig(preview_rows=row_limit, query_batch_rows=batch_rows),
     ) as session:
         result = session.preview()
     assert [value.as_py() for value in result.table.column(0)] == list(
@@ -47,7 +48,7 @@ def test_byte_budget_and_exact_result_boundary(
         complete = session.preview()
     for budget, truncated in [(16, True), (complete.table.nbytes, False)]:
         with QuerySession(
-            query_sources, sql, QueryControl(), QueryLimits(preview_bytes=budget)
+            query_sources, sql, QueryControl(), ParqxConfig(preview_bytes=budget)
         ) as session:
             result = session.preview()
         assert result.table.num_rows >= 1
@@ -64,7 +65,7 @@ def test_one_oversized_value_is_still_available(
         query_sources,
         "SELECT repeat('x', 4096) AS value FROM smoke",
         QueryControl(),
-        QueryLimits(preview_bytes=16),
+        ParqxConfig(preview_bytes=16),
     ) as session:
         result = session.preview()
     assert result.table.num_rows == 1
@@ -82,7 +83,7 @@ def test_truncated_prefix_does_not_retain_discarded_buffers(
         "SELECT CASE WHEN id = 1 THEN 'ok' ELSE repeat('x', 8192) END AS value "
         "FROM smoke ORDER BY id",
         QueryControl(),
-        QueryLimits(preview_rows=1, batch_rows=5),
+        ParqxConfig(preview_rows=1, query_batch_rows=5),
     ) as session:
         result = session.preview()
     assert result.table.column(0)[0].as_py() == "ok"
@@ -115,7 +116,7 @@ def test_query_dictionary_preview_uses_compacted_budget(row_limit: int) -> None:
             (),
             "SELECT 1",
             QueryControl(),
-            QueryLimits(preview_rows=row_limit, preview_bytes=10),
+            ParqxConfig(preview_rows=row_limit, preview_bytes=10),
         ) as session,
     ):
         result = session.preview()

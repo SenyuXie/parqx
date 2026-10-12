@@ -13,6 +13,7 @@ import duckdb
 import pyarrow as pa
 
 from parqx.catalog import SourceIssue, SourceSpec
+from parqx.config import ParqxConfig
 from parqx.data.duckdb import QueryCancelledError as QueryCancelledError
 from parqx.data.duckdb import QueryControl as QueryControl
 from parqx.data.duckdb import QueryPreview as QueryPreview
@@ -40,30 +41,6 @@ class QueryExecutionError(Exception):
         self.issues = issues
 
 
-@dataclass(frozen=True)
-class QueryLimits:
-    """Execution and preview budgets, independent of the widget's render cache."""
-
-    preview_rows: int = 10_000
-    """Maximum number of result rows retained for display."""
-    preview_bytes: int = 32 * 1024 * 1024
-    """Retained Arrow byte budget, allowing one oversized row."""
-    batch_rows: int = 1024
-    """Number of rows requested per Arrow reader batch."""
-    memory_limit: str = "256MB"
-    """DuckDB execution memory limit, separate from preview data."""
-    threads: int = 2
-    """Maximum number of DuckDB execution threads."""
-
-    def __post_init__(self) -> None:
-        """Reject budgets which could prevent forward progress."""
-        if (
-            min(self.preview_rows, self.preview_bytes, self.batch_rows, self.threads)
-            < 1
-        ):
-            raise ValueError("Query budgets must be positive")
-
-
 class QuerySession:
     """Execute and read one preview on the owning worker thread.
 
@@ -76,14 +53,14 @@ class QuerySession:
         sources: tuple[SourceSpec, ...],
         sql: str,
         control: QueryControl,
-        limits: QueryLimits | None = None,
+        config: ParqxConfig | None = None,
     ) -> None:
         """Record the source and SQL without performing I/O."""
         self.sources = sources
         self.issues: tuple[SourceIssue, ...] = ()
         self.sql = sql
         self.control = control
-        self.limits = limits or QueryLimits()
+        self.config = config or ParqxConfig()
         self._resources = ExitStack()
         self._reader: pa.RecordBatchReader | None = None
 
@@ -94,8 +71,8 @@ class QuerySession:
             connection = self._resources.enter_context(
                 connect(
                     self.control,
-                    memory_limit=self.limits.memory_limit,
-                    threads=self.limits.threads,
+                    memory_limit=self.config.memory_limit,
+                    threads=self.config.threads,
                 )
             )
             statements = connection.extract_statements(self.sql)
@@ -107,7 +84,7 @@ class QuerySession:
             self._register_sources(connection)
             self.control.check()
             relation = connection.sql(self.sql)
-            self._reader = relation.to_arrow_reader(self.limits.batch_rows)
+            self._reader = relation.to_arrow_reader(self.config.query_batch_rows)
             self._resources.callback(self._reader.close)
             self.control.check()
         except BaseException:
@@ -146,8 +123,8 @@ class QuerySession:
         return read_preview(
             self._reader,
             self.control,
-            row_limit=self.limits.preview_rows,
-            byte_limit=self.limits.preview_bytes,
+            row_limit=self.config.preview_rows,
+            byte_limit=self.config.preview_bytes,
         )
 
     def close(self) -> None:
@@ -173,7 +150,7 @@ def execute_query(
     sources: tuple[SourceSpec, ...],
     sql: str,
     control: QueryControl,
-    limits: QueryLimits | None = None,
+    config: ParqxConfig | None = None,
     *,
     unavailable: tuple[SourceIssue, ...] = (),
 ) -> QueryResult:
@@ -187,7 +164,7 @@ def execute_query(
     session: QuerySession | None = None
     try:
         control.check()
-        session = QuerySession(sources, sql, control, limits)
+        session = QuerySession(sources, sql, control, config)
         with session:
             preview = session.preview()
         control.check()

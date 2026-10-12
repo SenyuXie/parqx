@@ -95,7 +95,7 @@ class QueryPreview:
 
 @contextmanager
 def connect(
-    control: QueryControl, *, memory_limit: str = "256MB", threads: int = 2
+    control: QueryControl, *, memory_limit: str, threads: int
 ) -> Generator[duckdb.DuckDBPyConnection, None, None]:
     """Own one connection and spill directory on the calling worker thread.
 

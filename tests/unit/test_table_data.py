@@ -22,7 +22,7 @@ def test_cache_distinguishes_null_and_miss_and_evicts_least_recently_used() -> N
 
 def test_cache_replacement_page_limit_and_oversized_page_exception() -> None:
     table = pa.table({"n": [1]})
-    data = TableData(table.schema, 1000)
+    data = TableData(table.schema, 1000, cache_bytes=32 * 1024 * 1024)
     for start in range(129):
         data.add_page(DataPage(start, table))
     assert data.peek(0, 0) is None

@@ -31,9 +31,7 @@ class TableData:
     Already loaded tables keep their existing buffers through from_table.
     """
 
-    def __init__(
-        self, schema: pa.Schema, row_count: int, *, cache_bytes: int = 32 * 1024 * 1024
-    ) -> None:
+    def __init__(self, schema: pa.Schema, row_count: int, *, cache_bytes: int) -> None:
         """Create a metadata-only view with an empty page cache."""
         if cache_bytes < 1 or row_count < 0:
             raise ValueError("Cache budget must be positive and row count nonnegative")
@@ -48,7 +46,7 @@ class TableData:
     @classmethod
     def from_table(cls, table: pa.Table) -> TableData:
         """Adapt an already loaded table without copying its Arrow buffers."""
-        data = cls(table.schema, table.num_rows)
+        data = cls(table.schema, table.num_rows, cache_bytes=max(1, table.nbytes))
         data._table = data.sample = table
         return data
 

@@ -10,6 +10,11 @@ lowest layer that can verify it:
 | `smoke/` | Open a real Parquet file, navigate, run SQL, close a result and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
+`parqx.config.ParqxConfig` defines immutable application budgets. The app passes
+one instance to its components; native data helpers receive explicit settings.
+Configuration validation belongs in unit tests, and budget wiring belongs in
+mounted integration tests.
+
 `data.duckdb` provides shared connection setup, cancellation and bounded Arrow
 previews, including private batch budgeting and compaction helpers.
 `data.parquet` reads file metadata and browsing windows through DuckDB;

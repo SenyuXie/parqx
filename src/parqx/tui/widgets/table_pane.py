@@ -17,6 +17,7 @@ from textual.worker import (
 )
 
 from parqx.catalog import SourceIssue, SourceSpec
+from parqx.config import ParqxConfig
 from parqx.data.duckdb import QueryCancelledError, QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import TableData
@@ -52,6 +53,7 @@ class TablePane(TabPane):
         data: pa.Table | TableData | SourceSpec,
         *,
         id: str,
+        config: ParqxConfig,
         executor: Executor | None = None,
     ) -> None:
         """Create a table or wait for the app to supply source metadata.
@@ -59,10 +61,12 @@ class TablePane(TabPane):
         Args:
             title: Plain-text tab title.
             data: Loaded table data, or a source identity awaiting set_source.
+            config: Shared application budgets for page caching and scheduling.
             id: The pane's ID in its tabbed container.
             executor: Pool for source page reads; None uses the default executor.
         """
         super().__init__(Content(title), id=id)
+        self._config = config
         self._executor = executor
         self._source: ParquetSource | None = None
         self._spec: SourceSpec | None = None
@@ -87,7 +91,9 @@ class TablePane(TabPane):
             raise ValueError("Only source tabs can load a Parquet source")
         self._source = source
         self._error.display = False
-        data = TableData(source.schema, source.row_count)
+        data = TableData(
+            source.schema, source.row_count, cache_bytes=self._config.page_cache_bytes
+        )
         if self.table is None:
             self.table = ArrowTable(data)
             await self.mount(self.table)

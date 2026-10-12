@@ -21,16 +21,26 @@ class ParquetSource:
     """
 
     def __init__(
-        self, path: Path, *, page_rows: int = 4096, page_bytes: int = 4 * 1024 * 1024
+        self,
+        path: Path,
+        *,
+        page_rows: int,
+        page_bytes: int,
+        memory_limit: str,
+        threads: int,
     ) -> None:
         """Read row count and DuckDB's output schema without scanning data rows."""
         if min(page_rows, page_bytes) < 1:
             raise ValueError("Page budgets must be positive")
         self.path = path
+        self._memory_limit = memory_limit
+        self._threads = threads
         self.page_rows = page_rows
         self.page_bytes = page_bytes
         self._fingerprint = self._file_fingerprint()
-        with connect(QueryControl()) as connection:
+        with connect(
+            QueryControl(), memory_limit=self._memory_limit, threads=self._threads
+        ) as connection:
             unsupported = connection.execute(
                 "SELECT name, precision FROM parquet_schema(?) "
                 "WHERE precision > 38 LIMIT 1",
@@ -74,7 +84,9 @@ class ParquetSource:
         if start == stop:
             return DataPage(start, pa.Table.from_batches([], schema=self.schema))
         self._check_unchanged()
-        with connect(control) as connection:
+        with connect(
+            control, memory_limit=self._memory_limit, threads=self._threads
+        ) as connection:
             # Insertion order is enabled by connect(). OFFSET also works when the
             # file contains a real column named file_row_number.
             relation = connection.read_parquet(

@@ -22,8 +22,9 @@ from textual.widgets import Footer, TabbedContent
 from textual.worker import Worker
 
 from parqx.catalog import SourceCatalog, SourceIssue
+from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryLimits, QueryResult
+from parqx.query.engine import QueryResult
 from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
@@ -31,11 +32,17 @@ from parqx.tui.widgets.arrow_table import CursorType
 logger = logging.getLogger(__name__)
 
 
-def _open_source(path: Path) -> ParquetSource:
+def _open_source(path: Path, config: ParqxConfig) -> ParquetSource:
     """Validate and inspect an ordinary file on the source-reading pool."""
     if not S_ISREG(path.stat().st_mode):
         raise OSError(f"Not a regular file: {path}")
-    return ParquetSource(path)
+    return ParquetSource(
+        path,
+        page_rows=config.page_rows,
+        page_bytes=config.page_bytes,
+        memory_limit=config.memory_limit,
+        threads=config.threads,
+    )
 
 
 def _query_result_details(result: QueryResult) -> str:
@@ -81,29 +88,30 @@ class ParqxApp(App[Any]):
     """Order in which `action_cycle_cursor_type` advances the cursor type."""
 
     def __init__(
-        self, paths: Sequence[Path], query_limits: QueryLimits | None = None
+        self, paths: Sequence[Path], *, config: ParqxConfig | None = None
     ) -> None:
         """Initialize ordered sources without reading their Parquet metadata.
 
         Args:
             paths: Parquet files to load after the UI mounts.
-            query_limits: Optional preview and execution budget overrides.
+            config: Optional preview and execution budget overrides.
         """
         if not paths:
             raise ValueError("At least one Parquet path is required")
         super().__init__()
+        self.config = config or ParqxConfig()
         self.catalog = SourceCatalog(paths)
         self._tabs = TabbedContent(id="results")
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
         self._source_pool = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="parqx-source"
+            max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
         self._shutting_down = False
         # Textual's registration signature omits the screen's generic result type.
         self.install_screen(  # pyright: ignore[reportUnknownMemberType]
-            QueryScreen(self.catalog, query_limits=query_limits), "query"
+            QueryScreen(self.catalog, config=self.config), "query"
         )
 
     @property
@@ -131,7 +139,11 @@ class ParqxApp(App[Any]):
                 if name_counts[title.casefold()] > 1:
                     title += f" · {source.quoted_name}"
                 pane = TablePane(
-                    title, source, id=source.source_id, executor=self._source_pool
+                    title,
+                    source,
+                    id=source.source_id,
+                    executor=self._source_pool,
+                    config=self.config,
                 )
                 await self._tabs.add_pane(pane)
                 self._tabs.get_tab(source.source_id).tooltip = Content(str(source.path))
@@ -214,7 +226,7 @@ class ParqxApp(App[Any]):
         path = self.catalog.get(source_id).spec.path
         try:
             source = await asyncio.get_running_loop().run_in_executor(
-                self._source_pool, _open_source, path
+                self._source_pool, _open_source, path, self.config
             )
         except Exception as exc:
             logger.exception("Failed to read parquet file: %s", path)
@@ -264,7 +276,10 @@ class ParqxApp(App[Any]):
                 self._query_number += 1
                 pane_id = f"query-{self._query_number}"
                 pane = TablePane(
-                    f"Query {self._query_number}", result.preview.table, id=pane_id
+                    f"Query {self._query_number}",
+                    result.preview.table,
+                    id=pane_id,
+                    config=self.config,
                 )
                 await self._tabs.add_pane(pane)
                 self._tabs.get_tab(pane_id).tooltip = Content(

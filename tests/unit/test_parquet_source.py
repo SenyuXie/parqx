@@ -21,7 +21,13 @@ def test_metadata_and_ordered_cross_group_windows(tmp_path: Path) -> None:
     table = pa.table({"n": range(100), "name": [f"row-{i}" for i in range(100)]})
     pq.write_table(table, path, row_group_size=17)
     with patch("pyarrow.parquet.ParquetFile", side_effect=AssertionError("Arrow read")):
-        source = ParquetSource(path)
+        source = ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
         assert source.row_count == 100
         for start, stop in [(-2, 2), (15, 22), (51, 80), (99, 101), (100, 100)]:
             page = source.read_window(start, stop, QueryControl())
@@ -45,7 +51,13 @@ def test_metadata_does_not_decode_column_data(tmp_path: Path) -> None:
     with path.open("r+b") as file:
         file.seek(int(metadata[0]))
         file.write(b"\xff" * 32)
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     assert source.row_count == 1000
     assert source.schema.names == ["n"]
     with pytest.raises(duckdb.Error):
@@ -56,11 +68,26 @@ def test_page_row_limit_is_independent_of_requested_window(tmp_path: Path) -> No
     path = tmp_path / "prefetch.parquet"
     table = pa.table({"n": range(8192)})
     pq.write_table(table, path)
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     page = source.read_window(0, 8192, QueryControl())
     assert page.table.equals(table.slice(0, 4096))
     assert (
-        ParquetSource(path, page_rows=4).read_window(35, 80, QueryControl()).stop == 39
+        ParquetSource(
+            path,
+            page_rows=4,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
+        .read_window(35, 80, QueryControl())
+        .stop
+        == 39
     )
 
 
@@ -68,7 +95,13 @@ def test_page_row_limit_is_independent_of_requested_window(tmp_path: Path) -> No
 def test_empty_or_cancelled_request_creates_no_resources(
     small_parquet: Path, cancelled: bool
 ) -> None:
-    source = ParquetSource(small_parquet)
+    source = ParquetSource(
+        small_parquet,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     control = QueryControl()
     if cancelled:
         control.cancel()
@@ -86,7 +119,13 @@ def test_empty_or_cancelled_request_creates_no_resources(
 
 
 def test_source_file_changes_are_rejected(small_parquet: Path) -> None:
-    source = ParquetSource(small_parquet)
+    source = ParquetSource(
+        small_parquet,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     small_parquet.write_bytes(b"changed")
     with pytest.raises(OSError, match=r"source file changed.*Reopen"):
         source.read_window(0, 5, QueryControl())
@@ -97,7 +136,9 @@ def test_window_byte_budget_applies_across_batches(tmp_path: Path) -> None:
     table = pa.table({"text": ["x" * 100] * 500})
     pq.write_table(table, path)
     budget = table.slice(0, 300).nbytes
-    source = ParquetSource(path, page_bytes=budget)
+    source = ParquetSource(
+        path, page_bytes=budget, page_rows=4096, memory_limit="256MB", threads=2
+    )
     page = source.read_window(0, 4096, QueryControl())
     assert 256 < page.stop < 500
     assert page.table.equals(table.slice(0, page.stop))
@@ -111,7 +152,9 @@ def test_single_oversized_value_can_be_read(tmp_path: Path) -> None:
     path = tmp_path / "oversized.parquet"
     value = "x" * 1000
     pq.write_table(pa.table({"text": [value, "small"]}), path)
-    source = ParquetSource(path, page_bytes=16)
+    source = ParquetSource(
+        path, page_bytes=16, page_rows=4096, memory_limit="256MB", threads=2
+    )
     page = source.read_window(0, 2, QueryControl())
     assert page.table.num_rows == 1
     assert page.table.column(0)[0].as_py() == value
@@ -123,12 +166,14 @@ def test_single_oversized_value_can_be_read(tmp_path: Path) -> None:
 def test_window_does_not_retain_discarded_buffers(tmp_path: Path) -> None:
     path = tmp_path / "buffers.parquet"
     pq.write_table(pa.table({"text": ["small", "x" * 8192]}), path)
-    source = ParquetSource(path, page_bytes=16)
+    source = ParquetSource(
+        path, page_bytes=16, page_rows=4096, memory_limit="256MB", threads=2
+    )
     page = source.read_window(0, 2, QueryControl())
     assert page.table.num_rows == 1
     assert page.table.column(0)[0].as_py() == "small"
     assert page.table.get_total_buffer_size() < 1024
-    cache = TableData(source.schema, source.row_count)
+    cache = TableData(source.schema, source.row_count, cache_bytes=32 * 1024 * 1024)
     cache.add_page(page)
     assert cache.cache_bytes <= 16
 
@@ -136,7 +181,13 @@ def test_window_does_not_retain_discarded_buffers(tmp_path: Path) -> None:
 def test_empty_file_keeps_schema(tmp_path: Path) -> None:
     path = tmp_path / "empty.parquet"
     pq.write_table(pa.table({"x": pa.array([], type=pa.int64())}), path)
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     assert source.row_count == 0
     page = source.read_window(0, 10, QueryControl())
     assert page.table.column_names == ["x"]
@@ -151,7 +202,13 @@ def test_file_row_number_and_partition_named_directories_are_plain_data(
     path = directory / "names.parquet"
     table = pa.table({"file_row_number": [900, 100, 500], "year": [1, 2, 3]})
     pq.write_table(table, path, row_group_size=1)
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     assert source.schema.names == table.schema.names
     assert source.read_window(1, 3, QueryControl()).table.equals(table.slice(1))
 
@@ -171,7 +228,13 @@ def test_metadata_and_pages_share_duckdb_type_semantics(tmp_path: Path) -> None:
         ),
         path,
     )
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     page = source.read_window(0, 1, QueryControl())
     assert page.table.schema.equals(source.schema)
     assert source.schema.names == ["time", "category", "A", "a_1"]
@@ -195,7 +258,13 @@ def test_unsupported_decimal_precision_is_rejected_before_reading_values(
     value = {"amount": Decimal("123456.78")} if nested else Decimal("123456.78")
     pq.write_table(pa.table({"value": pa.array([value], type=data_type)}), path)
     with pytest.raises(ValueError, match=r"decimal precision .*at most 38"):
-        ParquetSource(path)
+        ParquetSource(
+            path,
+            page_rows=4096,
+            page_bytes=4 * 1024 * 1024,
+            memory_limit="256MB",
+            threads=2,
+        )
 
 
 def test_supported_decimal_precision_preserves_values(tmp_path: Path) -> None:
@@ -204,14 +273,26 @@ def test_supported_decimal_precision_preserves_values(tmp_path: Path) -> None:
     pq.write_table(
         pa.table({"amount": pa.array([value], type=pa.decimal256(38, 2))}), path
     )
-    source = ParquetSource(path)
+    source = ParquetSource(
+        path,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     assert source.read_window(0, 1, QueryControl()).table.column(0)[0].as_py() == value
 
 
 def test_cancellation_interrupts_a_native_window_and_next_read_succeeds(
     small_parquet: Path,
 ) -> None:
-    source = ParquetSource(small_parquet)
+    source = ParquetSource(
+        small_parquet,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     control = QueryControl()
     entered, release, finished = Event(), Event(), Event()
     errors: list[BaseException] = []
@@ -259,7 +340,13 @@ def test_cancellation_interrupts_a_native_window_and_next_read_succeeds(
 def test_failed_read_detaches_before_closing_reader_and_connection(
     small_parquet: Path,
 ) -> None:
-    source = ParquetSource(small_parquet)
+    source = ParquetSource(
+        small_parquet,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     control = QueryControl()
     closed: list[str] = []
     original_detach = control.detach

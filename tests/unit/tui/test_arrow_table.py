@@ -230,7 +230,7 @@ def test_replace_table_invalidates_content_schema_and_layout() -> None:
 
 def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -> None:
     page = pa.table({"value": pa.array([None, 12345], type=pa.int64())})
-    widget = ArrowTable(TableData(page.schema, 10_000))
+    widget = ArrowTable(TableData(page.schema, 10_000, cache_bytes=32 * 1024 * 1024))
     assert widget.row_count == 10_000
     assert widget.columns[0].content_width == 0
     with pytest.raises(CellNotLoadedError):
@@ -248,7 +248,7 @@ def test_unloaded_cells_are_distinct_from_null_and_do_not_cache_placeholders() -
 
 def test_replacing_window_data_discards_cached_cells_and_pending_requests() -> None:
     page = pa.table({"old": ["before"]})
-    data = TableData(page.schema, 1_000)
+    data = TableData(page.schema, 1_000, cache_bytes=32 * 1024 * 1024)
     widget = ArrowTable(data)
     widget.accept_page(DataPage(0, page))
     assert widget._get_cell_renderable(0, 0).plain == "before"
@@ -274,7 +274,9 @@ def test_page_widths_match_loaded_data_and_refresh_cached_layout() -> None:
             "payload": ["hello " * 50_000, "x" * 300_000],
         }
     )
-    widget = ArrowTable(TableData(table.schema, table.num_rows))
+    widget = ArrowTable(
+        TableData(table.schema, table.num_rows, cache_bytes=32 * 1024 * 1024)
+    )
     old_offsets = widget._get_column_offsets()
     widget.accept_page(DataPage(0, table))
 
@@ -322,14 +324,14 @@ def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -
 
 def test_empty_page_and_replacement_allow_first_content_width_measurement() -> None:
     table = pa.table({"n": [12345]})
-    widget = ArrowTable(TableData(table.schema, 1))
+    widget = ArrowTable(TableData(table.schema, 1, cache_bytes=32 * 1024 * 1024))
     widget.accept_page(DataPage(0, table.slice(0, 0)))
     assert widget.columns[0].content_width == 0
     widget.accept_page(DataPage(0, table))
     assert widget.columns[0].content_width == 5
 
     replacement = pa.table({"n": [123456789]})
-    widget.replace_data(TableData(replacement.schema, 1))
+    widget.replace_data(TableData(replacement.schema, 1, cache_bytes=32 * 1024 * 1024))
     assert widget.columns[0].content_width == 0
     widget.accept_page(DataPage(0, replacement))
     assert widget.columns[0].content_width == 9

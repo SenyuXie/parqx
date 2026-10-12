@@ -15,11 +15,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, LoadingIndicator, TextArea
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
+from parqx.config import ParqxConfig
 from parqx.query.engine import (
     QueryCancelledError,
     QueryControl,
     QueryExecutionError,
-    QueryLimits,
     QueryResult,
     execute_query,
 )
@@ -66,13 +66,11 @@ class QueryScreen(ModalScreen[QueryResult]):
         Binding("escape", "close", "Close", priority=True),
     ]
 
-    def __init__(
-        self, catalog: SourceCatalog, query_limits: QueryLimits | None = None
-    ) -> None:
+    def __init__(self, catalog: SourceCatalog, *, config: ParqxConfig) -> None:
         """Create the editor without opening a connection or reading the file."""
         super().__init__()
         self._catalog = catalog
-        self._query_limits = query_limits or QueryLimits()
+        self._config = config
         self._dialog = Vertical(id="query-dialog")
         self._dialog.border_title = "SQL query"
         self.editor = TextArea.code_editor("", language="sql", id="sql-query")
@@ -184,7 +182,7 @@ class QueryScreen(ModalScreen[QueryResult]):
                     sources,
                     sql,
                     control,
-                    self._query_limits,
+                    self._config,
                     unavailable=unavailable,
                 ),
             )

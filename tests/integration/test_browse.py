@@ -16,6 +16,7 @@ from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
 
 from parqx.catalog import SourceCatalog
+from parqx.config import ParqxConfig
 from parqx.data.duckdb import QueryControl
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, TableData
@@ -81,7 +82,7 @@ async def test_replace_table_resets_mounted_layout() -> None:
 
 async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -> None:
     schema = pa.table({"value": [0]}).schema
-    data = TableData(schema, 10_000)
+    data = TableData(schema, 10_000, cache_bytes=32 * 1024 * 1024)
     table = ArrowTable(data)
     requests: list[ArrowTable.WindowRequested] = []
     selected: list[ArrowTable.CellSelected] = []
@@ -468,7 +469,13 @@ async def test_source_pane_removal_cancels_read_and_releases_cache(
 ) -> None:
     started, release, returned = Event(), Event(), Event()
     controls: list[QueryControl] = []
-    source = ParquetSource(small_parquet)
+    source = ParquetSource(
+        small_parquet,
+        page_rows=4096,
+        page_bytes=4 * 1024 * 1024,
+        memory_limit="256MB",
+        threads=2,
+    )
     spec = SourceCatalog([small_parquet]).entries[0].spec
 
     def delayed_read(
@@ -486,7 +493,13 @@ async def test_source_pane_removal_cancels_read_and_releases_cache(
         ThreadPoolExecutor(max_workers=1) as executor,
         patch.object(ParquetSource, "read_window", delayed_read),
     ):
-        pane = TablePane(spec.display_name, spec, id=spec.source_id, executor=executor)
+        pane = TablePane(
+            spec.display_name,
+            spec,
+            id=spec.source_id,
+            executor=executor,
+            config=ParqxConfig(),
+        )
 
         class PaneApp(App[None]):
             def compose(self) -> ComposeResult:
