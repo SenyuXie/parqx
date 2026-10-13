@@ -58,7 +58,13 @@ class ParqxApp(App[Any]):
 
     CSS = """
     #main { height: 1fr; }
-    #sources { width: 32; max-width: 40%; height: 1fr; border-right: solid $primary; }
+    #sources {
+        width: 32;
+        max-width: 40%;
+        height: 1fr;
+        border-right: solid $primary;
+        padding: 0 1 0 2;
+    }
     #results { width: 1fr; }
     #results, #results > ContentSwitcher { height: 1fr; }
     #no-tabs { width: 1fr; height: 1fr; align: center middle; }
@@ -195,7 +201,9 @@ class ParqxApp(App[Any]):
             "Query", "Open a blank SQL workspace", self.action_open_query
         )
         yield SystemCommand(
-            "Toggle Sources", "Show or hide source schemas", self.action_toggle_sources
+            "Sources",
+            "Show or hide files, tables and columns",
+            self.action_toggle_sources,
         )
 
     def action_toggle_sources(self) -> None:

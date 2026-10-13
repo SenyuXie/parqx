@@ -95,14 +95,6 @@ class QueryWorkspace(TabPane):
         & > ArrowTable { height: 1fr; }
         .query-feedback { height: auto; max-height: 4; }
         .query-status { width: 1fr; height: auto; max-height: 4; }
-        .editor-controls { height: 1; }
-        .editor-controls Static { width: 1fr; }
-        .editor-controls Button {
-            min-width: 3;
-            height: 1;
-            margin-left: 1;
-        }
-        .toggle-editor { width: 12; }
         .result-details { width: 16; min-width: 16; height: 1; }
         & > TextArea {
             height: 10;
@@ -117,7 +109,6 @@ class QueryWorkspace(TabPane):
         super().__init__(Content(title), id=id)
         self.editor = TextArea.code_editor("", language="sql", classes="sql-draft")
         self.editor.border_title = "SQL · Ctrl+Enter to run"
-        self._editor_height = 10
         self.current_result: QueryResult | None = None
         self.error: str | None = None
         self.table: ArrowTable | None = None
@@ -127,15 +118,6 @@ class QueryWorkspace(TabPane):
 
     def compose(self) -> ComposeResult:
         """Yield the persistent SQL editor."""
-        with Horizontal(classes="editor-controls"):
-            yield Static("SQL editor")
-            yield Button(
-                "-", classes="shrink-editor", compact=True, tooltip="Shrink SQL editor"
-            )
-            yield Button(
-                "+", classes="grow-editor", compact=True, tooltip="Grow SQL editor"
-            )
-            yield Button("Hide SQL", classes="toggle-editor", compact=True)
         yield self.editor
         with Horizontal(classes="query-feedback"):
             yield self.status
@@ -144,50 +126,22 @@ class QueryWorkspace(TabPane):
             )
 
     def on_mount(self) -> None:
-        """Let native maximization temporarily override the saved editor size."""
+        """Let native maximization temporarily fill the screen with the editor."""
         self.watch(self.screen, "maximized", self._apply_editor_layout, init=False)
 
     def on_resize(self) -> None:
-        """Adapt the saved allocation while keeping result controls reachable."""
+        """Adapt the editor allocation while keeping result controls reachable."""
         self._apply_editor_layout()
         self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
 
     def _apply_editor_layout(self) -> None:
         if not self.size.height:
             return
-        # Reserve one control row, up to four feedback rows and four result rows.
-        maximum = max(4, self.size.height - 9)
-        height = min(self._editor_height, maximum)
+        # Reserve up to four feedback rows and four result rows.
+        height = min(10, max(4, self.size.height - 8))
         self.editor.styles.height = (
             "1fr" if self.screen.maximized is self.editor else height
         )
-        self.query_one(".shrink-editor", Button).disabled = (
-            not self.editor.display or height <= 4
-        )
-        self.query_one(".grow-editor", Button).disabled = (
-            not self.editor.display or height >= maximum
-        )
-        self.query_one(".toggle-editor", Button).label = (
-            "Hide SQL" if self.editor.display else "Show SQL"
-        )
-
-    @on(Button.Pressed, ".shrink-editor, .grow-editor")
-    def resize_editor(self, event: Button.Pressed) -> None:
-        """Adjust only this workspace's preferred editor allocation."""
-        event.stop()
-        change = -2 if event.button.has_class("shrink-editor") else 2
-        self._editor_height = max(4, self.editor.region.height + change)
-        self._apply_editor_layout()
-        self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
-
-    @on(Button.Pressed, ".toggle-editor")
-    def toggle_editor(self, event: Button.Pressed) -> None:
-        """Collapse the SQL draft or restore its saved allocation."""
-        event.stop()
-        self.editor.display = not self.editor.display
-        self._apply_editor_layout()
-        if self.editor.display:
-            self.editor.focus()
 
     def on_text_area_changed(self) -> None:
         """Scroll after the editor has recalculated its multiline extent."""

@@ -75,13 +75,17 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
             f"{first.name} · ready",
         ]
         assert [str(child.label) for child in nodes[0].children] == [
-            f"File: {second.resolve()}",
-            'SQL: "sales [report]-""items"""',
-            "amount: double",
+            f"Path: {second.resolve()}",
+            'Table: "sales [report]-""items"""',
+        ]
+        assert [str(child.label) for child in nodes[0].children[1].children] == [
+            "amount: double"
         ]
         assert [str(child.label) for child in nodes[1].children] == [
-            f"File: {first.resolve()}",
-            'SQL: "sales [report]-""items""_2"',
+            f"Path: {first.resolve()}",
+            'Table: "sales [report]-""items""_2"',
+        ]
+        assert [str(child.label) for child in nodes[1].children[1].children] == [
             "id: int64",
             "name: string",
         ]
@@ -96,7 +100,9 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
             return cache() is None
 
         await wait_for(released, pilot)
-        assert "amount: double" in [str(child.label) for child in nodes[0].children]
+        assert "amount: double" in [
+            str(child.label) for child in nodes[0].children[1].children
+        ]
         result = await run_query(
             app, pilot, 'SELECT amount FROM "sales [report]-""items"""'
         )
@@ -170,9 +176,9 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
                 pending_node, failed_node, _ = sources.root.children
                 assert str(pending_node.label) == "pending.parquet · loading"
                 assert str(failed_node.label) == "failed.parquet · loading"
-                assert [str(child.label) for child in pending_node.children][
-                    -1
-                ] == "Loading schema…"
+                assert [
+                    str(child.label) for child in pending_node.children[1].children
+                ][-1] == "Loading schema…"
                 sources.focus()
                 await pilot.press("home", "right", "down", "enter")
                 assert app.catalog.snapshot() == (app.catalog.get("source-3").spec,)
@@ -192,14 +198,12 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
                 )
                 assert sources.has_focus
                 assert str(pending_node.label) == "pending.parquet · ready"
-                assert [str(child.label) for child in pending_node.children][-3:] == [
-                    "id: int64",
-                    "name: string",
-                    "score: double",
-                ]
+                assert [
+                    str(child.label) for child in pending_node.children[1].children
+                ][-3:] == ["id: int64", "name: string", "score: double"]
                 assert str(failed_node.label) == "failed.parquet · failed"
                 issue = app.load_errors[0]
-                assert [str(child.label) for child in failed_node.children][
+                assert [str(child.label) for child in failed_node.children[1].children][
                     -1
                 ] == f"Error: {issue.message}"
                 assert app.catalog.get("source-2").schema is None
@@ -237,14 +241,14 @@ async def test_metadata_arrival_preserves_sidebar_inspection_focus(
                 await pilot.press("home", "right", "down")
                 assert sources.cursor_node is not None
                 assert (
-                    str(sources.cursor_node.label) == f"File: {small_parquet.resolve()}"
+                    str(sources.cursor_node.label) == f"Path: {small_parquet.resolve()}"
                 )
                 release.set()
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
                 assert sources.has_focus
                 assert sources.cursor_node is not None
                 assert (
-                    str(sources.cursor_node.label) == f"File: {small_parquet.resolve()}"
+                    str(sources.cursor_node.label) == f"Path: {small_parquet.resolve()}"
                 )
             finally:
                 release.set()

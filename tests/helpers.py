@@ -68,7 +68,7 @@ async def toggle_sources(app: ParqxApp, pilot: Pilot[Any]) -> None:
     await pilot.press("ctrl+p")
     palette = app.screen
     assert isinstance(palette, CommandPalette)
-    palette.query_one(Input).value = "Toggle Sources"
+    palette.query_one(Input).value = "Sources"
     commands = palette.query_one(CommandList)
     await wait_for(lambda: commands.option_count == 1, pilot)
     await pilot.press("down", "enter")

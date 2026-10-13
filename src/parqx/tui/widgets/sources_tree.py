@@ -33,17 +33,23 @@ class SourcesTree(Tree[str]):
         node = next(
             node for node in self.root.children if node.data == entry.spec.source_id
         )
-        node.set_label(Text(f"{entry.spec.display_name} · {entry.state}"))
+        node.set_label(
+            Text.assemble(
+                (entry.spec.display_name, "bold"), (f" · {entry.state}", "dim")
+            )
+        )
         node.remove_children()
-        node.add_leaf(Text(f"File: {entry.spec.path}"))
-        node.add_leaf(Text(f"SQL: {entry.spec.quoted_name}"))
+        node.add_leaf(Text(f"Path: {entry.spec.path}", style="dim"))
+        table = node.add(
+            Text.assemble(("Table: ", "dim"), entry.spec.quoted_name), expand=True
+        )
         if entry.schema is not None:
             for field in entry.schema:
-                node.add_leaf(Text(f"{field.name}: {field.type}"))
+                table.add_leaf(Text.assemble(field.name, (f": {field.type}", "dim")))
         elif entry.issue is not None:
-            node.add_leaf(Text(f"Error: {entry.issue.message}"))
+            table.add_leaf(Text(f"Error: {entry.issue.message}"))
         else:
-            node.add_leaf("Loading schema…")
+            table.add_leaf("Loading schema…")
 
     def action_expand_source(self) -> None:
         """Expand the highlighted source, or move into its structure."""

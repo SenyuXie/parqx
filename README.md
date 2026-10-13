@@ -71,12 +71,10 @@ time; its draft stays read-only until completion, while other tabs remain usable
 All ready sources stay queryable when their file views are closed. Workspaces
 last for the current session only.
 
-Use **-** / **+** above the editor to change its height, and **Hide SQL** /
-**Show SQL** to collapse and restore it. These controls are reachable with native
-focus navigation and Enter as well as the mouse. Each workspace remembers its
-own editor size; short terminals temporarily reduce it to leave room for results
-and feedback. Long SQL scrolls inside the editor. **Result details** opens the
-full current-result metadata and latest error, with copy controls.
+The editor leaves room for results and feedback, adapting to short terminals.
+Long SQL scrolls inside the editor; use native **Maximize** to expand the focused
+editor or result. **Result details** opens the full current-result metadata and
+latest error, with copy controls.
 
 `Ctrl+Enter` requires a terminal that sends modified Enter distinctly from plain
 Enter. Plain Enter always inserts a newline in the editor.
@@ -91,12 +89,12 @@ or **Open Sources** to reveal the sidebar and reopen a file with Enter.
 
 ### Sources
 
-Use `ctrl+p` → **Toggle Sources** to show or hide the shared sources sidebar.
-It lists each session file, its quoted SQL table name, loading or failure state,
-and loaded columns and types. Expand with `→`, collapse with `←`, and use native
-`Tab` / `Shift+Tab` focus navigation. Long labels can be inspected with the tree's
-horizontal scrollbar. Inspecting the tree does not change SQL text or table
-display settings.
+Use `ctrl+p` → **Sources** to show or hide the shared sources sidebar.
+Each file shows its path and availability. Its **Table** contains the columns and
+their types, with the quoted table name used in SQL. Expand with `→`, collapse
+with `←`, and use native `Tab` / `Shift+Tab` focus navigation. Long labels can be
+inspected with the tree's horizontal scrollbar. Inspecting the tree does not
+change SQL text or table display settings.
 
 Closing a file tab releases its cached rows while keeping its schema and SQL
 identity available for the session. Metadata that finishes after a tab closes

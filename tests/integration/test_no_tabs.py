@@ -129,11 +129,9 @@ async def test_empty_state_reopens_sources_once_in_default_browsing_state(
         await pilot.press("enter")
         await wait_for(lambda: sources.display and sources.has_focus, pilot)
         await pilot.press("home", "right")
-        assert 'SQL: "smoke"' in [
-            str(child.label) for child in sources.root.children[0].children
-        ]
+        assert str(sources.root.children[0].children[1].label) == 'Table: "smoke"'
         assert "id: int64" in [
-            str(child.label) for child in sources.root.children[0].children
+            str(child.label) for child in sources.root.children[0].children[1].children
         ]
         assert not sources.region.overlaps(query_action.region)
         assert app.screen.region.contains_region(query_action.region)
@@ -219,7 +217,8 @@ async def test_source_load_finishes_after_all_views_close_without_reopening_them
                     await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
                     assert table.get_cell_at(Coordinate(0, 0)).as_py() == 1
                     assert "id: int64" in [
-                        str(child.label) for child in sources.root.children[0].children
+                        str(child.label)
+                        for child in sources.root.children[0].children[1].children
                     ]
                 assert tabs.tab_count == 1
                 assert len(sources.root.children) == 2

@@ -57,7 +57,7 @@ async def test_sidebar_activates_and_reopens_one_default_view_per_source(
 
         await wait_for(released, pilot)
         assert "amount: int64" in [
-            str(child.label) for child in sources.root.children[0].children
+            str(child.label) for child in sources.root.children[0].children[1].children
         ]
         sources.focus()
         await pilot.press("home", "enter", "enter")
@@ -153,7 +153,8 @@ async def test_reopening_pending_source_shares_load_and_never_resurrects_closed_
                 assert tabs.active == "source-2"
                 assert str(sources.root.children[0].label) == "pending.parquet · ready"
                 assert "id: int64" in [
-                    str(child.label) for child in sources.root.children[0].children
+                    str(child.label)
+                    for child in sources.root.children[0].children[1].children
                 ]
                 sources.focus()
                 await pilot.press("home", "enter")

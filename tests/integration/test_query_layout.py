@@ -8,46 +8,7 @@ from textual.widgets import Button, TabbedContent
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import open_query, open_sql_query, select_tab, wait_for
-
-
-async def test_editor_size_and_collapse_are_retained_per_workspace(
-    small_parquet: Path,
-) -> None:
-    app = ParqxApp([small_parquet])
-    async with app.run_test(size=(120, 40)) as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
-        first = await open_query(app, pilot)
-        first.editor.load_text("SELECT * FROM smoke")
-        await pilot.press("ctrl+enter")
-        await wait_for(lambda: first.table is not None and not first.running, pilot)
-        assert first.table is not None
-        assert first.editor.content_size.height == 8
-        initial_height = first.editor.region.height
-        result_height = first.table.region.height
-        assert await pilot.click(first.query_one(".shrink-editor", Button))
-        await wait_for(lambda: first.editor.region.height < initial_height, pilot)
-        smaller_height = first.editor.region.height
-        assert first.table.region.height > result_height
-        assert await pilot.click(first.query_one(".toggle-editor", Button))
-        await wait_for(lambda: not first.editor.display, pilot)
-        assert first.table.region.height > result_height + 3
-        assert first.editor.text == "SELECT * FROM smoke"
-        assert first.table.row_count == 5
-
-        second = await open_query(app, pilot)
-        assert second.editor.display
-        assert second.editor.region.height == initial_height
-        tabs = app.query_one(TabbedContent)
-        await select_tab(tabs, "query-1", pilot)
-        assert not first.editor.display
-        assert await pilot.click(first.query_one(".toggle-editor", Button))
-        await wait_for(lambda: first.editor.display, pilot)
-        assert first.editor.region.height == smaller_height
-        assert await pilot.click(first.query_one(".grow-editor", Button))
-        await wait_for(lambda: first.editor.region.height == initial_height, pilot)
-        assert first.editor.text == "SELECT * FROM smoke"
-        assert first.table.row_count == 5
+from tests.helpers import open_query, open_sql_query, wait_for
 
 
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
@@ -205,12 +166,7 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
         await pilot.press("shift+right")
         selection = query.editor.selection
         initial_height = query.editor.region.height
-        assert await pilot.click(query.query_one(".grow-editor", Button))
-        await wait_for(lambda: query.editor.region.height > initial_height, pilot)
-        grown_height = query.editor.region.height
         details = query.query_one(".result-details", Button)
-        toggle = query.query_one(".toggle-editor", Button)
-        toggle.active_effect_duration = 0
 
         for width, height in ((80, 24), (60, 18), (120, 40)):
             await pilot.resize_terminal(width, height)
@@ -218,24 +174,17 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
             for _ in range(2):
                 app.action_toggle_sources()
                 await pilot.pause()
-                assert query.editor.region.height <= grown_height
+                assert query.editor.region.height <= initial_height
                 assert query.editor.scroll_y > 0
                 assert table.region.height >= 4
                 assert table.max_scroll_x > 0
                 assert "Result details" in details.render_line(0).text
-                assert "Hide SQL" in toggle.render_line(0).text
                 for control in query.query(Button):
                     assert app.screen.region.contains_region(control.region)
                 assert query.editor.selection == selection
                 assert query.editor.text == sql
                 assert table.row_count == 5
-            assert await pilot.click(toggle)
-            await wait_for(lambda: not query.editor.display, pilot)
-            assert "Show SQL" in toggle.render_line(0).text
-            assert await pilot.click(toggle)
-            await wait_for(lambda: query.editor.display, pilot)
-            assert query.editor.selection == selection
-        assert query.editor.region.height == grown_height
+        assert query.editor.region.height == initial_height
         table.focus()
         await pilot.press("end")
         assert table.scroll_x > 0
@@ -251,11 +200,6 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
         assert any(isinstance(widget, Tabs) for widget in visited)
         assert any(isinstance(widget, SourcesTree) for widget in visited)
         assert query.editor.text == sql
-        shrink = query.query_one(".shrink-editor", Button)
-        shrink.active_effect_duration = 0
-        while not shrink.disabled:
-            assert await pilot.click(shrink)
-            await pilot.pause()
         assert query.editor.scrollable_content_region.height >= 1
         assert table.region.height >= 4
 
