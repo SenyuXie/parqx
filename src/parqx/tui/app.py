@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -19,7 +18,7 @@ from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Footer, TabbedContent
+from textual.widgets import Footer, TabbedContent, Tree
 from textual.worker import Worker
 
 from parqx.catalog import SourceCatalog, SourceIssue
@@ -137,26 +136,9 @@ class ParqxApp(App[Any]):
     async def on_mount(self) -> None:
         """Create all source tabs in input order before starting metadata reads."""
         # Dynamically added panes aren't retained by TabbedContent's composition.
-        name_counts = Counter(
-            entry.spec.display_name.casefold() for entry in self.catalog.entries
-        )
         async with self._tab_lock:
             for entry in self.catalog.entries:
-                source = entry.spec
-                title = source.display_name
-                if name_counts[title.casefold()] > 1:
-                    title += f" · {source.quoted_name}"
-                pane = TablePane(
-                    title,
-                    source,
-                    id=source.source_id,
-                    executor=self._source_pool,
-                    config=self.config,
-                )
-                await self._tabs.add_pane(pane)
-                self._tabs.get_tab(source.source_id).tooltip = Content(str(source.path))
-                if entry.issue is not None:
-                    pane.show_error(entry.issue)
+                await self._add_source_pane(entry.spec.source_id)
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_bindings()
         for entry in self.catalog.entries:
@@ -169,6 +151,46 @@ class ParqxApp(App[Any]):
                     exclusive=True,
                 )
         self._exit_if_all_failed()
+
+    async def _add_source_pane(self, source_id: str) -> TablePane:
+        entry = self.catalog.get(source_id)
+        source = entry.spec
+        title = source.display_name
+        if (
+            sum(
+                item.spec.display_name.casefold() == title.casefold()
+                for item in self.catalog.entries
+            )
+            > 1
+        ):
+            title += f" · {source.quoted_name}"
+        pane = TablePane(
+            title, source, id=source_id, executor=self._source_pool, config=self.config
+        )
+        await self._tabs.add_pane(pane)
+        self._tabs.get_tab(source_id).tooltip = Content(str(source.path))
+        if entry.issue is not None:
+            pane.show_error(entry.issue)
+        return pane
+
+    @on(Tree.NodeSelected, "#sources")
+    async def _on_source_selected(self, event: Tree.NodeSelected[str]) -> None:
+        source_id = event.node.data
+        if source_id is None or self.screen.is_modal:
+            return
+        event.stop()
+        async with self._tab_lock:
+            if self._source_pane(source_id) is None:
+                await self._add_source_pane(source_id)
+                if self.catalog.get(source_id).state == "ready":
+                    self.run_worker(
+                        partial(self._load_table, source_id),
+                        description="Load source metadata",
+                        group=f"load:{source_id}",
+                        exclusive=True,
+                    )
+            self._tabs.active = source_id
+            self._refresh_tab_bindings()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
         """Expose the SQL dialog alongside Textual's built-in commands."""
