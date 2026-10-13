@@ -3,11 +3,10 @@
 from pathlib import Path
 
 import pytest
-from textual.command import Command, CommandList, CommandPalette
-from textual.widgets import Input, TabbedContent, TextArea
+from textual.widgets import TabbedContent, TextArea
 
 from parqx.tui.app import ParqxApp
-from tests.helpers import confirm_query_close, select_tab, wait_for
+from tests.helpers import confirm_query_close, open_sql_query, select_tab, wait_for
 
 
 async def test_query_palette_opens_independent_blank_workspaces(
@@ -18,33 +17,9 @@ async def test_query_palette_opens_independent_blank_workspaces(
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
         for number in (1, 2):
-            await pilot.press("ctrl+p")
-            palette = app.screen
-            assert isinstance(palette, CommandPalette)
-            palette.query_one(Input).value = "Query"
-            commands = palette.query_one(CommandList)
-
-            def palette_ready(commands: CommandList = commands) -> bool:
-                return commands.option_count == 1
-
-            await wait_for(palette_ready, pilot)
-            option = commands.get_option_at_index(0)
-            assert isinstance(option, Command)
-            assert option.hit.text == "Query"
-            await pilot.press("enter")
-
-            def workspace_active(number: int = number) -> bool:
-                return tabs.active == f"query-{number}"
-
-            await wait_for(workspace_active, pilot)
-            pane = tabs.active_pane
-            assert pane is not None
-            editor = pane.query_one(TextArea)
-
-            def editor_focused(editor: TextArea = editor) -> bool:
-                return editor.has_focus
-
-            await wait_for(editor_focused, pilot)
+            query = await open_sql_query(pilot)
+            assert tabs.active == f"query-{number}"
+            editor = query.editor
             assert editor.text == ""
             assert not app.screen.is_modal
             assert str(tabs.get_tab(f"query-{number}").label) == f"Query {number}"

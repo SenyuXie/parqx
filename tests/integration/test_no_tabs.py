@@ -7,9 +7,8 @@ from unittest.mock import patch
 
 import duckdb
 import pytest
-from textual.command import CommandList, CommandPalette
 from textual.coordinate import Coordinate
-from textual.widgets import Button, Input, Static, TabbedContent
+from textual.widgets import Button, Static, TabbedContent
 
 from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
@@ -19,6 +18,7 @@ from parqx.tui.widgets.sources_tree import SourcesTree
 from tests.helpers import (
     confirm_query_close,
     open_query,
+    open_sql_query,
     run_query,
     select_tab,
     wait_for,
@@ -87,17 +87,9 @@ async def test_last_query_requires_confirmation_and_palette_starts_fresh(
         await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 0, pilot)
         assert table.row_count == 0
-        await pilot.press("ctrl+enter", "ctrl+w", "ctrl+p")
-        palette = app.screen
-        assert isinstance(palette, CommandPalette)
-        palette.query_one(Input).value = "Query"
-        commands = palette.query_one(CommandList)
-        await wait_for(lambda: commands.option_count == 1, pilot)
-        await pilot.press("enter")
-        await wait_for(lambda: tabs.active == "query-2", pilot)
-        fresh = tabs.active_pane
-        assert isinstance(fresh, QueryWorkspace)
-        await wait_for(lambda: fresh.editor.has_focus, pilot)
+        await pilot.press("ctrl+enter", "ctrl+w")
+        fresh = await open_sql_query(pilot)
+        assert tabs.active == "query-2"
         assert fresh.editor.text == ""
         assert fresh.current_result is None
         await pilot.press("ctrl+w")

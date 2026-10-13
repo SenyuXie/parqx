@@ -8,7 +8,7 @@ from textual.widgets import Button, TabbedContent
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import open_query, select_tab, wait_for
+from tests.helpers import open_query, open_sql_query, select_tab, wait_for
 
 
 async def test_editor_size_and_collapse_are_retained_per_workspace(
@@ -263,9 +263,6 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
 async def test_query_palette_reveals_new_workspace_from_maximized_editor(
     small_parquet: Path,
 ) -> None:
-    from textual.command import CommandList, CommandPalette
-    from textual.widgets import Input, TextArea
-
     app = ParqxApp([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -273,20 +270,12 @@ async def test_query_palette_reveals_new_workspace_from_maximized_editor(
         first.editor.load_text("SELECT 42")
         app.screen.action_maximize()
         await wait_for(lambda: first.editor.is_maximized, pilot)
-        await pilot.press("ctrl+p")
-        assert isinstance(app.screen, CommandPalette)
-        app.screen.query_one(Input).value = "Query"
-        commands = app.screen.query_one(CommandList)
-        await wait_for(lambda: commands.option_count == 1, pilot)
-        await pilot.press("enter")
-        await wait_for(lambda: not app.screen.is_modal, pilot)
+        query = await open_sql_query(pilot)
         tabs = app.query_one(TabbedContent)
-        await wait_for(lambda: tabs.active == "query-2", pilot)
+        assert tabs.active == "query-2"
         assert app.screen.maximized is None
-        pane = tabs.active_pane
-        assert pane is not None
-        editor = pane.query_one(TextArea)
-        await wait_for(lambda: editor.has_focus and editor.region.height > 0, pilot)
+        editor = query.editor
+        await wait_for(lambda: editor.region.height > 0, pilot)
         assert editor.text == ""
         assert first.editor.text == "SELECT 42"
         assert app.screen.region.contains_region(editor.region)

@@ -3,15 +3,13 @@
 import gc
 import weakref
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 from textual import events
 from textual._xterm_parser import XTermParser
-from textual.command import Command, CommandList, CommandPalette
+from textual.command import CommandPalette
 from textual.coordinate import Coordinate
-from textual.pilot import Pilot
-from textual.widgets import Footer, Input, TabbedContent
+from textual.widgets import Footer, TabbedContent
 
 from parqx.config import ParqxConfig
 from parqx.tui.app import ParqxApp
@@ -20,6 +18,7 @@ from parqx.tui.widgets.query_workspace import QueryWorkspace
 from tests.helpers import (
     confirm_query_close,
     open_query,
+    open_sql_query,
     run_query,
     select_tab,
     wait_for,
@@ -163,28 +162,6 @@ async def test_unavailable_sources_report_details_and_recover(
         tooltip = str(tabs.get_tab("query-3").tooltip)
         assert "warning" in tooltip
         assert "Could not open this source" in tooltip
-
-
-async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
-    await pilot.press("ctrl+p")
-    palette = pilot.app.screen
-    assert isinstance(palette, CommandPalette)
-    palette.query_one(Input).value = "Query"
-    commands = palette.query_one(CommandList)
-
-    def found() -> bool:
-        if commands.option_count != 1:
-            return False
-        option = commands.get_option_at_index(0)
-        return isinstance(option, Command) and option.hit.text == "Query"
-
-    await wait_for(found, pilot)
-    await pilot.press("enter")
-    await wait_for(lambda: not pilot.app.screen.is_modal, pilot)
-    query = pilot.app.query_one(TabbedContent).active_pane
-    assert isinstance(query, QueryWorkspace)
-    await wait_for(lambda: query.editor.has_focus, pilot)
-    return query
 
 
 async def test_palette_preserves_editor_selection_and_history(

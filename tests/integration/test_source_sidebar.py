@@ -11,26 +11,13 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from textual.command import CommandList, CommandPalette
 from textual.coordinate import Coordinate
-from textual.pilot import Pilot
-from textual.widgets import Input, TabbedContent
+from textual.widgets import TabbedContent
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
-from tests.helpers import run_query, select_tab, wait_for
-
-
-async def toggle_sources(app: ParqxApp, pilot: Pilot[None]) -> None:
-    await pilot.press("ctrl+p")
-    palette = app.screen
-    assert isinstance(palette, CommandPalette)
-    palette.query_one(Input).value = "Toggle Sources"
-    commands = palette.query_one(CommandList)
-    await wait_for(lambda: commands.option_count == 1, pilot)
-    await pilot.press("down", "enter")
-    await wait_for(lambda: app.screen is not palette, pilot)
+from tests.helpers import run_query, select_tab, toggle_sources, wait_for
 
 
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])

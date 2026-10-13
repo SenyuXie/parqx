@@ -18,7 +18,7 @@ from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
-from tests.helpers import open_query, run_query, select_tab, wait_for
+from tests.helpers import open_query, run_query, select_tab, toggle_sources, wait_for
 
 
 async def test_sidebar_activates_and_reopens_one_default_view_per_source(
@@ -201,6 +201,39 @@ async def test_failed_source_reopens_stored_failure_without_retrying(
         assert tabs.tab_count == 2
         result = await run_query(app, pilot, 'SELECT count(*) FROM "smoke"')
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
+
+
+async def test_reopen_failure_preserves_query_draft_and_current_result(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        query.editor.load_text("SELECT sum(id) FROM smoke")
+        await pilot.press("ctrl+enter")
+        await wait_for(lambda: query.current_result is not None, pilot)
+        query.editor.load_text("SELECT name FROM smoke")
+        tabs = app.query_one(TabbedContent)
+        await select_tab(tabs, "source-1", pilot)
+        await pilot.press("ctrl+w")
+        await wait_for(lambda: not tabs.query("#source-1"), pilot)
+        small_parquet.unlink()
+        await toggle_sources(app, pilot)
+        sources = app.query_one(SourcesTree)
+        sources.focus()
+        await pilot.press("home", "enter")
+        await wait_for(lambda: app.catalog.get("source-1").state == "failed", pilot)
+        assert app.is_running
+        error = tabs.get_pane("source-1").query_one(".source-error", Static)
+        assert error.display
+        assert str(small_parquet) in str(error.content)
+        assert str(sources.root.children[0].label) == "smoke.parquet · failed"
+        assert tabs.tab_count == 2
+        await select_tab(tabs, "query-1", pilot)
+        assert tabs.active_pane is query
+        assert query.editor.text == "SELECT name FROM smoke"
+        assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 15
 
 
 async def test_source_reopening_preserves_running_query_owner_and_other_drafts(
