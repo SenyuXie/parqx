@@ -14,11 +14,11 @@ from typing import Any, ClassVar
 from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Footer, TabbedContent, TabPane, Tree
+from textual.widgets import Button, Footer, Static, TabbedContent, TabPane, Tree
 from textual.worker import Worker, WorkerState
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
@@ -55,6 +55,13 @@ class ParqxApp(App[Any]):
     #sources { width: 32; max-width: 40%; height: 1fr; border-right: solid $primary; }
     #results { width: 1fr; }
     #results, #results > ContentSwitcher { height: 1fr; }
+    #no-tabs { width: 1fr; height: 1fr; align: center middle; }
+    #no-tabs > Vertical { width: 46; max-width: 100%; height: auto; padding: 1 2; }
+    #no-tabs Static { height: auto; margin-bottom: 1; text-align: center; }
+    #no-tabs-title { text-style: bold; }
+    #no-tabs Horizontal { height: 3; }
+    #no-tabs Button { width: 1fr; min-width: 14; }
+    #new-query { margin-right: 1; }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -91,8 +98,10 @@ class ParqxApp(App[Any]):
         self._sources = SourcesTree(self.catalog.entries)
         self._sources.display = False
         self._tabs = TabbedContent(id="results")
+        self._empty = Vertical(id="no-tabs")
+        self._empty.display = False
         self._tab_lock = asyncio.Lock()
-        """Serialize asynchronous mounts/removals and protect the last tab."""
+        """Serialize asynchronous mounts and removals."""
         self._query_number = 0
         self._execution: tuple[Worker[list[QueryResult]], QueryWorkspace] | None = None
         self._source_pool = ThreadPoolExecutor(
@@ -113,6 +122,12 @@ class ParqxApp(App[Any]):
         with Horizontal(id="main"):
             yield self._sources
             yield self._tabs
+            with self._empty, Vertical():
+                yield Static("No tabs open", id="no-tabs-title")
+                yield Static("Create a query or reopen a session source.")
+                with Horizontal():
+                    yield Button("Query", variant="primary", id="new-query")
+                    yield Button("Open Sources", id="open-sources")
         yield Footer(show_command_palette=True)
 
     async def on_mount(self) -> None:
@@ -122,7 +137,7 @@ class ParqxApp(App[Any]):
             for entry in self.catalog.entries:
                 await self._add_source_pane(entry.spec.source_id)
             self._tabs.active = self.catalog.entries[0].spec.source_id
-            self._refresh_tab_bindings()
+            self._refresh_tab_state()
         for entry in self.catalog.entries:
             source_id = entry.spec.source_id
             if entry.issue is None:
@@ -163,7 +178,7 @@ class ParqxApp(App[Any]):
                 if self.catalog.get(source_id).state == "ready":
                     self._start_source_load(source_id)
             self._tabs.active = source_id
-            self._refresh_tab_bindings()
+            self._refresh_tab_state()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
         """Expose query workspace creation alongside native commands."""
@@ -184,8 +199,13 @@ class ParqxApp(App[Any]):
             if had_focus and not self._sources.display:
                 self.screen.focus_next()
 
+    @on(Button.Pressed, "#open-sources")
+    def _open_sources(self) -> None:
+        self._sources.display = True
+        self._sources.focus()
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Protect modal input and keep the last tab's close hint visible."""
+        """Protect modal input and scope actions to the active view."""
         if (
             action
             in {
@@ -210,13 +230,15 @@ class ParqxApp(App[Any]):
         if action == "run_query":
             return isinstance(self._active_pane(), QueryWorkspace)
         if action == "close_tab":
-            return True if self._tabs.is_mounted and self._tabs.tab_count > 1 else None
+            return self._active_pane() is not None
         return super().check_action(action, parameters)
 
-    def _refresh_tab_bindings(self) -> None:
+    def _refresh_tab_state(self) -> None:
         # Update the main footer even while another screen is on top of it.
         # TabActivated can arrive after automatic exit has detached the tabs.
         if self._tabs.is_attached:
+            self._tabs.display = self._tabs.tab_count > 0
+            self._empty.display = not self._tabs.display
             self._tabs.screen.refresh_bindings()
 
     def _active_pane(self) -> TabPane | None:
@@ -249,7 +271,7 @@ class ParqxApp(App[Any]):
 
     @on(TabbedContent.TabActivated, "#results")
     def _on_tab_activated(self) -> None:
-        self._refresh_tab_bindings()
+        self._refresh_tab_state()
 
     def _start_source_load(self, source_id: str) -> None:
         if self._shutting_down or source_id in self._loading_sources:
@@ -319,6 +341,7 @@ class ParqxApp(App[Any]):
         self._execution = None
         self._source_pool.shutdown(wait=False, cancel_futures=True)
 
+    @on(Button.Pressed, "#new-query")
     async def action_open_query(self) -> None:
         """Create and activate a new blank SQL workspace."""
         if self.screen.is_modal:
@@ -329,7 +352,7 @@ class ParqxApp(App[Any]):
             pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
             await self._tabs.add_pane(pane)
             self._tabs.active = pane_id
-            self._refresh_tab_bindings()
+            self._refresh_tab_state()
             pane.editor.focus()
 
     def action_run_query(self) -> None:
@@ -415,11 +438,7 @@ class ParqxApp(App[Any]):
     async def action_close_tab(self) -> None:
         """Close the active tab, confirming before discarding query work."""
         async with self._tab_lock:
-            if (
-                self.screen.is_modal
-                or not self._tabs.is_mounted
-                or self._tabs.tab_count <= 1
-            ):
+            if self.screen.is_modal or not self._tabs.is_mounted:
                 return
             pane = self._active_pane()
             if isinstance(pane, QueryWorkspace) and pane.running:
@@ -446,18 +465,18 @@ class ParqxApp(App[Any]):
         if not confirmed:
             return
         async with self._tab_lock:
-            if (
-                pane.is_attached
-                and not pane.running
-                and pane.id
-                and self._tabs.tab_count > 1
-            ):
+            if pane.is_attached and not pane.running and pane.id:
                 await self._remove_tab(pane.id)
 
     async def _remove_tab(self, pane_id: str) -> None:
         await self._tabs.remove_pane(pane_id)
-        self._refresh_tab_bindings()
-        self.call_after_refresh(self._focus_active_table)
+        self._refresh_tab_state()
+        if self._sources.has_focus:
+            return
+        if self._tabs.tab_count:
+            self.call_after_refresh(self._focus_active_table)
+        else:
+            self.call_after_refresh(self.query_one("#new-query", Button).focus)
 
     def action_toggle_header(self) -> None:
         """Toggle the active table's column header row."""

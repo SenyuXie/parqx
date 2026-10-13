@@ -74,7 +74,8 @@ sidebar. A workspace with SQL or a result asks for confirmation before discardin
 its work; Cancel is selected initially, and Escape also cancels. Cancelling keeps
 the draft, editing state, result, and layout. Empty workspaces and file views
 close immediately. A running workspace cannot close until its query completes.
-At least one tab remains open.
+Closing every tab leaves parqx open. Choose **Query** to start a blank workspace
+or **Open Sources** to reveal the sidebar and reopen a file with Enter.
 
 ### Sources
 
