@@ -28,7 +28,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
-from parqx.tui.widgets.query_workspace import QueryWorkspace
+from parqx.tui.widgets.query_workspace import QueryWorkspace, query_result_details
 from parqx.tui.widgets.sources_tree import SourcesTree
 
 logger = logging.getLogger(__name__)
@@ -45,24 +45,6 @@ def _open_source(path: Path, config: ParqxConfig) -> ParquetSource:
         memory_limit=config.memory_limit,
         threads=config.threads,
     )
-
-
-def _query_result_details(result: QueryResult) -> str:
-    """Format result status, executed SQL and source warnings for its workspace."""
-    status = (
-        f"preview, {result.truncation_reason} · total unknown"
-        if result.truncation_reason is not None
-        else "complete"
-    )
-    if result.issues:
-        status += f" · warning: {len(result.issues)} sources unavailable"
-    details = (
-        f"{result.table.num_rows:,} rows · {status} · {result.elapsed:.2f}s"
-        f"\n\n{result.sql}"
-    )
-    if result.issues:
-        details += "\n\nUnavailable sources:\n" + "\n".join(map(str, result.issues))
-    return details
 
 
 class ParqxApp(App[Any]):
@@ -377,7 +359,7 @@ class ParqxApp(App[Any]):
                     await pane.show_result(result)
                     if pane.is_attached and not self._shutting_down:
                         self._tabs.get_tab(pane).tooltip = Content(
-                            _query_result_details(result)
+                            query_result_details(result)
                         )
             else:
                 error = worker.error
