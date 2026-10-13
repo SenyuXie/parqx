@@ -259,7 +259,9 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
             assert cache.cache_bytes <= cache.cache_budget
 
 
-async def test_pending_source_window_keeps_modal_focus(small_parquet: Path) -> None:
+async def test_pending_source_window_keeps_query_editor_focus(
+    small_parquet: Path,
+) -> None:
     started, release = Event(), Event()
     original_read = ParquetSource.read_window
 

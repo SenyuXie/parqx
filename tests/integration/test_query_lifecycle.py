@@ -10,7 +10,7 @@ import duckdb
 import pytest
 from textual.coordinate import Coordinate
 from textual.message import Message
-from textual.widgets import Footer, TabbedContent
+from textual.widgets import TabbedContent
 from textual.worker import Worker, WorkerState
 
 from parqx.config import ParqxConfig
@@ -18,8 +18,6 @@ from parqx.data.parquet import ParquetSource
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import (
-    footer_keys,
-    footer_ready,
     open_query,
     run_query,
     select_tab,
@@ -41,7 +39,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
         nonlocal calls
         calls += 1
         started.set()
-        release.wait(timeout=5)
+        assert release.wait(timeout=15)
         return original_sql(connection, sql)
 
     app = ParqxApp([small_parquet])
@@ -52,43 +50,41 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 tabs = app.query_one(TabbedContent)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT 42")
-                footer = query.query_one(Footer)
-                await wait_for(lambda: footer_ready(footer), pilot)
-                await pilot.click(footer_keys(footer)["run_query"])
+                await pilot.press("ctrl+enter")
                 await wait_for(started.is_set, pilot)
-                await wait_for(
-                    lambda: (
-                        footer_ready(footer)
-                        and footer_keys(footer)["run_query"].has_class("-disabled")
-                        and footer_keys(footer)["newline"].has_class("-disabled")
-                    ),
-                    pilot,
-                )
-                assert footer_keys(footer)["close"].has_class("-disabled")
-                assert footer_keys(footer)["close"].description == "Close"
-                assert query.editor.has_focus
-                assert query.editor.read_only
-                assert await pilot.click(footer_keys(footer)["run_query"])
-                assert await pilot.click(footer_keys(footer)["newline"])
-                await pilot.press("enter", "enter", "x", "shift+enter", "backspace")
-                await pilot.pause()
-                assert calls == 1
-                assert query.running
-                assert query.editor.text == "SELECT 42"
-                assert query.query_one("#query-loading").display
-                await pilot.click(footer_keys(footer)["close"])
-                await pilot.press("escape")
-                query.action_close()
-                query.action_run_query()
-                assert app.screen is query
-                assert query.running
-                assert calls == 1
-                assert tabs.tab_count == 1
-                release.set()
-                await wait_for(lambda: app.screen is not query, pilot)
-                assert not query.running
-                assert not query.editor.read_only
-                assert tabs.tab_count == 2
+                assert "Running" in str(query.status.content)
+                with patch.object(app, "notify", wraps=app.notify) as notify:
+                    await pilot.press("ctrl+enter", "enter", "x", "backspace", "ctrl+w")
+                    assert "busy" in str(notify.call_args).lower()
+                    assert query.editor.text == "SELECT 42"
+                    assert query.editor.read_only
+                    second = await open_query(app, pilot)
+                    second.editor.load_text("SELECT 17")
+                    await pilot.press("ctrl+enter")
+                    assert not second.editor.read_only
+                    assert calls == 1
+                    await select_tab(tabs, "source-1", pilot)
+                    source = tabs.get_pane("source-1").query_one(ArrowTable)
+                    source.focus()
+                    await pilot.press("down", "ctrl+enter")
+                    assert source.cursor_coordinate.row == 1
+                    assert calls == 1
+                    await pilot.press("ctrl+w")
+                    await wait_for(lambda: not tabs.query("#source-1"), pilot)
+                    await select_tab(tabs, "query-2", pilot)
+                    second.editor.focus()
+                    release.set()
+                    await wait_for(lambda: not query.running, pilot)
+                    assert (
+                        query.query_one(ArrowTable)
+                        .get_cell_at(Coordinate(0, 0))
+                        .as_py()
+                        == 42
+                    )
+                    assert second.editor.has_focus
+                    assert tabs.active == "query-2"
+                    assert calls == 1
+                    assert not second.query(ArrowTable)
             finally:
                 release.set()
 
@@ -169,13 +165,12 @@ async def test_native_failure_unlocks_editor_and_allows_another_query(
             patch.object(duckdb.DuckDBPyConnection, "sql", side_effect=failure),
             patch.object(app, "notify", wraps=app.notify) as notify,
         ):
-            query.action_run_query()
+            await pilot.press("ctrl+enter")
             message = await wait_for_query_error(notify, query, pilot)
             assert (str(failure) or type(failure).__name__) in message
             assert not query.editor.read_only
             assert query.editor.has_focus
-            assert not query.query_one("#query-loading").display
-            assert query.check_action("close", ()) is not None
+            assert message in str(query.status.content)
         result = await run_query(app, pilot, "SELECT 42 AS answer")
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
 
@@ -222,7 +217,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT 42")
-                query.action_run_query()
+                await pilot.press("ctrl+enter")
                 await wait_for(started.is_set, pilot)
             assert not closed.is_set()
             release.set()
@@ -237,7 +232,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
         notify.assert_not_called()
 
 
-async def test_completed_worker_keeps_dialog_locked_until_message_delivery(
+async def test_completed_worker_keeps_workspace_locked_until_message_delivery(
     small_parquet: Path,
 ) -> None:
     app = ParqxApp([small_parquet])
@@ -246,7 +241,7 @@ async def test_completed_worker_keeps_dialog_locked_until_message_delivery(
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT 42")
         held: list[Message] = []
-        post_message = query.post_message
+        post_message = app.post_message
 
         def hold_completion(message: Message) -> bool:
             if (
@@ -257,15 +252,17 @@ async def test_completed_worker_keeps_dialog_locked_until_message_delivery(
                 return True
             return post_message(message)
 
-        with patch.object(query, "post_message", hold_completion):
-            query.action_run_query()
+        with patch.object(app, "post_message", hold_completion):
+            await pilot.press("ctrl+enter")
             await wait_for(lambda: bool(held), pilot)
-            query.action_close()
-            query.action_run_query()
+            await pilot.press("ctrl+w")
+            await pilot.press("ctrl+enter")
             assert query.running
-            assert app.screen is query
+            assert app.query_one(TabbedContent).active_pane is query
             assert query.editor.read_only
             assert len(held) == 1
             post_message(held[0])
-            await wait_for(lambda: app.screen is not query, pilot)
+            await wait_for(
+                lambda: bool(query.query(ArrowTable)) and not query.running, pilot
+            )
             assert app.query_one(TabbedContent).tab_count == 2

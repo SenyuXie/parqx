@@ -12,22 +12,22 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import Any, ClassVar
 
-from textual import on
+from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Footer, TabbedContent
-from textual.worker import Worker
+from textual.widgets import Footer, TabbedContent, TabPane
+from textual.worker import Worker, WorkerState
 
-from parqx.catalog import SourceCatalog, SourceIssue
+from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryResult
-from parqx.tui.screens.query import QueryScreen
+from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
+from parqx.tui.widgets.query_workspace import QueryWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +64,15 @@ def _query_result_details(result: QueryResult) -> str:
 
 
 class ParqxApp(App[Any]):
-    """Inspect Parquet files and keep SQL previews in separate tabs."""
+    """Inspect Parquet files alongside persistent SQL query workspaces."""
 
     CSS = """
     #results, #results > ContentSwitcher { height: 1fr; }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+w", "close_tab", "Close tab"),
+        Binding("ctrl+w", "close_tab", "Close tab", priority=True),
+        Binding("ctrl+enter", "run_query", "Run SQL", priority=True),
         Binding("h", "toggle_header", "Header"),
         Binding("i", "toggle_row_index", "Index"),
         Binding("z", "toggle_zebra", "Zebra"),
@@ -104,14 +105,11 @@ class ParqxApp(App[Any]):
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
         self._query_number = 0
+        self._execution: tuple[Worker[list[QueryResult]], QueryWorkspace] | None = None
         self._source_pool = ThreadPoolExecutor(
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
         self._shutting_down = False
-        # Textual's registration signature omits the screen's generic result type.
-        self.install_screen(  # pyright: ignore[reportUnknownMemberType]
-            QueryScreen(self.catalog, config=self.config), "query"
-        )
 
     @property
     def load_errors(self) -> tuple[SourceIssue, ...]:
@@ -162,22 +160,21 @@ class ParqxApp(App[Any]):
         self._exit_if_all_failed()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
-        """Expose the SQL dialog alongside Textual's built-in commands."""
+        """Expose query workspace creation alongside native commands."""
         # Textual's base signature omits Screen's generic result type.
         yield from super().get_system_commands(screen)  # pyright: ignore[reportUnknownMemberType]
         yield SystemCommand(
-            "SQL query", "Run SQL against loaded Parquet files", self.action_open_query
+            "Query", "Open a blank SQL workspace", self.action_open_query
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Protect modal input and keep the last tab's close hint visible."""
-        if action == "command_palette" and isinstance(self.screen, QueryScreen):
-            return False
         if (
             action
             in {
                 "close_tab",
                 "open_query",
+                "run_query",
                 "toggle_header",
                 "toggle_row_index",
                 "toggle_zebra",
@@ -186,6 +183,15 @@ class ParqxApp(App[Any]):
             and self.screen.is_modal
         ):
             return False
+        if action in {
+            "toggle_header",
+            "toggle_row_index",
+            "toggle_zebra",
+            "cycle_cursor_type",
+        }:
+            return isinstance(self.focused, ArrowTable)
+        if action == "run_query":
+            return isinstance(self._active_pane(), QueryWorkspace)
         if action == "close_tab":
             return True if self._tabs.is_mounted and self._tabs.tab_count > 1 else None
         return super().check_action(action, parameters)
@@ -196,11 +202,20 @@ class ParqxApp(App[Any]):
         if self._tabs.is_attached:
             self._tabs.screen.refresh_bindings()
 
+    def _active_pane(self) -> TabPane | None:
+        if not self._tabs.is_mounted:
+            return None
+        try:
+            return self._tabs.active_pane
+        except NoMatches:
+            # Native pane removal and active-tab updates occur in separate turns.
+            return None
+
     def _active_table(self) -> ArrowTable | None:
         if not self._tabs.is_mounted:
             return None
-        pane = self._tabs.active_pane
-        return pane.table if isinstance(pane, TablePane) else None
+        pane = self._active_pane()
+        return pane.table if isinstance(pane, (TablePane, QueryWorkspace)) else None
 
     def _source_pane(self, source_id: str) -> TablePane | None:
         if not self._tabs.is_mounted:
@@ -262,31 +277,105 @@ class ParqxApp(App[Any]):
     def on_unmount(self) -> None:
         """Stop source work and prevent all late UI updates during shutdown."""
         self._shutting_down = True
+        if self._execution is not None:
+            results = self._execution[0].result
+            if results is not None:
+                results.clear()
+        self._execution = None
         self._source_pool.shutdown(wait=False, cancel_futures=True)
 
-    def action_open_query(self) -> None:
-        """Open the reusable SQL editor without replacing the current tab."""
-        if not self.screen.is_modal:
-            self.push_screen("query", self._on_query_result)
+    async def action_open_query(self) -> None:
+        """Create and activate a new blank SQL workspace."""
+        if self.screen.is_modal:
+            return
+        async with self._tab_lock:
+            self._query_number += 1
+            pane_id = f"query-{self._query_number}"
+            pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
+            await self._tabs.add_pane(pane)
+            self._tabs.active = pane_id
+            self._refresh_tab_bindings()
+            pane.editor.focus()
 
-    async def _on_query_result(self, result: QueryResult | None) -> None:
-        if result is not None:
-            async with self._tab_lock:
-                self._query_number += 1
-                pane_id = f"query-{self._query_number}"
-                pane = TablePane(
-                    f"Query {self._query_number}",
-                    result.table,
-                    id=pane_id,
-                    config=self.config,
+    def action_run_query(self) -> None:
+        """Submit the entire active workspace draft to the single execution slot."""
+        if self.screen.is_modal or self._shutting_down:
+            return
+        pane = self._active_pane()
+        if not isinstance(pane, QueryWorkspace) or not pane.editor.text.strip():
+            return
+        if self._execution is not None:
+            self.notify("A query is already running", title="Query busy", markup=False)
+            return
+        sql = pane.editor.text
+        sources = self.catalog.snapshot()
+        unavailable = tuple(
+            entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
+            for entry in self.catalog.entries
+            if entry.state != "ready"
+        )
+        pane.start_execution()
+        self._execution = (self._run_query(sources, sql, unavailable), pane)
+
+    @work(thread=True, exit_on_error=False, group="query")
+    def _run_query(
+        self,
+        sources: tuple[SourceSpec, ...],
+        sql: str,
+        unavailable: tuple[SourceIssue, ...],
+    ) -> list[QueryResult]:
+        # Textual retains the last worker in executor-thread context. Consume this
+        # one-shot result on delivery so that context cannot retain Arrow buffers.
+        result = execute_query(
+            sources, sql, config=self.config, unavailable=unavailable
+        )
+        return [] if self._shutting_down else [result]
+
+    @on(Worker.StateChanged)
+    async def _on_query_state_changed(self, event: Worker.StateChanged) -> None:
+        execution = self._execution
+        if execution is None:
+            return
+        worker, pane = execution
+        if event.worker is not worker:  # pyright: ignore[reportUnknownMemberType]
+            return
+        if event.state not in {WorkerState.SUCCESS, WorkerState.ERROR}:
+            return
+        try:
+            results = worker.result
+            if self._shutting_down or not pane.is_attached:
+                if results is not None:
+                    results.clear()
+                return
+            if event.state == WorkerState.SUCCESS:
+                if results:
+                    result = results.pop()
+                    await pane.show_result(result)
+                    if pane.is_attached and not self._shutting_down:
+                        self._tabs.get_tab(pane).tooltip = Content(
+                            _query_result_details(result)
+                        )
+            else:
+                error = worker.error
+                message = str(error) or type(error).__name__
+                if isinstance(error, QueryExecutionError) and error.issues:
+                    message += "\nUnavailable sources:\n" + "\n".join(
+                        map(str, error.issues)
+                    )
+                pane.show_error(message)
+                self.notify(
+                    message,
+                    title="SQL error",
+                    severity="error",
+                    timeout=4,
+                    markup=False,
                 )
-                await self._tabs.add_pane(pane)
-                self._tabs.get_tab(pane_id).tooltip = Content(
-                    _query_result_details(result)
-                )
-                self._tabs.active = pane_id
-                self._refresh_tab_bindings()
-        self.call_after_refresh(self._focus_active_table)
+        finally:
+            # Keep ownership until data and presentation have both been applied.
+            if self._execution is execution:
+                self._execution = None
+            if pane.is_attached and not self._shutting_down:
+                pane.finish_execution()
 
     async def action_close_tab(self) -> None:
         """Close the active page while always retaining at least one tab."""
@@ -296,6 +385,14 @@ class ParqxApp(App[Any]):
                 or not self._tabs.is_mounted
                 or self._tabs.tab_count <= 1
             ):
+                return
+            pane = self._active_pane()
+            if isinstance(pane, QueryWorkspace) and pane.running:
+                self.notify(
+                    "The running query cannot be closed",
+                    title="Query busy",
+                    markup=False,
+                )
                 return
             pane_id = self._tabs.active
             if not pane_id:

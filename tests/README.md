@@ -7,7 +7,7 @@ lowest layer that can verify it:
 | --- | --- | --- |
 | `unit/` | Source identity, Arrow data and memory bounds, SQL engine, CLI arguments, widget logic and native resource cleanup without mounting an app | Every test job |
 | `integration/` | Mounted Textual widgets, multi-file workflows, input/focus, background reads and query lifecycle races | Linux / Python 3.12 |
-| `smoke/` | Open a real Parquet file, navigate, run SQL, close a result and quit | Every test job |
+| `smoke/` | Open a real Parquet file, navigate, run SQL, close a workspace and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes
@@ -32,9 +32,11 @@ these boundaries; distribution checks exercise both browsing and SQL.
 own one submitted page read and one latest pending window, using Textual timers
 for trailing debounce; every tab releases cached data on unmount. The app owns
 source metadata loading and the catalog, so closing a tab does not remove a source
-from SQL. `QueryScreen` runs a Textual thread worker and handles its completion
-message
-on the UI thread. Editing, closing and resubmitting stay disabled until delivery.
+from SQL. `QueryWorkspace` owns its SQL draft and most recent successful result.
+The app owns one Textual thread worker and delivers its result to the submitting
+workspace on the UI thread. That draft stays read-only and cannot close until
+delivery; other workspaces and source views remain usable. Completion never
+changes the active tab or focus.
 Native reads finish naturally after UI exit, with no interrupt or shutdown
 deadline. Cover these ownership and lifecycle boundaries in integration
 tests, using events to coordinate native reads.
