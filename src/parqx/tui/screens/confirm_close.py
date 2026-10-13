@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 
-class ConfirmQueryClose(ModalScreen[bool]):
+class ConfirmClose(ModalScreen[bool]):
     """Name the target and default to preserving its SQL draft and result."""
 
     AUTO_FOCUS = "#cancel"
@@ -20,14 +20,14 @@ class ConfirmQueryClose(ModalScreen[bool]):
     ]
 
     DEFAULT_CSS = """
-    ConfirmQueryClose {
+    ConfirmClose {
         align: center middle;
         & > Vertical {
             width: 54;
             max-width: 95%;
             height: auto;
             padding: 1 2;
-            border: thick $primary;
+            border: solid $primary;
             background: $surface;
         }
         Static { height: auto; margin-bottom: 1; }

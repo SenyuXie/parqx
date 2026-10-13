@@ -192,10 +192,8 @@ async def test_source_load_finishes_after_all_views_close_without_reopening_them
                 assert sources.has_focus
                 release.set()
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
-                state = "failed" if fail else "ready"
-                assert (
-                    str(sources.root.children[0].label) == f"pending.parquet · {state}"
-                )
+                label = "pending.parquet (unavailable)" if fail else "pending.parquet"
+                assert str(sources.root.children[0].label) == label
                 assert app.is_running
                 assert tabs.tab_count == 0
                 assert not closed.is_attached

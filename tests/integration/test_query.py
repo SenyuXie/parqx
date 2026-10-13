@@ -39,17 +39,12 @@ async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
         assert isinstance(query, QueryWorkspace)
         assert (table.row_count, table.column_count) == (2, 1)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
-        tooltip = str(tabs.get_tab("query-1").tooltip)
-        assert "2 rows" in tooltip
-        assert "preview" in tooltip
-        assert "total unknown" in tooltip
         query.editor.focus()
         query.editor.load_text('SELECT "missing [bold]汉字[/bold]" FROM smoke')
         with patch.object(app, "notify") as notify:
             await pilot.press("ctrl+enter")
             message = await wait_for_query_error(notify, query, pilot)
             assert "missing [bold]汉字[/bold]" in message
-            assert message in str(query.status.content)
             assert query.editor.has_focus
             assert not query.editor.read_only
             assert tabs.tab_count == 2
@@ -60,7 +55,6 @@ async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
             await pilot.press("ctrl+enter")
             await wait_for(lambda: table.row_count == 0 and not query.running, pilot)
             assert table.columns[0].name == "name"
-            assert query.error is None
             assert tabs.tab_count == 2
             assert source.row_count == 5
             assert notify.call_count == 1
@@ -128,7 +122,7 @@ async def test_tabs_preserve_state_and_release_data_on_close(
         assert count.get_cell_at(Coordinate(0, 0)).as_py() == 5
 
 
-async def test_unavailable_sources_report_details_and_recover(
+async def test_unavailable_sources_are_identified_and_recover(
     small_parquet: Path,
 ) -> None:
     contents = small_parquet.read_bytes()
@@ -137,12 +131,8 @@ async def test_unavailable_sources_report_details_and_recover(
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
         small_parquet.unlink()
-        await run_query(app, pilot, "SELECT 42 AS answer")
-        tabs = app.query_one(TabbedContent)
-        tooltip = str(tabs.get_tab("query-1").tooltip)
-        assert "warning" in tooltip
-        assert str(small_parquet) in tooltip
-        assert '"smoke"' in tooltip
+        table = await run_query(app, pilot, "SELECT 42 AS answer")
+        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
         with patch.object(app, "notify", wraps=app.notify) as notify:
@@ -156,12 +146,10 @@ async def test_unavailable_sources_report_details_and_recover(
         await wait_for(
             lambda: bool(query.query(ArrowTable)) and not query.running, pilot
         )
-        assert "warning" not in str(tabs.get_tab("query-2").tooltip)
+        assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 5
         app.catalog.mark_failed("source-1", "Could not open this source")
-        await run_query(app, pilot, "SELECT 42 AS answer")
-        tooltip = str(tabs.get_tab("query-3").tooltip)
-        assert "warning" in tooltip
-        assert "Could not open this source" in tooltip
+        table = await run_query(app, pilot, "SELECT 42 AS answer")
+        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
 
 
 async def test_palette_preserves_editor_selection_and_history(

@@ -139,7 +139,7 @@ async def test_closing_maximized_workspace_restores_main_view(
         assert app.screen.region.contains_region(source_table.region)
 
 
-async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
+async def test_long_sql_and_wide_results_stay_usable_after_resize(
     small_parquet: Path,
 ) -> None:
     from textual.widgets import Tabs
@@ -166,7 +166,6 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
         await pilot.press("shift+right")
         selection = query.editor.selection
         initial_height = query.editor.region.height
-        details = query.query_one(".result-details", Button)
 
         for width, height in ((80, 24), (60, 18), (120, 40)):
             await pilot.resize_terminal(width, height)
@@ -178,9 +177,7 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
                 assert query.editor.scroll_y > 0
                 assert table.region.height >= 4
                 assert table.max_scroll_x > 0
-                assert "Result details" in details.render_line(0).text
-                for control in query.query(Button):
-                    assert app.screen.region.contains_region(control.region)
+                assert app.screen.region.contains_region(query.run_button.region)
                 assert query.editor.selection == selection
                 assert query.editor.text == sql
                 assert table.row_count == 5

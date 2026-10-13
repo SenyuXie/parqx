@@ -64,13 +64,19 @@ async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
     return query
 
 
-async def toggle_sources(app: ParqxApp, pilot: Pilot[Any]) -> None:
+async def toggle_sources(
+    app: ParqxApp, pilot: Pilot[Any], *, expected_help: str | None = None
+) -> None:
     await pilot.press("ctrl+p")
     palette = app.screen
     assert isinstance(palette, CommandPalette)
     palette.query_one(Input).value = "Sources"
     commands = palette.query_one(CommandList)
     await wait_for(lambda: commands.option_count == 1, pilot)
+    if expected_help is not None:
+        option = commands.get_option_at_index(0)
+        assert isinstance(option, Command)
+        assert option.hit.help == expected_help
     await pilot.press("down", "enter")
     await wait_for(lambda: app.screen is not palette, pilot)
 

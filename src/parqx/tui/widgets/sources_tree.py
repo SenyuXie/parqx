@@ -33,11 +33,12 @@ class SourcesTree(Tree[str]):
         node = next(
             node for node in self.root.children if node.data == entry.spec.source_id
         )
-        node.set_label(
-            Text.assemble(
-                (entry.spec.display_name, "bold"), (f" · {entry.state}", "dim")
-            )
-        )
+        label = Text(entry.spec.display_name, style="bold")
+        if entry.state == "loading":
+            label.append(" (loading)", style="dim")
+        elif entry.state == "failed":
+            label.append(" (unavailable)", style="dim")
+        node.set_label(label)
         node.remove_children()
         node.add_leaf(Text(f"Path: {entry.spec.path}", style="dim"))
         table = node.add(

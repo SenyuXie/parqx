@@ -25,10 +25,10 @@ from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
-from parqx.tui.screens.confirm_query_close import ConfirmQueryClose
+from parqx.tui.screens.confirm_close import ConfirmClose
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
-from parqx.tui.widgets.query_workspace import QueryWorkspace, query_result_details
+from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.sources_tree import SourcesTree
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class ParqxApp(App[Any]):
         max-width: 40%;
         height: 1fr;
         border-right: solid $primary;
-        padding: 0 1 0 2;
+        padding: 0 1 0 1;
     }
     #results { width: 1fr; }
     #results, #results > ContentSwitcher { height: 1fr; }
@@ -137,7 +137,6 @@ class ParqxApp(App[Any]):
             yield self._tabs
             with self._empty, Vertical():
                 yield Static("No tabs open", id="no-tabs-title")
-                yield Static("Create a query or reopen a session source.")
                 with Horizontal():
                     yield Button("Query", variant="primary", id="new-query")
                     yield Button("Open Sources", id="open-sources")
@@ -168,7 +167,7 @@ class ParqxApp(App[Any]):
             )
             > 1
         ):
-            title += f" · {source.quoted_name}"
+            title += f" ({source.quoted_name})"
         pane = TablePane(
             title, source, id=source_id, executor=self._source_pool, config=self.config
         )
@@ -202,7 +201,9 @@ class ParqxApp(App[Any]):
         )
         yield SystemCommand(
             "Sources",
-            "Show or hide files, tables and columns",
+            "Hide the sources panel"
+            if self._sources.display
+            else "Show files, tables and column types",
             self.action_toggle_sources,
         )
 
@@ -375,6 +376,7 @@ class ParqxApp(App[Any]):
             self._refresh_tab_state()
             pane.editor.focus()
 
+    @on(Button.Pressed, ".run-query")
     def action_run_query(self) -> None:
         """Submit the entire active workspace draft to the single execution slot."""
         if self.screen.is_modal or self._shutting_down:
@@ -429,10 +431,6 @@ class ParqxApp(App[Any]):
                 if results:
                     result = results.pop()
                     await pane.show_result(result)
-                    if pane.is_attached and not self._shutting_down:
-                        self._tabs.get_tab(pane).tooltip = Content(
-                            query_result_details(result)
-                        )
             else:
                 error = worker.error
                 message = str(error) or type(error).__name__
@@ -440,7 +438,6 @@ class ParqxApp(App[Any]):
                     message += "\nUnavailable sources:\n" + "\n".join(
                         map(str, error.issues)
                     )
-                pane.show_error(message)
                 self.notify(
                     message,
                     title="SQL error",
@@ -472,7 +469,7 @@ class ParqxApp(App[Any]):
                 pane.editor.text.strip() or pane.current_result is not None
             ):
                 self.push_screen(
-                    ConfirmQueryClose(str(self._tabs.get_tab(pane).label)),
+                    ConfirmClose(str(self._tabs.get_tab(pane).label)),
                     partial(self._close_confirmed_query, pane),
                 )
                 return

@@ -52,7 +52,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 query.editor.load_text("SELECT 42")
                 await pilot.press("ctrl+enter")
                 await wait_for(started.is_set, pilot)
-                assert "Running" in str(query.status.content)
+                assert query.run_button.disabled
                 with patch.object(app, "notify", wraps=app.notify) as notify:
                     await pilot.press("ctrl+enter", "enter", "x", "backspace", "ctrl+w")
                     assert "busy" in str(notify.call_args).lower()
@@ -60,7 +60,8 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                     assert query.editor.read_only
                     second = await open_query(app, pilot)
                     second.editor.load_text("SELECT 17")
-                    await pilot.press("ctrl+enter")
+                    await wait_for(lambda: not second.run_button.disabled, pilot)
+                    assert await pilot.click(second.run_button)
                     assert not second.editor.read_only
                     assert calls == 1
                     await select_tab(tabs, "source-1", pilot)
@@ -85,6 +86,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                     assert tabs.active == "query-2"
                     assert calls == 1
                     assert not second.query(ArrowTable)
+                    assert not query.run_button.disabled
             finally:
                 release.set()
 
@@ -170,7 +172,6 @@ async def test_native_failure_unlocks_editor_and_allows_another_query(
             assert (str(failure) or type(failure).__name__) in message
             assert not query.editor.read_only
             assert query.editor.has_focus
-            assert message in str(query.status.content)
         result = await run_query(app, pilot, "SELECT 42 AS answer")
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
 

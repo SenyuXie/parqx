@@ -192,7 +192,7 @@ async def test_background_completion_preserves_close_target_and_modal_focus(
                 assert tabs.active_pane is target
                 assert not target.query(ArrowTable)
                 if fail:
-                    assert "background query failed" in str(running.status.content)
+                    assert not running.query(ArrowTable)
                 else:
                     assert (
                         running.query_one(ArrowTable)

@@ -151,7 +151,7 @@ async def test_reopening_pending_source_shares_load_and_never_resurrects_closed_
                 assert metadata_reads == 1
                 assert tabs.tab_count == 1
                 assert tabs.active == "source-2"
-                assert str(sources.root.children[0].label) == "pending.parquet · ready"
+                assert str(sources.root.children[0].label) == "pending.parquet"
                 assert "id: int64" in [
                     str(child.label)
                     for child in sources.root.children[0].children[1].children
@@ -196,7 +196,7 @@ async def test_failed_source_reopens_stored_failure_without_retrying(
         assert error.display
         assert str(failed.resolve()) in str(error.content)
         assert issue.message in str(error.content)
-        assert str(sources.root.children[0].label) == "failed.parquet · failed"
+        assert str(sources.root.children[0].label) == "failed.parquet (unavailable)"
         assert app.load_errors == (issue,)
         assert app.catalog.get("source-1").schema is None
         assert tabs.tab_count == 2
@@ -229,7 +229,7 @@ async def test_reopen_failure_preserves_query_draft_and_current_result(
         error = tabs.get_pane("source-1").query_one(".source-error", Static)
         assert error.display
         assert str(small_parquet) in str(error.content)
-        assert str(sources.root.children[0].label) == "smoke.parquet · failed"
+        assert str(sources.root.children[0].label) == "smoke.parquet (unavailable)"
         assert tabs.tab_count == 2
         await select_tab(tabs, "query-1", pilot)
         assert tabs.active_pane is query
@@ -333,6 +333,9 @@ async def test_pending_failure_updates_the_explicitly_reopened_view(
                 assert app.load_errors[0].message in str(error.content)
                 assert not pane.query(ArrowTable)
                 assert tabs.tab_count == 2
-                assert str(sources.root.children[0].label) == "failed.parquet · failed"
+                assert (
+                    str(sources.root.children[0].label)
+                    == "failed.parquet (unavailable)"
+                )
             finally:
                 release.set()

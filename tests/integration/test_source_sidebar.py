@@ -35,7 +35,9 @@ async def test_sources_visibility_is_shared_and_returns_main_view_space(
         sources = app.query_one(SourcesTree)
         assert not sources.display
         original_width = tabs.region.width
-        await toggle_sources(app, pilot)
+        await toggle_sources(
+            app, pilot, expected_help="Show files, tables and column types"
+        )
         assert sources.display
         assert sources.region.width > 0
         assert tabs.region.width < original_width
@@ -48,7 +50,7 @@ async def test_sources_visibility_is_shared_and_returns_main_view_space(
         assert sources.virtual_size.width > sources.content_size.width
         assert sources.show_horizontal_scrollbar
         assert sources.show_vertical_scrollbar
-        await toggle_sources(app, pilot)
+        await toggle_sources(app, pilot, expected_help="Hide the sources panel")
         assert not sources.display
         assert tabs.region.width == original_width
 
@@ -71,8 +73,8 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
         assert len(nodes) == 2
         assert [node.data for node in nodes] == ["source-1", "source-2"]
         assert [str(node.label) for node in nodes] == [
-            f"{second.name} · ready",
-            f"{first.name} · ready",
+            f"{second.name}",
+            f"{first.name}",
         ]
         assert [str(child.label) for child in nodes[0].children] == [
             f"Path: {second.resolve()}",
@@ -174,8 +176,8 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
                 await toggle_sources(app, pilot)
                 sources = app.query_one(SourcesTree)
                 pending_node, failed_node, _ = sources.root.children
-                assert str(pending_node.label) == "pending.parquet · loading"
-                assert str(failed_node.label) == "failed.parquet · loading"
+                assert str(pending_node.label) == "pending.parquet (loading)"
+                assert str(failed_node.label) == "failed.parquet (loading)"
                 assert [
                     str(child.label) for child in pending_node.children[1].children
                 ][-1] == "Loading schema…"
@@ -197,11 +199,11 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
                     pilot,
                 )
                 assert sources.has_focus
-                assert str(pending_node.label) == "pending.parquet · ready"
+                assert str(pending_node.label) == "pending.parquet"
                 assert [
                     str(child.label) for child in pending_node.children[1].children
                 ][-3:] == ["id: int64", "name: string", "score: double"]
-                assert str(failed_node.label) == "failed.parquet · failed"
+                assert str(failed_node.label) == "failed.parquet (unavailable)"
                 issue = app.load_errors[0]
                 assert [str(child.label) for child in failed_node.children[1].children][
                     -1

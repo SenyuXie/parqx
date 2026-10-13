@@ -51,6 +51,7 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
         query = await open_query(app, pilot)
+        assert query.run_button.disabled
         query.editor.load_text("SELECT name FROM smoke ORDER BY id")
         await pilot.press("ctrl+enter")
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
@@ -73,6 +74,14 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         await pilot.press("ctrl+enter")
         await wait_for(lambda: table.columns[0].name == "from_tab_strip", pilot)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 7
+        query.editor.load_text("SELECT 9 AS from_button")
+        await wait_for(lambda: not query.run_button.disabled, pilot)
+        assert await pilot.click(query.run_button)
+        await wait_for(
+            lambda: table.columns[0].name == "from_button" and not query.running, pilot
+        )
+        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 9
+        assert not query.run_button.disabled
         assert tabs.tab_count == 2
         assert len(app.catalog.snapshot()) == 1
 
@@ -126,7 +135,6 @@ async def test_completion_never_moves_focus_from_another_workspace(
                 release.set()
                 await wait_for(lambda: not first.running, pilot)
                 if fail:
-                    assert "failed background query" in str(first.status.content)
                     assert not first.query(ArrowTable)
                 else:
                     assert (

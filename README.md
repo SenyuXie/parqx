@@ -41,64 +41,37 @@ parqx data/*.parquet
 | `ctrl+home`           | Move to the first row         |
 | `ctrl+end`            | Move to the last row          |
 | `enter`               | Select the current cell       |
+| `ctrl+w`              | Close the current tab         |
 
 ### Table View
 
 These display shortcuts apply while a table has focus.
 
-| Key      | Action                                               |
-| ---      | ---                                                  |
-| `h`      | Toggle the column header row                         |
-| `i`      | Toggle the row-index column                          |
-| `z`      | Toggle zebra striping                                |
-| `c`      | Cycle cursor type (cell → row → column → none)       |
+| Key | Action                                         |
+| --- | ---                                            |
+| `h` | Toggle the column header row                   |
+| `i` | Toggle the row-index column                    |
+| `z` | Toggle zebra striping                          |
+| `c` | Cycle cursor type (cell → row → column → none) |
 
 ### SQL query
 
-| Key                      | Action                                                 |
-| ---                      | ---                                                    |
-| `ctrl+p` → **Query** | Open a new blank query workspace |
-| `ctrl+enter` | Run the active workspace's complete SQL draft |
-| `enter` | Insert a newline in the editor |
-| `tab` | Indent in the editor |
-| `shift+tab` | Move focus backward through the native focus order |
-| `ctrl+p` → **Maximize** / **Minimize** | Expand the focused editor or result and restore the workspace |
-| `escape` | Restore a maximized panel |
-
-Each workspace keeps its draft and latest successful result while you switch
-between tabs. Run again to replace its result in place. One query can run at a
-time; its draft stays read-only until completion, while other tabs remain usable.
-All ready sources stay queryable when their file views are closed. Workspaces
-last for the current session only.
-
-The editor leaves room for results and feedback, adapting to short terminals.
-Long SQL scrolls inside the editor; use native **Maximize** to expand the focused
-editor or result. **Result details** opens the full current-result metadata and
-latest error, with copy controls.
-
-`Ctrl+Enter` requires a terminal that sends modified Enter distinctly from plain
-Enter. Plain Enter always inserts a newline in the editor.
-
-`Ctrl+W` closes the active tab from the editor, result, tab strip, or sources
-sidebar. A workspace with SQL or a result asks for confirmation before discarding
-its work; Cancel is selected initially, and Escape also cancels. Cancelling keeps
-the draft, editing state, result, and layout. Empty workspaces and file views
-close immediately. A running workspace cannot close until its query completes.
-Closing every tab leaves parqx open. Choose **Query** to start a blank workspace
-or **Open Sources** to reveal the sidebar and reopen a file with Enter.
+| Key                  | Action                       |
+| ---                  | ---                          |
+| `ctrl+p` → **Query** | Open a blank query workspace |
+| `ctrl+enter`         | Run the complete SQL query   |
+| `enter`              | Insert a newline             |
+| `tab`                | Indent                       |
+| `shift+tab`          | Move focus backward          |
+| `escape`             | Restore a maximized panel    |
 
 ### Sources
 
-Use `ctrl+p` → **Sources** to show or hide the shared sources sidebar.
-Each file shows its path and availability. Its **Table** contains the columns and
-their types, with the quoted table name used in SQL. Expand with `→`, collapse
-with `←`, and use native `Tab` / `Shift+Tab` focus navigation. Long labels can be
-inspected with the tree's horizontal scrollbar. Inspecting the tree does not
-change SQL text or table display settings.
-
-Closing a file tab releases its cached rows while keeping its schema and SQL
-identity available for the session. Metadata that finishes after a tab closes
-updates the sidebar without opening another file view.
+| Key                    | Action                         |
+| ---                    | ---                            |
+| `ctrl+p` → **Sources** | Show or hide files and schemas |
+| `←` / `→`              | Collapse or expand a tree item |
+| `enter`                | Open the selected file tab     |
 
 ## License
 
