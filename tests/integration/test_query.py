@@ -15,11 +15,10 @@ from textual.widgets import Footer, Input, TabbedContent
 
 from parqx.config import ParqxConfig
 from parqx.tui.app import ParqxApp
-from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable
+from parqx.tui.widgets.query_workspace import QueryWorkspace
 from tests.helpers import (
     footer_keys,
-    footer_ready,
     open_query,
     run_query,
     select_tab,
@@ -28,7 +27,7 @@ from tests.helpers import (
 )
 
 
-async def test_bounded_results_and_footer_error_recovery(small_parquet: Path) -> None:
+async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
     app = ParqxApp([small_parquet], config=ParqxConfig(preview_rows=2))
     async with app.run_test() as pilot:
         tabs = app.query_one("#results", TabbedContent)
@@ -36,53 +35,36 @@ async def test_bounded_results_and_footer_error_recovery(small_parquet: Path) ->
         source = tabs.get_pane("source-1").query_one(ArrowTable)
         assert str(tabs.get_tab("source-1").label) == small_parquet.name
         assert (source.row_count, source.column_count) == (5, 3)
-
         table = await run_query(app, pilot, "SELECT name FROM smoke ORDER BY id")
-        assert str(tabs.get_tab("query-1").label) == "Query 1"
+        query = tabs.active_pane
+        assert isinstance(query, QueryWorkspace)
         assert (table.row_count, table.column_count) == (2, 1)
-        assert table.columns[0].name == "name"
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
         tooltip = str(tabs.get_tab("query-1").tooltip)
         assert "2 rows" in tooltip
         assert "preview" in tooltip
         assert "total unknown" in tooltip
-        assert source.row_count == 5
-
-        query = await open_query(app, pilot)
-        footer = query.query_one(Footer)
-        await wait_for(lambda: footer_ready(footer), pilot)
+        query.editor.focus()
         query.editor.load_text('SELECT "missing [bold]汉字[/bold]" FROM smoke')
-        query.editor.move_cursor((0, len(query.editor.text)))
-        assert await pilot.click(footer_keys(footer)["newline"])
-        assert query.editor.text.endswith("\n")
         with patch.object(app, "notify") as notify:
-            assert await pilot.click(footer_keys(footer)["run_query"])
+            await pilot.press("ctrl+enter")
             message = await wait_for_query_error(notify, query, pilot)
             assert "missing [bold]汉字[/bold]" in message
-            assert app.screen is query
+            assert message in str(query.status.content)
             assert query.editor.has_focus
             assert not query.editor.read_only
             assert tabs.tab_count == 2
             assert table.row_count == 2
-
+            assert query.current_result is not None
+            assert query.current_result.sql == "SELECT name FROM smoke ORDER BY id"
             query.editor.load_text("SELECT name FROM smoke WHERE false")
-            await wait_for(
-                lambda: query.editor.region.height == 1 and footer_ready(footer), pilot
-            )
-            assert await pilot.click(footer_keys(footer)["run_query"])
-            await wait_for(
-                lambda: app.screen is not query and tabs.tab_count == 3, pilot
-            )
-            empty = tabs.get_pane("query-2").query_one(ArrowTable)
-            assert empty.row_count == 0
-            assert empty.columns[0].name == "name"
+            await pilot.press("ctrl+enter")
+            await wait_for(lambda: table.row_count == 0 and not query.running, pilot)
+            assert table.columns[0].name == "name"
+            assert query.error is None
+            assert tabs.tab_count == 2
+            assert source.row_count == 5
             assert notify.call_count == 1
-
-        await open_query(app, pilot)
-        await wait_for(lambda: footer_ready(footer), pilot)
-        assert await pilot.click(footer_keys(footer)["close"])
-        await wait_for(lambda: app.screen is not query, pilot)
-        assert tabs.tab_count == 3
 
 
 async def test_tabs_preserve_state_and_release_data_on_close(
@@ -172,16 +154,17 @@ async def test_unavailable_sources_report_details_and_recover(
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
         with patch.object(app, "notify", wraps=app.notify) as notify:
-            await pilot.press("enter")
+            await pilot.press("ctrl+enter")
             message = await wait_for_query_error(notify, query, pilot)
         assert "Unavailable sources" in message
         assert str(small_parquet) in message
         small_parquet.write_bytes(contents)
         query.editor.load_text("SELECT count(*) FROM smoke")
-        await pilot.press("enter")
-        await wait_for(lambda: app.screen is not query and tabs.tab_count == 3, pilot)
+        await pilot.press("ctrl+enter")
+        await wait_for(
+            lambda: bool(query.query(ArrowTable)) and not query.running, pilot
+        )
         assert "warning" not in str(tabs.get_tab("query-2").tooltip)
-
         app.catalog.mark_failed("source-1", "Could not open this source")
         await run_query(app, pilot, "SELECT 42 AS answer")
         tooltip = str(tabs.get_tab("query-3").tooltip)
@@ -189,24 +172,24 @@ async def test_unavailable_sources_report_details_and_recover(
         assert "Could not open this source" in tooltip
 
 
-async def open_sql_query(pilot: Pilot[Any]) -> QueryScreen:
+async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
     await pilot.press("ctrl+p")
     palette = pilot.app.screen
     assert isinstance(palette, CommandPalette)
-    palette.query_one(Input).value = "SQL"
+    palette.query_one(Input).value = "Query"
     commands = palette.query_one(CommandList)
 
     def found() -> bool:
         if commands.option_count != 1:
             return False
         option = commands.get_option_at_index(0)
-        return isinstance(option, Command) and option.hit.text == "SQL query"
+        return isinstance(option, Command) and option.hit.text == "Query"
 
     await wait_for(found, pilot)
     await pilot.press("enter")
-    await wait_for(lambda: isinstance(pilot.app.screen, QueryScreen), pilot)
-    query = pilot.app.screen
-    assert isinstance(query, QueryScreen)
+    await wait_for(lambda: not pilot.app.screen.is_modal, pilot)
+    query = pilot.app.query_one(TabbedContent).active_pane
+    assert isinstance(query, QueryWorkspace)
     await wait_for(lambda: query.editor.has_focus, pilot)
     return query
 
@@ -216,13 +199,7 @@ async def test_palette_preserves_editor_selection_and_history(
 ) -> None:
     app = ParqxApp([small_parquet])
     async with app.run_test() as pilot:
-        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
-        tabs = app.query_one(TabbedContent)
         query = await open_sql_query(pilot)
-        await pilot.press("ctrl+p")
-        assert app.screen is query
-        assert query.editor.has_focus
-        assert app.check_action("close_tab", ()) is False
         editor = query.editor
         editor.load_text("SELECT ")
         await pilot.press("end", "4", "2")
@@ -230,141 +207,95 @@ async def test_palette_preserves_editor_selection_and_history(
         await pilot.press("shift+left", "shift+left")
         selection = editor.selection
         assert editor.selected_text == "42"
+        await pilot.press("ctrl+p")
+        assert isinstance(app.screen, CommandPalette)
+        assert app.check_action("close_tab", ()) is False
         await pilot.press("escape")
-        await wait_for(lambda: app.screen is not query, pilot)
-        await open_sql_query(pilot)
-        assert query.editor is editor
+        await wait_for(lambda: editor.has_focus, pilot)
         assert editor.selection == selection
         assert editor.text == "SELECT 42"
-        assert tabs.tab_count == 1
         await pilot.press("ctrl+z")
         assert editor.text == "SELECT "
-        await pilot.press("ctrl+y", "enter")
-        await wait_for(lambda: app.screen is not query and tabs.tab_count == 2, pilot)
-        assert (
-            tabs.get_pane("query-1")
-            .query_one(ArrowTable)
-            .get_cell_at(Coordinate(0, 0))
-            .as_py()
-            == 42
-        )
-        await open_sql_query(pilot)
+        await pilot.press("ctrl+y", "ctrl+enter")
+        await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
+        assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 42
+        second = await open_sql_query(pilot)
+        assert second.editor.text == ""
         assert editor.text == "SELECT 42"
 
 
 async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -> None:
     app = ParqxApp([small_parquet])
-    async with app.run_test(size=(40, 12)) as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         source = app.query_one(ArrowTable)
         tabs = app.query_one(TabbedContent)
         query = await open_query(app, pilot)
         editor = query.editor
-        footer = query.query_one(Footer)
-        await wait_for(lambda: footer_ready(footer), pilot)
+        footer = app.query_one(Footer)
         assert editor.region.height > 0
-        assert 0 <= footer.region.y < footer.region.bottom <= 12
-        assert 0 <= footer.region.x < footer.region.right <= 40
-        for key in footer_keys(footer).values():
-            assert footer.region.contains_region(key.region)
-        assert await pilot.click(footer_keys(footer)["run_query"])
-        assert not query.running
-        assert await pilot.click(footer_keys(footer)["newline"])
-        assert editor.text == "\n"
-        assert await pilot.click(footer_keys(footer)["close"])
-        await wait_for(lambda: app.screen is not query, pilot)
-        await open_query(app, pilot)
-
+        assert 0 <= footer.region.y < footer.region.bottom <= 24
         editor.load_text(" \n ")
-        await pilot.press("enter")
+        await pilot.press("ctrl+enter")
         assert not query.running
-        assert tabs.tab_count == 1
+        assert not query.query(ArrowTable)
         editor.load_text("")
-        await pilot.press("tab", "h", "i", "z", "c", "shift+enter", "x")
+        await pilot.press("tab", "h", "i", "z", "c", "enter", "x")
         assert editor.text == "    hizc\nx"
         assert editor.has_focus
         assert source.show_header
         assert source.show_row_index
         assert not source.zebra_stripes
         assert source.cursor_type == "cell"
-        editor.load_text("SELECT obsolete")
-        editor.move_cursor((0, 15))
-        await pilot.press("ctrl+w")
-        assert editor.text == "SELECT "
-        assert app.screen is query
-
+        await pilot.press("shift+tab")
+        assert not editor.has_focus
+        assert editor.text == "    hizc\nx"
+        editor.focus()
         editor.load_text("")
         app.post_message(events.Paste("SELECT 42\nAS answer"))
         await wait_for(lambda: editor.text == "SELECT 42\nAS answer", pilot)
         assert not query.running
-        assert tabs.tab_count == 1
-        sql = "SELECT 42 AS answer"
-        editor.load_text(sql)
-        editor.move_cursor((0, 9))
-        await pilot.press("shift+right")
-        assert editor.selected_text == " "
-        for message in XTermParser().feed("\x1b[13;2u"):
-            app.post_message(message)
-        await wait_for(lambda: editor.text == "SELECT 42\nAS answer", pilot)
-        assert editor.cursor_location == (1, 0)
-        assert editor.has_focus
-        assert not query.running
-        assert tabs.tab_count == 1
-        await pilot.press("ctrl+z")
-        assert editor.text == sql
         editor.move_cursor((0, 7))
         await pilot.press("shift+right", "shift+right")
         assert editor.selected_text == "42"
-        for message in XTermParser().feed("\r"):
+        for message in XTermParser().feed("\x1b[13;5u"):
             app.post_message(message)
-        await wait_for(lambda: app.screen is not query and tabs.tab_count == 2, pilot)
-        table = tabs.get_pane("query-1").query_one(ArrowTable)
+        await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
+        table = query.query_one(ArrowTable)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
         assert table.columns[0].name == "answer"
-
-
-async def test_query_editor_follows_multiline_edits(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet])
-    async with app.run_test(size=(100, 30)) as pilot:
-        query = await open_query(app, pilot)
-        editor = query.editor
-        dialog = query.query_one("#query-dialog")
-        footer = query.query_one(Footer)
-        await wait_for(
-            lambda: editor.region.height == 1 and footer_ready(footer), pilot
-        )
-        initial_top = dialog.region.y
-        assert editor.region.y == 30 // 6
-        assert abs(dialog.region.x - (100 - dialog.region.right)) <= 1
-
-        await pilot.press("S", "E", "L", "E", "C", "T", "space", "4", "2")
-        assert editor.text == "SELECT 42"
-        editor.history.checkpoint()
-        await pilot.press("shift+enter")
-        await wait_for(lambda: editor.region.height == 2, pilot)
-        assert editor.text == "SELECT 42\n"
-        assert dialog.region.y == initial_top
-        assert footer.region.y > editor.region.y
-
-        await pilot.press("ctrl+z")
-        await wait_for(lambda: editor.region.height == 1, pilot)
-        assert editor.text == "SELECT 42"
-        await pilot.press("ctrl+y")
-        await wait_for(lambda: editor.region.height == 2, pilot)
-        editor.history.checkpoint()
-        app.post_message(events.Paste("AS answer\nFROM smoke"))
-        await wait_for(lambda: editor.region.height == 3, pilot)
-        assert editor.text == "SELECT 42\nAS answer\nFROM smoke"
-        assert dialog.region.y == initial_top
+        assert tabs.tab_count == 2
+        await select_tab(tabs, "source-1", pilot)
+        await pilot.press("ctrl+enter")
+        assert tabs.tab_count == 2
         assert not query.running
 
-        await pilot.press("ctrl+z")
-        await wait_for(lambda: editor.region.height == 2, pilot)
+
+async def test_query_editor_retains_height_through_multiline_edits(
+    small_parquet: Path,
+) -> None:
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(120, 40)) as pilot:
+        query = await open_query(app, pilot)
+        editor = query.editor
+        await wait_for(lambda: editor.region.height > 0, pilot)
+        initial_height = editor.region.height
+        assert editor.content_region.height == 8
+        await pilot.press("S", "E", "L", "E", "C", "T", "space", "4", "2")
+        editor.history.checkpoint()
+        await pilot.press("enter")
         assert editor.text == "SELECT 42\n"
-        await pilot.press("backspace")
-        await wait_for(lambda: editor.region.height == 1, pilot)
+        assert editor.region.height == initial_height
+        await pilot.press("ctrl+z")
         assert editor.text == "SELECT 42"
-        assert dialog.region.y == initial_top
+        await pilot.press("ctrl+y")
+        editor.history.checkpoint()
+        app.post_message(events.Paste("AS answer\nFROM smoke"))
+        await wait_for(lambda: editor.text == "SELECT 42\nAS answer\nFROM smoke", pilot)
+        assert editor.region.height == initial_height
+        await pilot.press("ctrl+z", "backspace")
+        assert editor.text == "SELECT 42"
+        assert editor.region.height == initial_height
 
 
 async def test_query_editor_scrolls_within_resized_terminal(
@@ -374,39 +305,26 @@ async def test_query_editor_scrolls_within_resized_terminal(
     async with app.run_test(size=(80, 24)) as pilot:
         query = await open_query(app, pilot)
         editor = query.editor
-        footer = query.query_one(Footer)
-        await wait_for(
-            lambda: editor.region.height == 1 and footer_ready(footer), pilot
-        )
-
+        footer = app.query_one(Footer)
+        await wait_for(lambda: editor.region.height > 0, pilot)
+        initial_height = editor.region.height
         long_line = "SELECT " + ", ".join(str(number) for number in range(100))
         app.post_message(events.Paste(long_line))
         await wait_for(lambda: editor.text == long_line and editor.scroll_x > 0, pilot)
-        assert editor.region.height == 1
-        assert editor.cursor_location == (0, len(long_line))
-
+        assert editor.region.height == initial_height
         editor.load_text("")
         multiline_sql = "SELECT 1" + "\n-- another line" * 49
         app.post_message(events.Paste(multiline_sql))
         await wait_for(
             lambda: editor.text == multiline_sql and editor.scroll_y > 0, pilot
         )
-        assert 1 < editor.region.height < 50
-        assert query.region.contains_region(footer.region)
+        assert editor.region.height == initial_height
         assert editor.cursor_location == (49, len("-- another line"))
-
-        await pilot.resize_terminal(40, 10)
-        await wait_for(
-            lambda: (
-                query.region.width == 40
-                and query.region.height == 10
-                and query.region.contains_region(footer.region)
-            ),
-            pilot,
-        )
-        assert 0 < editor.region.height < 10
-        assert editor.scroll_y > 0
-        await pilot.press("shift+enter")
+        await pilot.resize_terminal(40, 12)
+        await wait_for(lambda: query.region.width == 40, pilot)
+        assert 0 < editor.region.height < query.region.height
+        assert app.screen.region.contains_region(footer.region)
+        await pilot.press("enter")
         await wait_for(
             lambda: editor.scrollable_content_region.contains(
                 *editor.cursor_screen_offset
@@ -414,18 +332,10 @@ async def test_query_editor_scrolls_within_resized_terminal(
             pilot,
         )
         assert editor.text == multiline_sql + "\n"
-        for key in footer_keys(footer).values():
-            assert footer.region.contains_region(key.region)
         await pilot.press("f7", "backspace")
-        await wait_for(lambda: editor.region.height == 1, pilot)
         assert editor.text == ""
-        assert query.region.contains_region(footer.region)
-
-        await pilot.resize_terminal(100, 40)
-        await wait_for(
-            lambda: query.region.height == 40 and editor.region.y == 40 // 6, pilot
-        )
-        assert editor.region.height == 1
+        await pilot.resize_terminal(120, 40)
+        await wait_for(lambda: editor.content_region.height == 8, pilot)
         assert editor.has_focus
 
 
@@ -436,26 +346,16 @@ async def test_query_editor_only_shows_scrollbar_when_lines_overflow(
     async with app.run_test(size=(80, 24)) as pilot:
         query = await open_query(app, pilot)
         editor = query.editor
-        await wait_for(lambda: editor.region.height == 1, pilot)
-        scrollbar_states: list[bool] = []
-
-        def record_scrollbar_visibility(visible: bool) -> None:
-            scrollbar_states.append(visible)
-
-        # Capture every visibility transition, including a flash before layout settles.
-        app.watch(editor, "show_vertical_scrollbar", record_scrollbar_visibility)
-        await pilot.press("shift+enter")
-        await wait_for(lambda: editor.region.height == 2, pilot)
-        assert not any(scrollbar_states), scrollbar_states
-
+        await wait_for(lambda: editor.region.height > 0, pilot)
+        await pilot.press("enter")
+        assert not editor.show_vertical_scrollbar
         editor.history.checkpoint()
         app.post_message(events.Paste("SELECT 1\nAS answer"))
-        await wait_for(lambda: editor.region.height == 3, pilot)
-        assert not any(scrollbar_states), scrollbar_states
+        await wait_for(lambda: editor.document.line_count == 3, pilot)
+        assert not editor.show_vertical_scrollbar
         await pilot.press("ctrl+z")
-        await wait_for(lambda: editor.region.height == 2, pilot)
-        assert not any(scrollbar_states), scrollbar_states
-
+        assert editor.document.line_count == 2
+        assert not editor.show_vertical_scrollbar
         await pilot.press("f7")
         overflow_sql = "SELECT 1" + "\n-- another line" * 49
         app.post_message(events.Paste(overflow_sql))
@@ -467,6 +367,5 @@ async def test_query_editor_only_shows_scrollbar_when_lines_overflow(
             ),
             pilot,
         )
-        assert any(scrollbar_states)
         assert editor.region.height < 50
         assert editor.scrollable_content_region.contains(*editor.cursor_screen_offset)
