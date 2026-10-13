@@ -93,7 +93,13 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
         assert table.row_count == 1
         assert table.has_focus
+        query.editor.load_text("SELECT 7 AS from_tab_strip")
+        await select_tab(tabs, "query-1", pilot)
+        await pilot.press("ctrl+enter")
+        await wait_for(lambda: table.columns[0].name == "from_tab_strip", pilot)
+        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 7
         assert tabs.tab_count == 2
+        assert len(app.catalog.snapshot()) == 1
 
 
 @pytest.mark.parametrize("fail", [False, True])

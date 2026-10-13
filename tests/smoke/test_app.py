@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from textual.coordinate import Coordinate
-from textual.widgets import TabbedContent
+from textual.widgets import TabbedContent, TextArea
 
 from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
@@ -27,7 +27,13 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         assert source.cursor_coordinate == Coordinate(2, 1)
         assert source.get_cell_at(source.cursor_coordinate).as_py() == "carol"
 
-        result = await run_query(app, pilot, 'SELECT count(*) AS total FROM "smoke"')
+        sql = 'SELECT count(*) AS total FROM "smoke"'
+        result = await run_query(app, pilot, sql)
+        workspace = tabs.get_pane("query-1")
+        assert workspace.query_one(TextArea).text == sql
+        assert workspace.query_one(ArrowTable) is result
+        assert not app.screen.is_modal
+        assert tabs.tab_count == 2
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
         await pilot.press("ctrl+w")
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "source-1", pilot)

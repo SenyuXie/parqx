@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
+from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
@@ -28,6 +29,7 @@ from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
 from parqx.tui.widgets.query_workspace import QueryWorkspace
+from parqx.tui.widgets.sources_tree import SourcesTree
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _open_source(path: Path, config: ParqxConfig) -> ParquetSource:
 
 
 def _query_result_details(result: QueryResult) -> str:
-    """Format preview status, SQL and source warnings for a result tab."""
+    """Format result status, executed SQL and source warnings for its workspace."""
     status = (
         f"preview, {result.truncation_reason} · total unknown"
         if result.truncation_reason is not None
@@ -67,6 +69,9 @@ class ParqxApp(App[Any]):
     """Inspect Parquet files alongside persistent SQL query workspaces."""
 
     CSS = """
+    #main { height: 1fr; }
+    #sources { width: 32; max-width: 40%; height: 1fr; border-right: solid $primary; }
+    #results { width: 1fr; }
     #results, #results > ContentSwitcher { height: 1fr; }
     """
 
@@ -101,6 +106,8 @@ class ParqxApp(App[Any]):
         super().__init__()
         self.config = config or ParqxConfig()
         self.catalog = SourceCatalog(paths)
+        self._sources = SourcesTree(self.catalog.entries)
+        self._sources.display = False
         self._tabs = TabbedContent(id="results")
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts/removals and protect the last tab."""
@@ -119,8 +126,10 @@ class ParqxApp(App[Any]):
         )
 
     def compose(self) -> ComposeResult:
-        """Yield result tabs and the keyboard shortcut footer."""
-        yield self._tabs
+        """Yield source and query tabs, the source sidebar, and the shortcut footer."""
+        with Horizontal(id="main"):
+            yield self._sources
+            yield self._tabs
         yield Footer(show_command_palette=True)
 
     async def on_mount(self) -> None:
@@ -166,6 +175,17 @@ class ParqxApp(App[Any]):
         yield SystemCommand(
             "Query", "Open a blank SQL workspace", self.action_open_query
         )
+        yield SystemCommand(
+            "Toggle Sources", "Show or hide source schemas", self.action_toggle_sources
+        )
+
+    def action_toggle_sources(self) -> None:
+        """Show or hide the session's shared source structure."""
+        if not self.screen.is_modal:
+            had_focus = self._sources.has_focus
+            self._sources.display = not self._sources.display
+            if had_focus and not self._sources.display:
+                self.screen.focus_next()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Protect modal input and keep the last tab's close hint visible."""
@@ -252,18 +272,22 @@ class ParqxApp(App[Any]):
         async with self._tab_lock:
             if self._shutting_down:
                 return
-            self.catalog.mark_ready(source_id)
+            self.catalog.mark_ready(source_id, source.schema)
+            self._sources.update_source(self.catalog.get(source_id))
             pane = self._source_pane(source_id)
             if pane is None:
                 return
             await pane.set_source(source)
-            if self._tabs.active == source_id:
+            if self._tabs.active == source_id and not (
+                self._sources.display and self._sources.has_focus
+            ):
                 self._focus_active_table()
 
     def _on_load_error(self, source_id: str, message: str) -> None:
         if self._shutting_down:
             return
         self.catalog.mark_failed(source_id, message)
+        self._sources.update_source(self.catalog.get(source_id))
         pane = self._source_pane(source_id)
         issue = self.catalog.get(source_id).issue
         if pane is not None and issue is not None:

@@ -70,6 +70,19 @@ time; its draft stays read-only until completion, while other tabs remain usable
 All ready sources stay queryable when their file views are closed. Workspaces
 last for the current session only.
 
+### Sources
+
+Use `ctrl+p` → **Toggle Sources** to show or hide the shared sources sidebar.
+It lists each session file, its quoted SQL table name, loading or failure state,
+and loaded columns and types. Expand with `→`, collapse with `←`, and use native
+`Tab` / `Shift+Tab` focus navigation. Long labels can be inspected with the tree's
+horizontal scrollbar. Inspecting the tree does not change SQL text or table
+display settings.
+
+Closing a file tab releases its cached rows while keeping its schema and SQL
+identity available for the session. Metadata that finishes after a tab closes
+updates the sidebar without opening another file view.
+
 ## License
 
 Parqx is licensed under the MIT License. See [LICENSE](LICENSE) for details.
