@@ -25,6 +25,7 @@ from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
+from parqx.tui.screens.confirm_query_close import ConfirmQueryClose
 from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
 from parqx.tui.widgets.query_workspace import QueryWorkspace, query_result_details
@@ -412,7 +413,7 @@ class ParqxApp(App[Any]):
                 pane.finish_execution()
 
     async def action_close_tab(self) -> None:
-        """Close the active page while always retaining at least one tab."""
+        """Close the active tab, confirming before discarding query work."""
         async with self._tab_lock:
             if (
                 self.screen.is_modal
@@ -428,12 +429,35 @@ class ParqxApp(App[Any]):
                     markup=False,
                 )
                 return
-            pane_id = self._tabs.active
-            if not pane_id:
+            if isinstance(pane, QueryWorkspace) and (
+                pane.editor.text.strip() or pane.current_result is not None
+            ):
+                self.push_screen(
+                    ConfirmQueryClose(str(self._tabs.get_tab(pane).label)),
+                    partial(self._close_confirmed_query, pane),
+                )
                 return
-            await self._tabs.remove_pane(pane_id)
-            self._refresh_tab_bindings()
-            self.call_after_refresh(self._focus_active_table)
+            if pane is not None and pane.id:
+                await self._remove_tab(pane.id)
+
+    async def _close_confirmed_query(
+        self, pane: QueryWorkspace, confirmed: bool | None
+    ) -> None:
+        if not confirmed:
+            return
+        async with self._tab_lock:
+            if (
+                pane.is_attached
+                and not pane.running
+                and pane.id
+                and self._tabs.tab_count > 1
+            ):
+                await self._remove_tab(pane.id)
+
+    async def _remove_tab(self, pane_id: str) -> None:
+        await self._tabs.remove_pane(pane_id)
+        self._refresh_tab_bindings()
+        self.call_after_refresh(self._focus_active_table)
 
     def action_toggle_header(self) -> None:
         """Toggle the active table's column header row."""

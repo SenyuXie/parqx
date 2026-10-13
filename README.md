@@ -52,7 +52,6 @@ These display shortcuts apply while a table has focus.
 | `i`      | Toggle the row-index column                          |
 | `z`      | Toggle zebra striping                                |
 | `c`      | Cycle cursor type (cell → row → column → none)       |
-| `ctrl+w` | Close the current tab, keeping at least one tab open |
 
 ### SQL query
 
@@ -69,6 +68,13 @@ between tabs. Run again to replace its result in place. One query can run at a
 time; its draft stays read-only until completion, while other tabs remain usable.
 All ready sources stay queryable when their file views are closed. Workspaces
 last for the current session only.
+
+`Ctrl+W` closes the active tab from the editor, result, tab strip, or sources
+sidebar. A workspace with SQL or a result asks for confirmation before discarding
+its work; Cancel is selected initially, and Escape also cancels. Cancelling keeps
+the draft, editing state, result, and layout. Empty workspaces and file views
+close immediately. A running workspace cannot close until its query completes.
+At least one tab remains open.
 
 ### Sources
 
