@@ -61,13 +61,25 @@ These display shortcuts apply while a table has focus.
 | `ctrl+enter` | Run the active workspace's complete SQL draft |
 | `enter` | Insert a newline in the editor |
 | `tab` | Indent in the editor |
-| `shift+tab` | Move focus backward |
+| `shift+tab` | Move focus backward through the native focus order |
+| `ctrl+p` → **Maximize** / **Minimize** | Expand the focused editor or result and restore the workspace |
+| `escape` | Restore a maximized panel |
 
 Each workspace keeps its draft and latest successful result while you switch
 between tabs. Run again to replace its result in place. One query can run at a
 time; its draft stays read-only until completion, while other tabs remain usable.
 All ready sources stay queryable when their file views are closed. Workspaces
 last for the current session only.
+
+Use **-** / **+** above the editor to change its height, and **Hide SQL** /
+**Show SQL** to collapse and restore it. These controls are reachable with native
+focus navigation and Enter as well as the mouse. Each workspace remembers its
+own editor size; short terminals temporarily reduce it to leave room for results
+and feedback. Long SQL scrolls inside the editor. **Result details** opens the
+full current-result metadata and latest error, with copy controls.
+
+`Ctrl+Enter` requires a terminal that sends modified Enter distinctly from plain
+Enter. Plain Enter always inserts a newline in the editor.
 
 `Ctrl+W` closes the active tab from the editor, result, tab strip, or sources
 sidebar. A workspace with SQL or a result asks for confirmation before discarding

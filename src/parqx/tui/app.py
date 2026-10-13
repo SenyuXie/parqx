@@ -47,6 +47,12 @@ def _open_source(path: Path, config: ParqxConfig) -> ParquetSource:
     )
 
 
+class WorkspaceTabs(TabbedContent):
+    """Let native maximization target the focused editor or table."""
+
+    ALLOW_MAXIMIZE = False
+
+
 class ParqxApp(App[Any]):
     """Inspect Parquet files alongside persistent SQL query workspaces."""
 
@@ -97,7 +103,7 @@ class ParqxApp(App[Any]):
         self.catalog = SourceCatalog(paths)
         self._sources = SourcesTree(self.catalog.entries)
         self._sources.display = False
-        self._tabs = TabbedContent(id="results")
+        self._tabs = WorkspaceTabs(id="results")
         self._empty = Vertical(id="no-tabs")
         self._empty.display = False
         self._tab_lock = asyncio.Lock()
@@ -347,6 +353,8 @@ class ParqxApp(App[Any]):
         if self.screen.is_modal:
             return
         async with self._tab_lock:
+            if self.screen.maximized is not None:
+                self.screen.minimize()
             self._query_number += 1
             pane_id = f"query-{self._query_number}"
             pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
@@ -469,6 +477,10 @@ class ParqxApp(App[Any]):
                 await self._remove_tab(pane.id)
 
     async def _remove_tab(self, pane_id: str) -> None:
+        pane = self._tabs.get_pane(pane_id)
+        maximized = self.screen.maximized
+        if maximized is not None and pane in maximized.ancestors:
+            self.screen.minimize()
         await self._tabs.remove_pane(pane_id)
         self._refresh_tab_state()
         if self._sources.has_focus:
