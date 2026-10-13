@@ -8,7 +8,7 @@ from textual.widgets import TabbedContent, TextArea
 from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import run_query, wait_for
+from tests.helpers import confirm_query_close, run_query, wait_for
 
 
 async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
@@ -36,6 +36,7 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         assert tabs.tab_count == 2
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
         await pilot.press("ctrl+w")
+        await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "source-1", pilot)
         await pilot.press("ctrl+q")
 

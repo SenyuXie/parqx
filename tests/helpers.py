@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 from textual.pilot import Pilot
-from textual.widgets import Footer, TabbedContent, Tabs
+from textual.widgets import Button, Footer, TabbedContent, Tabs
 from textual.widgets._footer import FooterKey
 
 from parqx.tui.app import ParqxApp
@@ -68,3 +68,12 @@ async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> No
 
 def footer_keys(footer: Footer) -> dict[str, FooterKey]:
     return {key.action: key for key in footer.query(FooterKey)}
+
+
+async def confirm_query_close(app: ParqxApp, pilot: Pilot[Any]) -> None:
+    """Explicitly confirm an already requested query-workspace discard."""
+    await wait_for(lambda: app.screen.is_modal, pilot)
+    close = app.screen.query_one("#close", Button)
+    assert str(close.label) == "Close"
+    assert await pilot.click(close)
+    await wait_for(lambda: not app.screen.is_modal, pilot)

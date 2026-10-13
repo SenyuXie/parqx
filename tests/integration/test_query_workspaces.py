@@ -7,7 +7,7 @@ from textual.command import Command, CommandList, CommandPalette
 from textual.widgets import Input, TabbedContent, TextArea
 
 from parqx.tui.app import ParqxApp
-from tests.helpers import select_tab, wait_for
+from tests.helpers import confirm_query_close, select_tab, wait_for
 
 
 async def test_query_palette_opens_independent_blank_workspaces(
@@ -188,6 +188,7 @@ async def test_closed_workspace_releases_result_while_table_reference_survives(
         data = weakref.ref(table.data)
         tabs = app.query_one(TabbedContent)
         await pilot.press("ctrl+w")
+        await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 1, pilot)
 
         def released() -> bool:

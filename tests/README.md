@@ -7,7 +7,7 @@ lowest layer that can verify it:
 | --- | --- | --- |
 | `unit/` | Source identity, Arrow data and memory bounds, SQL engine, CLI arguments, widget logic and native resource cleanup without mounting an app | Every test job |
 | `integration/` | Mounted Textual widgets, multi-file workflows, input/focus, background reads and query lifecycle races | Linux / Python 3.12 |
-| `smoke/` | Open a real Parquet file, navigate, run SQL, close a workspace and quit | Every test job |
+| `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes

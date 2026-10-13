@@ -18,6 +18,7 @@ from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from tests.helpers import (
+    confirm_query_close,
     footer_keys,
     open_query,
     run_query,
@@ -114,6 +115,8 @@ async def test_tabs_preserve_state_and_release_data_on_close(
             data = weakref.ref(tabs.get_pane(pane_id).query_one(ArrowTable).data)
             await select_tab(tabs, pane_id, pilot)
             await pilot.press("ctrl+w")
+            if pane_id.startswith("query-"):
+                await confirm_query_close(app, pilot)
             await wait_for(lambda: not tabs.query(f"#{pane_id}"), pilot)
 
             def released() -> bool:
