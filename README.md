@@ -44,7 +44,7 @@ parqx data/*.parquet
 
 ### Table View
 
-These shortcuts apply to the active tab.
+These display shortcuts apply while a table has focus.
 
 | Key      | Action                                               |
 | ---      | ---                                                  |
@@ -58,10 +58,17 @@ These shortcuts apply to the active tab.
 
 | Key                      | Action                                                 |
 | ---                      | ---                                                    |
-| `ctrl+p` → **SQL query** | Open the compact SQL editor                            |
-| `enter`                  | Run the complete SQL query                             |
-| `shift+enter`            | Insert a newline and expand the editor                 |
-| `esc`                    | Close the editor while idle; disabled during execution |
+| `ctrl+p` → **Query** | Open a new blank query workspace |
+| `ctrl+enter` | Run the active workspace's complete SQL draft |
+| `enter` | Insert a newline in the editor |
+| `tab` | Indent in the editor |
+| `shift+tab` | Move focus backward |
+
+Each workspace keeps its draft and latest successful result while you switch
+between tabs. Run again to replace its result in place. One query can run at a
+time; its draft stays read-only until completion, while other tabs remain usable.
+All ready sources stay queryable when their file views are closed. Workspaces
+last for the current session only.
 
 ### Sources
 

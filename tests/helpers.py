@@ -10,8 +10,8 @@ from textual.widgets import Footer, TabbedContent, Tabs
 from textual.widgets._footer import FooterKey
 
 from parqx.tui.app import ParqxApp
-from parqx.tui.screens.query import QueryScreen
 from parqx.tui.widgets import ArrowTable
+from parqx.tui.widgets.query_workspace import QueryWorkspace
 
 
 async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:
@@ -22,7 +22,7 @@ async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:
 
 
 async def wait_for_query_error(
-    notify: Mock, query: QueryScreen, pilot: Pilot[Any]
+    notify: Mock, query: QueryWorkspace, pilot: Pilot[Any]
 ) -> str:
     await wait_for(lambda: notify.called and not query.running, pilot)
     assert notify.call_args is not None
@@ -34,30 +34,21 @@ async def wait_for_query_error(
     return message
 
 
-async def open_query(app: ParqxApp, pilot: Pilot[Any]) -> QueryScreen:
-    app.action_open_query()
-    query = app.get_screen("query", QueryScreen)  # pyright: ignore[reportUnknownMemberType]
-    await wait_for(lambda: app.screen is query and query.editor.has_focus, pilot)
+async def open_query(app: ParqxApp, pilot: Pilot[Any]) -> QueryWorkspace:
+    await app.action_open_query()
+    query = app.query_one("#results", TabbedContent).active_pane
+    assert isinstance(query, QueryWorkspace)
+    await wait_for(lambda: query.editor.has_focus, pilot)
     return query
 
 
 async def run_query(app: ParqxApp, pilot: Pilot[Any], sql: str) -> ArrowTable:
-    tabs = app.query_one("#results", TabbedContent)
-    count = tabs.tab_count
-    previous_active = tabs.active
     query = await open_query(app, pilot)
     query.editor.load_text(sql)
-    await pilot.press("enter")
-    await wait_for(
-        lambda: (
-            app.screen is not query
-            and tabs.tab_count == count + 1
-            and tabs.active != previous_active
-        ),
-        pilot,
-    )
-    table = tabs.active_pane.query_one(ArrowTable) if tabs.active_pane else None
-    assert table is not None
+    await pilot.press("ctrl+enter")
+    await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
+    table = query.query_one(ArrowTable)
+    table.focus()
     await wait_for(lambda: table.has_focus, pilot)
     return table
 
@@ -77,8 +68,3 @@ async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> No
 
 def footer_keys(footer: Footer) -> dict[str, FooterKey]:
     return {key.action: key for key in footer.query(FooterKey)}
-
-
-def footer_ready(footer: Footer) -> bool:
-    keys = footer_keys(footer)
-    return len(keys) == 3 and all(key.region.width > 0 for key in keys.values())

@@ -444,7 +444,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
                 )
                 query = await open_query(app, pilot)
                 query.editor.load_text('SELECT count(*) FROM "pending"')
-                await pilot.press("enter")
+                await pilot.press("ctrl+enter")
                 await wait_for(query_started.is_set, pilot)
                 metadata_release.set()
                 await wait_for(
@@ -457,8 +457,10 @@ async def test_running_query_uses_frozen_sources_until_retried(
                 assert "pending" in message
                 assert "Still loading" in message
                 assert query.editor.has_focus
-                await pilot.press("enter")
-                await wait_for(lambda: app.screen is not query, pilot)
+                await pilot.press("ctrl+enter")
+                await wait_for(
+                    lambda: bool(query.query(ArrowTable)) and not query.running, pilot
+                )
                 table = app.query_one("#query-1").query_one(ArrowTable)
                 assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
             finally:
