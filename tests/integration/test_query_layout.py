@@ -127,14 +127,19 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
 
 
 @pytest.mark.parametrize("target", ["editor", "result"])
-async def test_closing_maximized_workspace_restores_remaining_tabs(
-    small_parquet: Path, target: str
+@pytest.mark.parametrize("last_tab", [False, True])
+async def test_closing_maximized_workspace_restores_main_view(
+    small_parquet: Path, target: str, last_tab: bool
 ) -> None:
     from tests.helpers import confirm_query_close
 
     app = ParqxApp([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        tabs = app.query_one(TabbedContent)
+        if last_tab:
+            await pilot.press("ctrl+w")
+            await wait_for(lambda: tabs.tab_count == 0, pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
         await pilot.press("ctrl+enter")
@@ -154,9 +159,16 @@ async def test_closing_maximized_workspace_restores_remaining_tabs(
         assert query.editor.text == "SELECT * FROM smoke"
         await pilot.press("ctrl+w")
         await confirm_query_close(app, pilot)
-        tabs = app.query_one(TabbedContent)
-        await wait_for(lambda: tabs.tab_count == 1, pilot)
+        await wait_for(lambda: tabs.tab_count == (0 if last_tab else 1), pilot)
         assert app.screen.maximized is None
+        if last_tab:
+            new_query = app.query_one("#new-query", Button)
+            await wait_for(lambda: new_query.has_focus, pilot)
+            assert app.screen.region.contains_region(new_query.region)
+            assert await pilot.click(new_query)
+            await wait_for(lambda: tabs.tab_count == 1, pilot)
+            assert tabs.active == "query-2"
+            return
         assert tabs.active == "source-1"
         pane = tabs.active_pane
         assert pane is not None
@@ -239,3 +251,42 @@ async def test_long_sql_and_wide_results_keep_controls_reachable_after_resize(
         assert any(isinstance(widget, Tabs) for widget in visited)
         assert any(isinstance(widget, SourcesTree) for widget in visited)
         assert query.editor.text == sql
+        shrink = query.query_one(".shrink-editor", Button)
+        shrink.active_effect_duration = 0
+        while not shrink.disabled:
+            assert await pilot.click(shrink)
+            await pilot.pause()
+        assert query.editor.scrollable_content_region.height >= 1
+        assert table.region.height >= 4
+
+
+async def test_query_palette_reveals_new_workspace_from_maximized_editor(
+    small_parquet: Path,
+) -> None:
+    from textual.command import CommandList, CommandPalette
+    from textual.widgets import Input, TextArea
+
+    app = ParqxApp([small_parquet])
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        first = await open_query(app, pilot)
+        first.editor.load_text("SELECT 42")
+        app.screen.action_maximize()
+        await wait_for(lambda: first.editor.is_maximized, pilot)
+        await pilot.press("ctrl+p")
+        assert isinstance(app.screen, CommandPalette)
+        app.screen.query_one(Input).value = "Query"
+        commands = app.screen.query_one(CommandList)
+        await wait_for(lambda: commands.option_count == 1, pilot)
+        await pilot.press("enter")
+        await wait_for(lambda: not app.screen.is_modal, pilot)
+        tabs = app.query_one(TabbedContent)
+        await wait_for(lambda: tabs.active == "query-2", pilot)
+        assert app.screen.maximized is None
+        pane = tabs.active_pane
+        assert pane is not None
+        editor = pane.query_one(TextArea)
+        await wait_for(lambda: editor.has_focus and editor.region.height > 0, pilot)
+        assert editor.text == ""
+        assert first.editor.text == "SELECT 42"
+        assert app.screen.region.contains_region(editor.region)

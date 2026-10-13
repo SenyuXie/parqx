@@ -106,7 +106,7 @@ class QueryWorkspace(TabPane):
         .result-details { width: 16; min-width: 16; height: 1; }
         & > TextArea {
             height: 10;
-            min-height: 3;
+            min-height: 4;
             border: solid $primary;
         }
     }
@@ -156,13 +156,13 @@ class QueryWorkspace(TabPane):
         if not self.size.height:
             return
         # Reserve one control row, up to four feedback rows and four result rows.
-        maximum = max(3, self.size.height - 9)
+        maximum = max(4, self.size.height - 9)
         height = min(self._editor_height, maximum)
         self.editor.styles.height = (
             "1fr" if self.screen.maximized is self.editor else height
         )
         self.query_one(".shrink-editor", Button).disabled = (
-            not self.editor.display or height <= 3
+            not self.editor.display or height <= 4
         )
         self.query_one(".grow-editor", Button).disabled = (
             not self.editor.display or height >= maximum
@@ -176,7 +176,7 @@ class QueryWorkspace(TabPane):
         """Adjust only this workspace's preferred editor allocation."""
         event.stop()
         change = -2 if event.button.has_class("shrink-editor") else 2
-        self._editor_height = max(3, self.editor.region.height + change)
+        self._editor_height = max(4, self.editor.region.height + change)
         self._apply_editor_layout()
         self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
 

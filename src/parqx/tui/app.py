@@ -353,6 +353,8 @@ class ParqxApp(App[Any]):
         if self.screen.is_modal:
             return
         async with self._tab_lock:
+            if self.screen.maximized is not None:
+                self.screen.minimize()
             self._query_number += 1
             pane_id = f"query-{self._query_number}"
             pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
