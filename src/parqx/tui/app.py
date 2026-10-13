@@ -114,6 +114,7 @@ class ParqxApp(App[Any]):
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
         self._loading_sources: set[str] = set()
+        self._startup_succeeded = False
         self._shutting_down = False
 
     @property
@@ -312,6 +313,7 @@ class ParqxApp(App[Any]):
             if self._shutting_down:
                 return
             self.catalog.mark_ready(source_id, source.schema)
+            self._startup_succeeded = True
             self._sources.update_source(self.catalog.get(source_id))
             pane = self._source_pane(source_id)
             if pane is None:
@@ -334,7 +336,9 @@ class ParqxApp(App[Any]):
         self._exit_if_all_failed()
 
     def _exit_if_all_failed(self) -> None:
-        if all(entry.state == "failed" for entry in self.catalog.entries):
+        if not self._startup_succeeded and all(
+            entry.state == "failed" for entry in self.catalog.entries
+        ):
             self.exit(return_code=1)
 
     def on_unmount(self) -> None:
