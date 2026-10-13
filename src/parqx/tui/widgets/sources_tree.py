@@ -22,6 +22,7 @@ class SourcesTree(Tree[str]):
         super().__init__("Sources", id="sources")
         self.border_title = "Sources"
         self.show_root = False
+        self.auto_expand = False
         self.root.expand()
         for entry in entries:
             self.root.add("", data=entry.spec.source_id)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -19,7 +18,7 @@ from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Footer, TabbedContent, TabPane
+from textual.widgets import Footer, TabbedContent, TabPane, Tree
 from textual.worker import Worker, WorkerState
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
@@ -116,6 +115,7 @@ class ParqxApp(App[Any]):
         self._source_pool = ThreadPoolExecutor(
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
+        self._loading_sources: set[str] = set()
         self._shutting_down = False
 
     @property
@@ -135,38 +135,52 @@ class ParqxApp(App[Any]):
     async def on_mount(self) -> None:
         """Create all source tabs in input order before starting metadata reads."""
         # Dynamically added panes aren't retained by TabbedContent's composition.
-        name_counts = Counter(
-            entry.spec.display_name.casefold() for entry in self.catalog.entries
-        )
         async with self._tab_lock:
             for entry in self.catalog.entries:
-                source = entry.spec
-                title = source.display_name
-                if name_counts[title.casefold()] > 1:
-                    title += f" · {source.quoted_name}"
-                pane = TablePane(
-                    title,
-                    source,
-                    id=source.source_id,
-                    executor=self._source_pool,
-                    config=self.config,
-                )
-                await self._tabs.add_pane(pane)
-                self._tabs.get_tab(source.source_id).tooltip = Content(str(source.path))
-                if entry.issue is not None:
-                    pane.show_error(entry.issue)
+                await self._add_source_pane(entry.spec.source_id)
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_bindings()
         for entry in self.catalog.entries:
             source_id = entry.spec.source_id
             if entry.issue is None:
-                _worker: Worker[None] = self.run_worker(
-                    partial(self._load_table, source_id),
-                    description="Load source metadata",
-                    group=f"load:{source_id}",
-                    exclusive=True,
-                )
+                self._start_source_load(source_id)
         self._exit_if_all_failed()
+
+    async def _add_source_pane(self, source_id: str) -> TablePane:
+        entry = self.catalog.get(source_id)
+        source = entry.spec
+        title = source.display_name
+        if (
+            sum(
+                item.spec.display_name.casefold() == title.casefold()
+                for item in self.catalog.entries
+            )
+            > 1
+        ):
+            title += f" · {source.quoted_name}"
+        pane = TablePane(
+            title, source, id=source_id, executor=self._source_pool, config=self.config
+        )
+        await self._tabs.add_pane(pane)
+        self._tabs.get_tab(source_id).tooltip = Content(str(source.path))
+        # A pending read can fail while the new pane is mounting.
+        if (issue := self.catalog.get(source_id).issue) is not None:
+            pane.show_error(issue)
+        return pane
+
+    @on(Tree.NodeSelected, "#sources")
+    async def _on_source_selected(self, event: Tree.NodeSelected[str]) -> None:
+        source_id = event.node.data
+        if source_id is None or self.screen.is_modal:
+            return
+        event.stop()
+        async with self._tab_lock:
+            if self._source_pane(source_id) is None:
+                await self._add_source_pane(source_id)
+                if self.catalog.get(source_id).state == "ready":
+                    self._start_source_load(source_id)
+            self._tabs.active = source_id
+            self._refresh_tab_bindings()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
         """Expose query workspace creation alongside native commands."""
@@ -254,19 +268,33 @@ class ParqxApp(App[Any]):
     def _on_tab_activated(self) -> None:
         self._refresh_tab_bindings()
 
-    async def _load_table(self, source_id: str) -> None:
-        if self._shutting_down:
+    def _start_source_load(self, source_id: str) -> None:
+        if self._shutting_down or source_id in self._loading_sources:
             return
+        # A view can close and reopen while its app-owned metadata read runs.
+        self._loading_sources.add(source_id)
+        _worker: Worker[None] = self.run_worker(
+            partial(self._load_table, source_id),
+            description="Load source metadata",
+            group=f"load:{source_id}",
+        )
+
+    async def _load_table(self, source_id: str) -> None:
         path = self.catalog.get(source_id).spec.path
         try:
-            source = await asyncio.get_running_loop().run_in_executor(
-                self._source_pool, _open_source, path, self.config
-            )
-        except Exception as exc:
-            logger.exception("Failed to read parquet file: %s", path)
-            self._on_load_error(source_id, str(exc) or type(exc).__name__)
-            return
-        await self._on_load_ok(source_id, source)
+            if self._shutting_down:
+                return
+            try:
+                source = await asyncio.get_running_loop().run_in_executor(
+                    self._source_pool, _open_source, path, self.config
+                )
+            except Exception as exc:
+                logger.exception("Failed to read parquet file: %s", path)
+                self._on_load_error(source_id, str(exc) or type(exc).__name__)
+                return
+            await self._on_load_ok(source_id, source)
+        finally:
+            self._loading_sources.discard(source_id)
 
     async def _on_load_ok(self, source_id: str, source: ParquetSource) -> None:
         async with self._tab_lock:
