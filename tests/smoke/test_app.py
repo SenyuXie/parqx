@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from textual.coordinate import Coordinate
-from textual.widgets import TabbedContent, TextArea
+from textual.widgets import Button, TabbedContent, TextArea
 
 from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
@@ -38,6 +38,15 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         await pilot.press("ctrl+w")
         await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "source-1", pilot)
+        await pilot.press("ctrl+w")
+        await wait_for(lambda: tabs.tab_count == 0, pilot)
+        query_action = app.query_one("#new-query", Button)
+        await wait_for(lambda: query_action.has_focus, pilot)
+        await pilot.press("enter")
+        await wait_for(lambda: tabs.active == "query-2", pilot)
+        fresh = tabs.get_pane("query-2").query_one(TextArea)
+        await wait_for(lambda: fresh.has_focus, pilot)
+        assert fresh.text == ""
         await pilot.press("ctrl+q")
 
     assert app.return_code == 0

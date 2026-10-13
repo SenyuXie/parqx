@@ -19,7 +19,6 @@ from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from tests.helpers import (
     confirm_query_close,
-    footer_keys,
     open_query,
     run_query,
     select_tab,
@@ -75,12 +74,6 @@ async def test_tabs_preserve_state_and_release_data_on_close(
     async with app.run_test(size=(60, 15)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
-        footer = app.query_one(Footer)
-        await wait_for(lambda: "close_tab" in footer_keys(footer), pilot)
-        assert footer_keys(footer)["close_tab"].has_class("-disabled")
-        await pilot.press("ctrl+w")
-        assert tabs.tab_count == 1
-
         first = await run_query(app, pilot, "SELECT i FROM range(100) t(i)")
         await pilot.press("h", "i", "z", "c")
         first.move_cursor(row=80, column=0, animate=False)
@@ -129,11 +122,8 @@ async def test_tabs_preserve_state_and_release_data_on_close(
         await close_and_release("source-1")
         assert tabs.active == "query-2"
         assert tabs.tab_count == 1
-        await wait_for(
-            lambda: footer_keys(footer)["close_tab"].has_class("-disabled"), pilot
-        )
-        await pilot.press("ctrl+w")
-        assert tabs.tab_count == 1
+        await close_and_release("query-2")
+        assert tabs.tab_count == 0
         # A closed source tab remains available to SQL through the catalog.
         count = await run_query(app, pilot, "SELECT count(*) FROM smoke")
         assert count.get_cell_at(Coordinate(0, 0)).as_py() == 5

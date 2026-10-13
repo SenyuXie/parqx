@@ -6,8 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 from textual.pilot import Pilot
-from textual.widgets import Button, Footer, TabbedContent, Tabs
-from textual.widgets._footer import FooterKey
+from textual.widgets import Button, TabbedContent, Tabs
 
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
@@ -64,10 +63,6 @@ async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> No
         ),
         pilot,
     )
-
-
-def footer_keys(footer: Footer) -> dict[str, FooterKey]:
-    return {key.action: key for key in footer.query(FooterKey)}
 
 
 async def confirm_query_close(app: ParqxApp, pilot: Pilot[Any]) -> None:
