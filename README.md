@@ -41,27 +41,37 @@ parqx data/*.parquet
 | `ctrl+home`           | Move to the first row         |
 | `ctrl+end`            | Move to the last row          |
 | `enter`               | Select the current cell       |
+| `ctrl+w`              | Close the current tab         |
 
 ### Table View
 
-These shortcuts apply to the active tab.
+These display shortcuts apply while a table has focus.
 
-| Key      | Action                                               |
-| ---      | ---                                                  |
-| `h`      | Toggle the column header row                         |
-| `i`      | Toggle the row-index column                          |
-| `z`      | Toggle zebra striping                                |
-| `c`      | Cycle cursor type (cell → row → column → none)       |
-| `ctrl+w` | Close the current tab, keeping at least one tab open |
+| Key | Action                                         |
+| --- | ---                                            |
+| `h` | Toggle the column header row                   |
+| `i` | Toggle the row-index column                    |
+| `z` | Toggle zebra striping                          |
+| `c` | Cycle cursor type (cell → row → column → none) |
 
 ### SQL query
 
-| Key                      | Action                                                 |
-| ---                      | ---                                                    |
-| `ctrl+p` → **SQL query** | Open the compact SQL editor                            |
-| `enter`                  | Run the complete SQL query                             |
-| `shift+enter`            | Insert a newline and expand the editor                 |
-| `esc`                    | Close the editor while idle; disabled during execution |
+| Key                  | Action                       |
+| ---                  | ---                          |
+| `ctrl+p` → **Query** | Open a blank query workspace |
+| `ctrl+enter`         | Run the complete SQL query   |
+| `enter`              | Insert a newline             |
+| `tab`                | Indent                       |
+| `shift+tab`          | Move focus backward          |
+| `escape`             | Restore a maximized panel    |
+
+### Sources
+
+| Key                    | Action                         |
+| ---                    | ---                            |
+| `ctrl+p` → **Sources** | Show or hide files and schemas |
+| `←` / `→`              | Collapse or expand a tree item |
+| `enter`                | Open the selected file tab     |
 
 ## License
 

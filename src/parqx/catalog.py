@@ -5,6 +5,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+import pyarrow as pa
+
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
@@ -67,6 +69,8 @@ class SourceEntry:
     """Loading state that determines whether the source is queryable."""
     issue: SourceIssue | None = None
     """Failure details when the source is in the failed state."""
+    schema: pa.Schema | None = None
+    """Loaded column metadata retained without a view's Arrow data or page cache."""
 
 
 class SourceCatalog:
@@ -117,17 +121,17 @@ class SourceCatalog:
         """Look up a source, raising KeyError for an unknown identity."""
         return self._entries[source_id]
 
-    def mark_ready(self, source_id: str) -> None:
-        """Make a loaded source available to future queries."""
+    def mark_ready(self, source_id: str, schema: pa.Schema | None = None) -> None:
+        """Make a loaded source queryable and retain its lightweight schema."""
         self._entries[source_id] = replace(
-            self.get(source_id), state="ready", issue=None
+            self.get(source_id), state="ready", issue=None, schema=schema
         )
 
     def mark_failed(self, source_id: str, message: str) -> None:
         """Record a loading failure without changing the source's identity."""
         entry = self.get(source_id)
         self._entries[source_id] = replace(
-            entry, state="failed", issue=SourceIssue(entry.spec, message)
+            entry, state="failed", issue=SourceIssue(entry.spec, message), schema=None
         )
 
     def snapshot(self) -> tuple[SourceSpec, ...]:

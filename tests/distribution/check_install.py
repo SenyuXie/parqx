@@ -46,7 +46,7 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.tui.app",
     "parqx.tui.cell_formatter",
     "parqx.tui.screens",
-    "parqx.tui.screens.query",
+    "parqx.tui.widgets.query_workspace",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
     "parqx.tui.widgets.table_pane",

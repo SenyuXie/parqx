@@ -3,12 +3,12 @@
 from pathlib import Path
 
 from textual.coordinate import Coordinate
-from textual.widgets import TabbedContent
+from textual.widgets import Button, TabbedContent, TextArea
 
 from parqx.data.view import PageCache
 from parqx.tui.app import ParqxApp
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import run_query, wait_for
+from tests.helpers import confirm_query_close, run_query, wait_for
 
 
 async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
@@ -27,10 +27,26 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         assert source.cursor_coordinate == Coordinate(2, 1)
         assert source.get_cell_at(source.cursor_coordinate).as_py() == "carol"
 
-        result = await run_query(app, pilot, 'SELECT count(*) AS total FROM "smoke"')
+        sql = 'SELECT count(*) AS total FROM "smoke"'
+        result = await run_query(app, pilot, sql)
+        workspace = tabs.get_pane("query-1")
+        assert workspace.query_one(TextArea).text == sql
+        assert workspace.query_one(ArrowTable) is result
+        assert not app.screen.is_modal
+        assert tabs.tab_count == 2
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 5
         await pilot.press("ctrl+w")
+        await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 1 and tabs.active == "source-1", pilot)
+        await pilot.press("ctrl+w")
+        await wait_for(lambda: tabs.tab_count == 0, pilot)
+        query_action = app.query_one("#new-query", Button)
+        await wait_for(lambda: query_action.has_focus, pilot)
+        await pilot.press("enter")
+        await wait_for(lambda: tabs.active == "query-2", pilot)
+        fresh = tabs.get_pane("query-2").query_one(TextArea)
+        await wait_for(lambda: fresh.has_focus, pilot)
+        assert fresh.text == ""
         await pilot.press("ctrl+q")
 
     assert app.return_code == 0
