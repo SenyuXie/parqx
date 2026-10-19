@@ -6,7 +6,7 @@ import pytest
 from textual.widget import Widget
 from textual.widgets import Button, TabbedContent
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import open_query, open_sql_query, wait_for
 
@@ -19,7 +19,7 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
     from textual.command import CommandList, CommandPalette
     from textual.widgets import Input
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=size) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
@@ -94,7 +94,7 @@ async def test_closing_maximized_workspace_restores_main_view(
 ) -> None:
     from tests.helpers import confirm_query_close
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -146,7 +146,7 @@ async def test_long_sql_and_wide_results_stay_usable_after_resize(
 
     from parqx.tui.widgets.sources_tree import SourcesTree
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
@@ -204,7 +204,7 @@ async def test_long_sql_and_wide_results_stay_usable_after_resize(
 async def test_query_palette_reveals_new_workspace_from_maximized_editor(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         first = await open_query(app, pilot)

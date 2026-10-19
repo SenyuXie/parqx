@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from parqx.logger import setup_logging
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def main(
 
     setup_logging(verbose)
 
-    parqx = ParqxApp(paths=paths)
+    parqx = Parqx(paths=paths)
     parqx.run()
 
     load_errors = parqx.load_errors

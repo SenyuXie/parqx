@@ -14,7 +14,7 @@ import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import TabbedContent
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
 from tests.helpers import run_query, select_tab, toggle_sources, wait_for
@@ -28,7 +28,7 @@ async def test_sources_visibility_is_shared_and_returns_main_view_space(
     pq.write_table(
         pa.table({f"long_column_name_{index}": [index] for index in range(50)}), other
     )
-    app = ParqxApp([small_parquet, other])
+    app = Parqx([small_parquet, other])
     async with app.run_test(size=size) as pilot:
         await wait_for(lambda: len(app.query(ArrowTable)) == 2, pilot)
         tabs = app.query_one(TabbedContent)
@@ -64,7 +64,7 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
         path.parent.mkdir()
     pq.write_table(pa.table({"id": [1], "name": ["Alice"]}), first)
     pq.write_table(pa.table({"amount": [2.5]}), second)
-    app = ParqxApp([second, first, second])
+    app = Parqx([second, first, second])
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(lambda: len(app.query(ArrowTable)) == 2, pilot)
         await toggle_sources(app, pilot)
@@ -115,7 +115,7 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
 async def test_source_tree_uses_left_right_and_native_focus_without_table_actions(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         await toggle_sources(app, pilot)
@@ -166,7 +166,7 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
             assert release.wait(timeout=15)
         return execute(connection, query, parameters)
 
-    app = ParqxApp([pending, failed, small_parquet])
+    app = Parqx([pending, failed, small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "execute", delayed_metadata):
         async with app.run_test(size=(120, 40)) as pilot:
             try:
@@ -232,7 +232,7 @@ async def test_metadata_arrival_preserves_sidebar_inspection_focus(
             assert release.wait(timeout=15)
         return execute(connection, query, parameters)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "execute", delayed_metadata):
         async with app.run_test() as pilot:
             try:

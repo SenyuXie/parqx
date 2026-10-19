@@ -9,7 +9,7 @@ from textual.command import Command, CommandList, CommandPalette
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, TabbedContent, Tabs
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 
@@ -34,7 +34,7 @@ async def wait_for_query_error(
     return message
 
 
-async def open_query(app: ParqxApp, pilot: Pilot[Any]) -> QueryWorkspace:
+async def open_query(app: Parqx, pilot: Pilot[Any]) -> QueryWorkspace:
     await app.action_open_query()
     query = app.query_one("#results", TabbedContent).active_pane
     assert isinstance(query, QueryWorkspace)
@@ -65,7 +65,7 @@ async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
 
 
 async def toggle_sources(
-    app: ParqxApp, pilot: Pilot[Any], *, expected_help: str | None = None
+    app: Parqx, pilot: Pilot[Any], *, expected_help: str | None = None
 ) -> None:
     await pilot.press("ctrl+p")
     palette = app.screen
@@ -81,7 +81,7 @@ async def toggle_sources(
     await wait_for(lambda: app.screen is not palette, pilot)
 
 
-async def run_query(app: ParqxApp, pilot: Pilot[Any], sql: str) -> ArrowTable:
+async def run_query(app: Parqx, pilot: Pilot[Any], sql: str) -> ArrowTable:
     query = await open_query(app, pilot)
     query.editor.load_text(sql)
     await pilot.press("ctrl+enter")
@@ -105,7 +105,7 @@ async def select_tab(tabs: TabbedContent, pane_id: str, pilot: Pilot[Any]) -> No
     )
 
 
-async def confirm_query_close(app: ParqxApp, pilot: Pilot[Any]) -> None:
+async def confirm_query_close(app: Parqx, pilot: Pilot[Any]) -> None:
     """Explicitly confirm an already requested query-workspace discard."""
     await wait_for(lambda: app.screen.is_modal, pilot)
     close = app.screen.query_one("#close", Button)

@@ -5,13 +5,13 @@ from pathlib import Path
 from textual.coordinate import Coordinate
 from textual.widgets import TabbedContent
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import open_query, wait_for, wait_for_query_error
 
 
 async def test_draft_edits_preserve_current_result(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
@@ -56,7 +56,7 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
             assert release.wait(timeout=15)
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with (
         patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
         patch.object(app, "notify") as notify,
@@ -127,7 +127,7 @@ async def test_failure_notifies_and_allows_retry(small_parquet: Path) -> None:
         assert release.wait(timeout=15)
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with (
         patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
         patch.object(app, "notify") as notify,

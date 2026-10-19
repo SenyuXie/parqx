@@ -17,7 +17,7 @@ runner = CliRunner()
     ("option", "output"), [("--version", "parqx"), ("--help", "PATH")]
 )
 def test_information_flags_exit_without_starting_app(option: str, output: str) -> None:
-    with patch("parqx.cli.ParqxApp") as app_class:
+    with patch("parqx.cli.Parqx") as app_class:
         result = runner.invoke(app, [option])
     assert result.exit_code == 0
     assert output in unstyle(result.stdout)
@@ -26,7 +26,7 @@ def test_information_flags_exit_without_starting_app(option: str, output: str) -
 
 def test_paths_are_forwarded_in_order(tmp_path: Path) -> None:
     paths = [tmp_path / "second.parquet", tmp_path / "first.parquet"]
-    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
+    with patch("parqx.cli.Parqx") as app_class, patch("parqx.cli.setup_logging"):
         app_class.return_value.load_errors = ()
         app_class.return_value.return_code = 0
         result = runner.invoke(app, [str(path) for path in paths])
@@ -39,7 +39,7 @@ def test_paths_are_forwarded_in_order(tmp_path: Path) -> None:
 def test_application_exit_code_is_preserved_without_load_errors(
     tmp_path: Path, return_code: int
 ) -> None:
-    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
+    with patch("parqx.cli.Parqx") as app_class, patch("parqx.cli.setup_logging"):
         app_class.return_value.load_errors = ()
         app_class.return_value.return_code = None
 
@@ -62,7 +62,7 @@ def test_partial_failure_reports_each_path_after_app_finishes(
     ]
     catalog = SourceCatalog(paths[1:])
     errors = tuple(SourceIssue(entry.spec, "Cannot read") for entry in catalog.entries)
-    with patch("parqx.cli.ParqxApp") as app_class, patch("parqx.cli.setup_logging"):
+    with patch("parqx.cli.Parqx") as app_class, patch("parqx.cli.setup_logging"):
         # Errors only become available once the interactive application exits.
         app_class.return_value.load_errors = ()
         app_class.return_value.return_code = None
@@ -81,7 +81,7 @@ def test_partial_failure_reports_each_path_after_app_finishes(
 
 
 def test_at_least_one_path_is_required() -> None:
-    with patch("parqx.cli.ParqxApp") as app_class:
+    with patch("parqx.cli.Parqx") as app_class:
         result = runner.invoke(app, [])
     assert result.exit_code == 2
     app_class.assert_not_called()

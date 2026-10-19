@@ -11,7 +11,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import Button, Static, TabbedContent
 
 from parqx.data.view import PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.sources_tree import SourcesTree
@@ -29,7 +29,7 @@ from tests.helpers import (
 async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
     small_parquet: Path, size: tuple[int, int]
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=size) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
@@ -65,7 +65,7 @@ async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
 async def test_last_query_requires_confirmation_and_palette_starts_fresh(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         table = await run_query(app, pilot, "SELECT sum(id) FROM smoke")
         tabs = app.query_one(TabbedContent)
@@ -102,7 +102,7 @@ async def test_last_query_requires_confirmation_and_palette_starts_fresh(
 async def test_empty_state_reopens_sources_once_in_default_browsing_state(
     small_parquet: Path, size: tuple[int, int], sidebar_visible: bool
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=size) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
@@ -173,7 +173,7 @@ async def test_source_load_finishes_after_all_views_close_without_reopening_them
             assert release.wait(timeout=15)
         return execute(connection, query, parameters)
 
-    app = ParqxApp([pending, small_parquet])
+    app = Parqx([pending, small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "execute", delayed_metadata):
         async with app.run_test() as pilot:
             try:
@@ -227,7 +227,7 @@ async def test_source_load_finishes_after_all_views_close_without_reopening_them
 async def test_sidebar_shortcuts_use_active_workspace_and_never_selected_source(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         table = await run_query(app, pilot, "SELECT sum(id) FROM smoke")
         tabs = app.query_one(TabbedContent)
@@ -273,7 +273,7 @@ async def test_last_running_workspace_stays_open_until_execution_finishes(
         assert release.wait(timeout=15)
         return sql(connection, query)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_query):
         async with app.run_test() as pilot:
             try:

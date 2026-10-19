@@ -9,7 +9,7 @@ import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Button, Static, TabbedContent, TextArea
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
 from tests.helpers import (
@@ -25,7 +25,7 @@ from tests.helpers import (
 async def test_close_confirmation_cancellation_preserves_workspace(
     small_parquet: Path, focus: str
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         table = await run_query(app, pilot, "SELECT name FROM smoke ORDER BY id")
         tabs = app.query_one(TabbedContent)
@@ -95,7 +95,7 @@ async def test_close_confirmation_cancellation_preserves_workspace(
 async def test_result_without_sql_still_requires_explicit_discard(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         table = await run_query(app, pilot, "SELECT 42 AS answer")
         tabs = app.query_one(TabbedContent)
@@ -117,7 +117,7 @@ async def test_result_without_sql_still_requires_explicit_discard(
 async def test_empty_workspaces_and_file_views_close_without_confirmation(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
@@ -157,7 +157,7 @@ async def test_background_completion_preserves_close_target_and_modal_focus(
             raise RuntimeError("background query failed")
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
         async with app.run_test() as pilot:
             try:

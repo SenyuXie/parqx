@@ -12,7 +12,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import Footer, TabbedContent
 
 from parqx.config import ParqxConfig
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from tests.helpers import (
@@ -27,7 +27,7 @@ from tests.helpers import (
 
 
 async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet], config=ParqxConfig(preview_rows=2))
+    app = Parqx([small_parquet], config=ParqxConfig(preview_rows=2))
     async with app.run_test() as pilot:
         tabs = app.query_one("#results", TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
@@ -63,7 +63,7 @@ async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
 async def test_tabs_preserve_state_and_release_data_on_close(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(60, 15)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         tabs = app.query_one(TabbedContent)
@@ -126,7 +126,7 @@ async def test_unavailable_sources_are_identified_and_recover(
     small_parquet: Path,
 ) -> None:
     contents = small_parquet.read_bytes()
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
@@ -155,7 +155,7 @@ async def test_unavailable_sources_are_identified_and_recover(
 async def test_palette_preserves_editor_selection_and_history(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         query = await open_sql_query(pilot)
         editor = query.editor
@@ -183,7 +183,7 @@ async def test_palette_preserves_editor_selection_and_history(
 
 
 async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         source = app.query_one(ArrowTable)
@@ -232,7 +232,7 @@ async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -
 async def test_query_editor_retains_height_through_multiline_edits(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         query = await open_query(app, pilot)
         editor = query.editor
@@ -259,7 +259,7 @@ async def test_query_editor_retains_height_through_multiline_edits(
 async def test_query_editor_scrolls_within_resized_terminal(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         query = await open_query(app, pilot)
         editor = query.editor
@@ -300,7 +300,7 @@ async def test_query_editor_scrolls_within_resized_terminal(
 async def test_query_editor_only_shows_scrollbar_when_lines_overflow(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         query = await open_query(app, pilot)
         editor = query.editor

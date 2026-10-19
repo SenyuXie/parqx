@@ -10,7 +10,7 @@ from textual.coordinate import Coordinate
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import run_query, wait_for
 
@@ -39,7 +39,7 @@ async def test_custom_budgets_reach_browsing_and_sql(
         pages.append(page)
         return page
 
-    app = ParqxApp([small_parquet], config=config)
+    app = Parqx([small_parquet], config=config)
     with (
         patch("parqx.data.duckdb.duckdb.connect", wraps=duckdb.connect) as connect,
         patch.object(ParquetSource, "read_window", read_window),

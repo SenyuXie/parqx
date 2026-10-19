@@ -18,7 +18,7 @@ from textual.widgets import Static, TabbedContent
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import (
     open_query,
@@ -38,7 +38,7 @@ async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
         path.parent.mkdir()
     pq.write_table(pa.table({"id": [1, 2], "name": ["alice", "bob"]}), users)
     pq.write_table(pa.table({"user_id": [1, 1, 2], "amount": [10, 15, 7]}), orders)
-    app = ParqxApp([orders, users, orders])
+    app = Parqx([orders, users, orders])
     async with app.run_test(size=(120, 24)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
@@ -119,7 +119,7 @@ async def test_partial_failures_remain_visible_and_healthy_source_is_queryable(
     directory = tmp_path / "directory.parquet"
     corrupt.write_text("not a parquet file", encoding="utf-8")
     directory.mkdir()
-    app = ParqxApp([small_parquet, corrupt, missing, directory])
+    app = Parqx([small_parquet, corrupt, missing, directory])
     async with app.run_test(size=(100, 24)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(
@@ -154,7 +154,7 @@ async def test_partial_failures_remain_visible_and_healthy_source_is_queryable(
 async def test_all_failed_sources_exit_with_failure(tmp_path: Path) -> None:
     corrupt, missing = tmp_path / "corrupt.parquet", tmp_path / "missing.parquet"
     corrupt.write_text("invalid parquet", encoding="utf-8")
-    app = ParqxApp([corrupt, missing])
+    app = Parqx([corrupt, missing])
     async with app.run_test() as pilot:
         await wait_for(lambda: app.return_code == 1, pilot)
     assert app.return_code == 1
@@ -179,7 +179,7 @@ async def test_unexpected_metadata_error_finishes_loading_and_keeps_other_source
             threads=2,
         )
 
-    app = ParqxApp([failed, small_parquet])
+    app = Parqx([failed, small_parquet])
     with patch("parqx.tui.app._open_source", open_source):
         async with app.run_test() as pilot:
             await wait_for(
@@ -228,7 +228,7 @@ async def test_pending_windows_and_close_are_isolated_between_sources(
             assert second_release.wait(timeout=15)
         return original_read(source, start, stop)
 
-    app = ParqxApp([first, second])
+    app = Parqx([first, second])
     with (
         patch.object(ParquetSource, "read_window", delayed_read),
         patch.object(app, "notify", wraps=app.notify) as notify,
@@ -308,7 +308,7 @@ async def test_saturated_browsing_pool_keeps_sql_live_and_cancels_closed_queued_
             queued.set()
         return future
 
-    app = ParqxApp(paths)
+    app = Parqx(paths)
     with (
         patch.object(ParquetSource, "read_window", delayed_read),
         patch.object(ThreadPoolExecutor, "submit", track_submit),
@@ -375,7 +375,7 @@ async def test_metadata_pool_is_bounded_and_does_not_block_sql(tmp_path: Path) -
             with lock:
                 active -= 1
 
-    app = ParqxApp(paths, config=ParqxConfig(source_workers=2))
+    app = Parqx(paths, config=ParqxConfig(source_workers=2))
     with patch("parqx.tui.app._open_source", delayed_metadata):
         async with app.run_test(size=(120, 24)) as pilot:
             try:
@@ -430,7 +430,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
         assert query_release.wait(timeout=15)
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet, pending])
+    app = Parqx([small_parquet, pending])
     with (
         patch("parqx.tui.app._open_source", delayed_metadata),
         patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),

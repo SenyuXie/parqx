@@ -53,7 +53,7 @@ class WorkspaceTabs(TabbedContent):
     ALLOW_MAXIMIZE = False
 
 
-class ParqxApp(App[Any]):
+class Parqx(App[Any]):
     """Inspect Parquet files alongside persistent SQL query workspaces."""
 
     CSS = """

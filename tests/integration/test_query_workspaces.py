@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 from textual.widgets import TabbedContent, TextArea
 
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from tests.helpers import confirm_query_close, open_sql_query, select_tab, wait_for
 
 
 async def test_query_palette_opens_independent_blank_workspaces(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
@@ -46,7 +46,7 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
     from parqx.tui.widgets import ArrowTable
     from tests.helpers import open_query
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
@@ -111,7 +111,7 @@ async def test_completion_never_moves_focus_from_another_workspace(
             raise RuntimeError("failed background query")
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
         async with app.run_test(size=(80, 24)) as pilot:
             try:
@@ -165,7 +165,7 @@ async def test_closed_workspace_releases_result_while_table_reference_survives(
 
     from tests.helpers import run_query
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         table = await run_query(app, pilot, "SELECT * FROM smoke")
         data = weakref.ref(table.data)

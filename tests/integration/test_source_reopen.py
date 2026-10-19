@@ -15,7 +15,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
 
 from parqx.data.view import PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
 from tests.helpers import open_query, run_query, select_tab, toggle_sources, wait_for
@@ -30,7 +30,7 @@ async def test_sidebar_activates_and_reopens_one_default_view_per_source(
         path.parent.mkdir()
     pq.write_table(pa.table({"amount": [10, 20, 30]}), first)
     pq.write_table(pa.table({"amount": [40]}), second)
-    app = ParqxApp([first, second, first])
+    app = Parqx([first, second, first])
     async with app.run_test(size=(120, 40)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: len(tabs.query(ArrowTable)) == 2, pilot)
@@ -119,7 +119,7 @@ async def test_reopening_pending_source_shares_load_and_never_resurrects_closed_
             assert release.wait(timeout=15)
         return execute(connection, query, parameters)
 
-    app = ParqxApp([pending, small_parquet])
+    app = Parqx([pending, small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "execute", delayed_metadata):
         async with app.run_test(size=(120, 40)) as pilot:
             try:
@@ -175,7 +175,7 @@ async def test_failed_source_reopens_stored_failure_without_retrying(
 ) -> None:
     failed = small_parquet.with_name("failed.parquet")
     failed.write_text("Not a parquet file", encoding="utf-8")
-    app = ParqxApp([failed, small_parquet])
+    app = Parqx([failed, small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(lambda: app.catalog.get("source-1").state == "failed", pilot)
         tabs = app.query_one(TabbedContent)
@@ -207,7 +207,7 @@ async def test_failed_source_reopens_stored_failure_without_retrying(
 async def test_reopen_failure_preserves_query_draft_and_current_result(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
@@ -252,7 +252,7 @@ async def test_source_reopening_preserves_running_query_owner_and_other_drafts(
         assert release.wait(timeout=15)
         return sql(connection, query)
 
-    app = ParqxApp([small_parquet, other])
+    app = Parqx([small_parquet, other])
     async with app.run_test(size=(120, 40)) as pilot:
         try:
             tabs = app.query_one(TabbedContent)
@@ -308,7 +308,7 @@ async def test_pending_failure_updates_the_explicitly_reopened_view(
             assert release.wait(timeout=15)
         return execute(connection, query, parameters)
 
-    app = ParqxApp([failed, small_parquet])
+    app = Parqx([failed, small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "execute", delayed_metadata):
         async with app.run_test(size=(120, 40)) as pilot:
             try:

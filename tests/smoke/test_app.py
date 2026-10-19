@@ -6,13 +6,13 @@ from textual.coordinate import Coordinate
 from textual.widgets import Button, TabbedContent, TextArea
 
 from parqx.data.view import PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import confirm_query_close, run_query, wait_for
 
 
 async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)

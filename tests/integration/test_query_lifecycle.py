@@ -15,7 +15,7 @@ from textual.worker import Worker, WorkerState
 
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import (
     open_query,
@@ -42,7 +42,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
         assert release.wait(timeout=15)
         return original_sql(connection, sql)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
         async with app.run_test() as pilot:
             try:
@@ -122,7 +122,7 @@ async def test_metadata_completion_cannot_recreate_closed_source_tabs(
             threads=2,
         )
 
-    app = ParqxApp([small_parquet, failed, healthy])
+    app = Parqx([small_parquet, failed, healthy])
     with patch("parqx.tui.app._open_source", delayed_read):
         async with app.run_test() as pilot:
             try:
@@ -158,7 +158,7 @@ async def test_metadata_completion_cannot_recreate_closed_source_tabs(
 async def test_native_failure_unlocks_editor_and_allows_another_query(
     small_parquet: Path, failure: Exception
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
@@ -206,7 +206,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
         if get_ident() in query_thread:
             closed.set()
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with (
         patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
         patch.object(duckdb.DuckDBPyConnection, "close", close),
@@ -236,7 +236,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
 async def test_completed_worker_keeps_workspace_locked_until_message_delivery(
     small_parquet: Path,
 ) -> None:
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)

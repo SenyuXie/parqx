@@ -18,7 +18,7 @@ from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.app import ParqxApp
+from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import open_query, wait_for
 
@@ -195,7 +195,7 @@ async def test_source_reads_bounded_windows_off_ui_thread(tmp_path: Path) -> Non
         reads.append((start, stop))
         return original_read(source, start, stop)
 
-    app = ParqxApp([path])
+    app = Parqx([path])
     with (
         patch(
             "pyarrow.parquet.ParquetFile", side_effect=AssertionError("PyArrow read")
@@ -234,7 +234,7 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
         reads.append((start, stop))
         return original_read(source, start, stop)
 
-    app = ParqxApp([path])
+    app = Parqx([path])
     with patch.object(ParquetSource, "read_window", record_read):
         async with app.run_test(size=(60, 15)) as pilot:
             await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -270,7 +270,7 @@ async def test_pending_source_window_keeps_query_editor_focus(
         release.wait(timeout=5)
         return original_read(source, start, stop)
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with patch.object(ParquetSource, "read_window", delayed_read):
         async with app.run_test() as pilot:
             try:
@@ -304,7 +304,7 @@ async def test_unstarted_page_workers_do_not_leave_unawaited_coroutines(
         reads.append(start)
         return original_read(source, start, stop)
 
-    app = ParqxApp([path])
+    app = Parqx([path])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         table = app.query_one(ArrowTable)
@@ -346,7 +346,7 @@ async def test_window_error_waits_for_navigation_before_retry(
             raise error_type("window temporarily unavailable")
         return original_read(source, start, stop)
 
-    app = ParqxApp([path])
+    app = Parqx([path])
     with (
         patch.object(ParquetSource, "read_window", fail_first_read),
         patch.object(app, "notify", wraps=app.notify) as notify,
@@ -458,7 +458,7 @@ async def test_replacing_source_data_discards_pending_page_and_error(
             raise OSError("obsolete data failed")
         return DataPage(start, pa.table({"obsolete": [99]}))
 
-    app = ParqxApp([small_parquet])
+    app = Parqx([small_parquet])
     with (
         patch.object(ParquetSource, "read_window", delayed_read),
         patch.object(app, "notify", wraps=app.notify) as notify,
