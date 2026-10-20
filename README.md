@@ -2,7 +2,7 @@
 
 Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
 
-![Parqx screenshot](https://github.com/user-attachments/assets/22483918-ae92-40cd-9627-fe024da5c139)
+![Parqx screenshot](https://github.com/user-attachments/assets/ff7d1f08-1f64-4f9d-a22f-c171f8bbf20a)
 
 ## Installation
 
