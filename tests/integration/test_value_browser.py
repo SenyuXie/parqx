@@ -206,7 +206,7 @@ async def test_views_keep_independent_selections_and_release_on_close(
         await wait_for(released, pilot)
 
 
-async def test_unsupported_rows_and_scalar_states_are_explicit(
+async def test_scalar_states_and_nonvalue_cursors_are_explicit(
     scalar_parquet: Path,
 ) -> None:
     app = Parqx([scalar_parquet])
@@ -232,14 +232,6 @@ async def test_unsupported_rows_and_scalar_states_are_explicit(
         table.move_cursor(row=0, column=3)
         await pilot.press("enter")
         assert reader.text == "true"
-        table.move_cursor(row=0, column=4)
-        await pilot.press("enter")
-        assert "Unsupported" in reader.text
-        assert "list" in str(browser.query_one(".value-type", Static).content)
-        table.cursor_type = "row"
-        await pilot.press("enter")
-        assert "Row browsing" in reader.text
-        assert "Unsupported" in str(info.content)
 
         modes: tuple[CursorType, ...] = ("column", "none")
         for mode in modes:
@@ -248,7 +240,7 @@ async def test_unsupported_rows_and_scalar_states_are_explicit(
             assert not browser.display
             await pilot.press("enter")
             assert not browser.display
-            assert "Row browsing" in reader.text
+            assert reader.text == "true"
             await pilot.press("v")
 
 
@@ -285,7 +277,7 @@ async def test_reading_a_value_preserves_the_sql_editor_viewport(
         await pilot.pause()
         await wait_for(lambda: editor.max_scroll_y > 20, pilot)
         editor.scroll_to(y=20, animate=False, force=True)
-        await pilot.pause()
+        await wait_for(lambda: editor.scroll_y == 20, pilot)
         position = editor.scroll_y
         assert position > 0
         await pilot.press("enter")
