@@ -276,10 +276,14 @@ async def test_reading_a_value_preserves_the_sql_editor_viewport(
         editor.load_text("SELECT name FROM smoke" + "\n-- a longer SQL draft" * 30)
         await pilot.pause()
         await wait_for(lambda: editor.max_scroll_y > 20, pilot)
-        editor.scroll_to(y=20, animate=False, force=True)
-        await wait_for(lambda: editor.scroll_y == 20, pilot)
+        # Keep a draft change pending while establishing the inactive viewport.
+        # Its deferred cursor-following must not overwrite the newer position.
+        editor.insert(" ")
+        editor.scroll_to(y=20, animate=False, force=True, immediate=True)
         position = editor.scroll_y
         assert position > 0
+        await pilot.pause()
+        assert editor.scroll_y == position
         await pilot.press("enter")
         assert query.query_one(".value-reader", TextArea).text == "alice"
         assert table.has_focus
