@@ -9,6 +9,25 @@ import pytest
 
 
 @pytest.fixture
+def paged_values_parquet(tmp_path: Path) -> Path:
+    """File values spanning several pages, with nested and scrollable content."""
+    path = tmp_path / "paged_values.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "id": range(600),
+                "profile": [
+                    {"name": f"person {i}", "active": True} for i in range(600)
+                ],
+                "note": [f"row {i}\n" + "read me\n" * 60 for i in range(600)],
+            }
+        ),
+        path,
+    )
+    return path
+
+
+@pytest.fixture
 def encoded_scalar_table() -> pa.Table:
     """Arrow shapes that DuckDB may normalize before they reach the value reader."""
     return pa.table(

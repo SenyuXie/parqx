@@ -1,6 +1,6 @@
 """Read an explicitly selected Arrow value without using table previews."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 import pyarrow as pa
@@ -32,7 +32,13 @@ class BrowseRoot:
     row: int
     column: int | None
     name: str
-    value: pa.Scalar | RowValue
+    value: pa.Scalar | RowValue | None
+
+    @property
+    def label(self) -> str:
+        """Identify the selected row and optional cell without needing its data."""
+        label = f"Row {self.row}"
+        return label if self.column is None else f"{label} · {self.name}"
 
 
 @dataclass
@@ -108,6 +114,7 @@ class ValueBrowser(Vertical):
             &.number { color: $warning; }
             &.boolean { color: $secondary; }
             &.muted { color: $text-muted; }
+            &.error { color: $error; }
         }
         .value-info {
             height: 3; border-top: solid $primary-muted;
@@ -194,14 +201,34 @@ class ValueBrowser(Vertical):
         yield self.info
 
     def select(self, root: BrowseRoot) -> None:
-        """Start a fresh inspection of one available cell or row value."""
+        """Start an explicit inspection, including a value awaiting a source read."""
+        self.clear(empty=False)
         self.root = root
-        label = f"Row {root.row}"
-        if root.column is not None:
-            label += f" · {root.name}"
-        self._frames = [BrowseFrame(label, ValueNode(root.value))]
         self.display = True
+        if root.value is None:
+            self.identity.update(root.label)
+            self.reader.load_text("Loading value…")
+            self.info.update("Reading source")
+            return
+        self._frames = [BrowseFrame(root.label, ValueNode(root.value))]
         self._show_frame(focus=False)
+
+    def resolve(self, root: BrowseRoot, value: pa.Scalar | RowValue) -> None:
+        """Complete only this root, preserving visibility and the user's focus."""
+        if self.root is not root:
+            return
+        self.root = replace(root, value=value)
+        self._frames = [BrowseFrame(root.label, ValueNode(value))]
+        self._show_frame(focus=self.has_focus_within)
+
+    def fail(self, root: BrowseRoot, message: str) -> None:
+        """Keep a failed selection identifiable without presenting stale content."""
+        if self.root is not root:
+            return
+        self.reader.remove_class("muted")
+        self.reader.add_class("error")
+        self.reader.load_text(f"Read error\n{message}")
+        self.info.update("Read error")
 
     def toggle_visibility(self) -> None:
         """Resume the saved viewport after native controls handle being shown."""
@@ -275,7 +302,7 @@ class ValueBrowser(Vertical):
         self._binary_columns = content.bytes_per_line
         self.metadata.update(content.metadata)
         self.metadata.tooltip = Content(str(value.type))
-        self.reader.remove_class("string", "number", "boolean", "muted")
+        self.reader.remove_class("string", "number", "boolean", "muted", "error")
         self.reader.add_class(content.role)
         self.reader.soft_wrap = content.bytes_per_line is None
         self.reader.load_text(content.text)
@@ -445,7 +472,7 @@ class ValueBrowser(Vertical):
         self._binary_columns = None
         self._reader_width = 0
         self.reader.soft_wrap = True
-        self.reader.remove_class("string", "number", "boolean")
+        self.reader.remove_class("string", "number", "boolean", "error")
         self.reader.add_class("muted")
         self.reader.load_text(
             "No rows to inspect."

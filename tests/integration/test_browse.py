@@ -104,7 +104,9 @@ async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -
         assert requests[0].data is data
         assert (requests[0].start_row, requests[0].stop_row) == (0, 256)
         await pilot.press("enter")
-        assert not selected
+        assert len(selected) == 1
+        assert selected[0].value is None
+        assert selected[0].coordinate == Coordinate(0, 0)
         assert len(requests) == 1
 
         # A byte-limited read may supply fewer rows than the requested window.
@@ -116,7 +118,9 @@ async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -
         await pilot.pause()
         assert len(requests) == 2
         await pilot.press("enter")
-        assert selected[-1].value.as_py() == 0
+        value = selected[-1].value
+        assert value is not None
+        assert value.as_py() == 0
 
         table.move_cursor(row=9_000, animate=False)
         await pilot.pause()

@@ -380,19 +380,22 @@ class ArrowTable(ScrollView, can_focus=True):
         """
 
         def __init__(
-            self, arrow_table: ArrowTable, value: pa.Scalar, coordinate: Coordinate
+            self,
+            arrow_table: ArrowTable,
+            value: pa.Scalar | None,
+            coordinate: Coordinate,
         ) -> None:
             """Initialize a cell selected message.
 
             Args:
                 arrow_table: The table that posted the message.
-                value: The value in the selected cell.
+                value: The cached value, or None when the selected cell needs loading.
                 coordinate: The coordinate of the selected cell.
             """
             self.arrow_table = arrow_table
             """The data table."""
-            self.value: pa.Scalar = value
-            """The value in the cell that was selected."""
+            self.value = value
+            """The cached value; a cache miss is distinct from an Arrow null."""
             self.coordinate: Coordinate = coordinate
             """The coordinate of the cell that was selected."""
             self.generation = arrow_table.generation
@@ -2066,7 +2069,7 @@ class ArrowTable(ScrollView, can_focus=True):
             try:
                 value = self.get_cell_at(cursor_coordinate)
             except CellNotLoadedError:
-                return
+                value = None
             self.post_message(
                 ArrowTable.CellSelected(self, value, coordinate=cursor_coordinate)
             )
