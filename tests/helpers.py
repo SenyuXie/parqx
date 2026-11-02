@@ -9,6 +9,7 @@ from textual.command import Command, CommandList, CommandPalette
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, TabbedContent, Tabs
 
+from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.query_workspace import QueryWorkspace
@@ -19,6 +20,17 @@ async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:
     async with asyncio.timeout(5):
         while not predicate():
             await pilot.pause()
+
+
+async def wait_for_source_table(app: Parqx, pilot: Pilot[Any]) -> ArrowTable:
+    """Wait for a single-source app to expose its first loaded cell."""
+    await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+    table = app.query_one(ArrowTable)
+    await wait_for(
+        lambda: isinstance(table.data, PageCache) and table.data.peek(0, 0) is not None,
+        pilot,
+    )
+    return table
 
 
 async def wait_for_query_error(
