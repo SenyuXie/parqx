@@ -74,7 +74,7 @@ class ValueBrowser(Vertical):
         width: 33%; height: 1fr;
         border-left: solid $primary-muted;
         padding: 1 1 0 1; background: $surface;
-        &:focus-within { border-left: solid $accent; }
+        &:focus-within { border-left: solid $primary; }
         .value--key { color: #245a86; }
         .value--string { color: #246d40; }
         .value--number { color: #925112; }
@@ -124,8 +124,7 @@ class ValueBrowser(Vertical):
             & > .option-list--option-hover { background: $primary 10%; }
         }
         &:dark {
-            background: #19232e; border-left: solid #344859;
-            &:focus-within { border-left: solid #86bfc1; }
+            background: #19232e;
             .value--key { color: #91b8de; }
             .value--string { color: #b4cfaa; }
             .value--number { color: #e5c18a; }
