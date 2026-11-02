@@ -170,6 +170,8 @@ class ValueBrowser(Vertical):
         self.options = ValueChildren(classes="value-children")
         self._render_width = 0
         self._render_styles: dict[str, Style] = {}
+        self._reader_width = 0
+        self._binary_columns: int | None = None
         self.options.display = False
         self.reader = TextArea(
             read_only=True,
@@ -268,11 +270,14 @@ class ValueBrowser(Vertical):
             self._show_frame(focus=True)
 
     def _show_scalar(self, value: pa.Scalar) -> None:
-        content = read_scalar(value)
+        self._reader_width = self._scalar_width()
+        content = read_scalar(value, width=self._reader_width)
+        self._binary_columns = content.bytes_per_line
         self.metadata.update(content.metadata)
-        self.metadata.tooltip = Content(content.metadata)
+        self.metadata.tooltip = Content(str(value.type))
         self.reader.remove_class("string", "number", "boolean", "muted")
         self.reader.add_class(content.role)
+        self.reader.soft_wrap = content.bytes_per_line is None
         self.reader.load_text(content.text)
         self.reader.scroll_to(x=0, y=0, animate=False, force=True)
         self.info.update(content.info)
@@ -299,8 +304,13 @@ class ValueBrowser(Vertical):
         # The browser keeps its width when the child list is hidden for a scalar.
         return max(20, self.content_size.width - 2)
 
+    def _scalar_width(self) -> int:
+        # The browser is measurable even when switching from a container to text.
+        # Reserve the scrollbar and TextArea's extra end-of-line cell as well.
+        return max(1, self.content_size.width - self.reader.styles.gutter.width - 3)
+
     def on_resize(self) -> None:
-        """Reflow previews at their new terminal width while retaining position."""
+        """Reflow previews and binary rows while retaining the reading position."""
         self.call_after_refresh(self._reflow)
 
     def notify_style_update(self) -> None:
@@ -310,20 +320,25 @@ class ValueBrowser(Vertical):
             self.call_after_refresh(self._reflow)
 
     def _reflow(self) -> None:
-        if (
-            self.display
-            and self.is_mounted
-            and self._frames
-            and self._frames[-1].node.is_container
-            and (
+        if not (self.display and self.is_mounted and self._frames):
+            return
+        frame = self._frames[-1]
+        if frame.node.is_container:
+            if (
                 self._body_width() != self._render_width
                 or self._preview_styles() != self._render_styles
-            )
+            ):
+                frame.scroll = self.options.scroll_y
+                self._show_children(frame)
+                self.options.scroll_to(y=frame.scroll, animate=False, force=True)
+        elif (
+            self._binary_columns is not None
+            and self._scalar_width() != self._reader_width
         ):
-            frame = self._frames[-1]
-            frame.scroll = self.options.scroll_y
-            self._show_children(frame)
-            self.options.scroll_to(y=frame.scroll, animate=False, force=True)
+            byte_offset = int(self.reader.scroll_y) * self._binary_columns
+            self._show_scalar(frame.node.scalar)
+            frame.scroll = byte_offset // self._binary_columns
+            self.reader.call_after_refresh(self._restore_position, frame)
 
     def _show_children(self, frame: BrowseFrame) -> None:
         self._render_width = self._body_width()
@@ -427,6 +442,9 @@ class ValueBrowser(Vertical):
         self.identity.tooltip = None
         self.metadata.update("")
         self.metadata.tooltip = None
+        self._binary_columns = None
+        self._reader_width = 0
+        self.reader.soft_wrap = True
         self.reader.remove_class("string", "number", "boolean")
         self.reader.add_class("muted")
         self.reader.load_text(
