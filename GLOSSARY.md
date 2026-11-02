@@ -1,14 +1,23 @@
 # Parqx
 
-Parqx 是用于检查 Parquet 文件并通过 SQL 探索数据的终端应用。
+Parqx is a terminal application for inspecting Parquet files and exploring data through SQL.
 
 ## Language
 
-**查询工作区（Query workspace）**：
-将一份 SQL 文本与对应查询结果放在一起，供用户反复编辑、执行和检查的工作区域。多个查询工作区相互独立。
+**Query workspace**:
+A workspace that pairs SQL text with its query result for repeated editing, execution, and inspection. Each query workspace is independent.
 
-**SQL 草稿（SQL draft）**：
-查询工作区中当前可编辑的 SQL 文本，可能与产生当前结果的 SQL 不同。
+**SQL draft**:
+The editable SQL text in a query workspace. It may differ from the SQL that produced the current result.
 
-**当前结果（Current result）**：
-查询工作区最近一次成功执行得到的数据。修改 SQL 草稿或后续执行失败不会改变这份数据，成功返回零行则得到一份新的空结果。
+**Current result**:
+The data from a query workspace's most recent successful execution. Editing the SQL draft or a subsequent execution failure preserves this data; a successful execution returning zero rows replaces it with an empty result.
+
+**Row value**:
+A table row treated as a special Struct value whose fields correspond to the row's columns. Row values and cell values share the same value browsing model.
+
+**Browse root**:
+A cell value or row value explicitly selected as the starting point for value browsing. It may differ from the value currently under the table cursor.
+
+**Browse path**:
+The sequence of fields or elements traversed from the browse root to the value currently being inspected.

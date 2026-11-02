@@ -395,6 +395,8 @@ class ArrowTable(ScrollView, can_focus=True):
             """The value in the cell that was selected."""
             self.coordinate: Coordinate = coordinate
             """The coordinate of the cell that was selected."""
+            self.generation = arrow_table.generation
+            """Data generation at confirmation, for rejecting stale messages."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -458,6 +460,8 @@ class ArrowTable(ScrollView, can_focus=True):
             """The data table."""
             self.cursor_row: int = cursor_row
             """The y-coordinate of the cursor that made the selection."""
+            self.generation = arrow_table.generation
+            """Data generation at confirmation, for rejecting stale messages."""
             super().__init__()
 
         def __rich_repr__(self) -> rich.repr.Result:
@@ -697,6 +701,8 @@ class ArrowTable(ScrollView, can_focus=True):
         in the event where a cell contains a renderable with a background color."""
         self.cursor_type = cursor_type
         """The type of the cursor of the `ArrowTable`."""
+        self.generation = 0
+        """Data replacement counter used to identify explicit selections."""
         self.cell_padding = cell_padding
         """Horizontal padding between cells, applied on each side of each cell."""
 
@@ -962,6 +968,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def replace_data(self, data: pa.Table | PageCache) -> None:
         """Replace the data view and discard old windows, requests, and rendering."""
+        self.generation += 1
         self.data = data
         self._missing_rows.clear()
         self._requested_window = None
@@ -1923,12 +1930,9 @@ class ArrowTable(ScrollView, can_focus=True):
         elif is_row_index_click:
             self.post_message(ArrowTable.RowIndexSelected(self, row_index))
         elif self.show_cursor and self.cursor_type != "none":
-            # Only post selection events if there is a visible row/col/cell cursor.
+            # Mouse input positions the cursor; only Enter confirms a selection.
             new_coordinate = Coordinate(row_index, column_index)
-            highlight_click = new_coordinate == self.cursor_coordinate
             self.cursor_coordinate = new_coordinate
-            if highlight_click:
-                self._post_selected_message()
             self._scroll_cursor_into_view(animate=True)
             event.stop()
 
@@ -2056,7 +2060,7 @@ class ArrowTable(ScrollView, can_focus=True):
         """Post the appropriate message for a selection based on the `cursor_type`."""
         cursor_coordinate = self.cursor_coordinate
         cursor_type = self.cursor_type
-        if self.row_count == 0:
+        if not self.is_valid_coordinate(cursor_coordinate):
             return
         if cursor_type == "cell":
             try:

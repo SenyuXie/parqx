@@ -19,6 +19,7 @@ from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import PageCache
 from parqx.tui.widgets.arrow_table import ArrowTable
+from parqx.tui.widgets.table_view import TableView
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ class TablePane(TabPane):
     DEFAULT_CSS = """
     TablePane {
         height: 1fr;
-        & > ArrowTable { height: 1fr; }
         & > .source-error {
             width: 1fr;
             height: 1fr;
@@ -79,13 +79,14 @@ class TablePane(TabPane):
             self.loading = True
         else:
             self.table = ArrowTable(data)
+        self.view = TableView(self.table) if self.table is not None else None
         self._error = Static("", classes="source-error", markup=False)
         self._error.display = False
 
     def compose(self) -> ComposeResult:
         """Yield available data and the source error placeholder."""
-        if self.table is not None:
-            yield self.table
+        if self.view is not None:
+            yield self.view
         yield self._error
 
     async def set_source(self, source: ParquetSource) -> None:
@@ -98,11 +99,12 @@ class TablePane(TabPane):
         data = PageCache(
             source.schema, source.row_count, cache_bytes=self._config.page_cache_bytes
         )
-        if self.table is None:
+        if self.view is None:
             self.table = ArrowTable(data)
-            await self.mount(self.table)
+            self.view = TableView(self.table)
+            await self.mount(self.view)
         else:
-            self.table.replace_data(data)
+            self.view.replace_data(data)
         self.loading = False
 
     def show_error(self, issue: SourceIssue) -> None:

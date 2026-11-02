@@ -1,6 +1,7 @@
 """Persistent SQL authoring and its latest successful result."""
 
 import pyarrow as pa
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
@@ -8,6 +9,7 @@ from textual.widgets import Button, TabPane, TextArea
 
 from parqx.query.engine import QueryResult
 from parqx.tui.widgets.arrow_table import ArrowTable
+from parqx.tui.widgets.table_view import TableView
 
 
 class QueryWorkspace(TabPane):
@@ -16,9 +18,6 @@ class QueryWorkspace(TabPane):
     DEFAULT_CSS = """
     QueryWorkspace {
         height: 1fr;
-        & > ArrowTable {
-            height: 1fr;
-        }
         .query-actions {
             height: 1;
             padding: 0 1;
@@ -47,6 +46,7 @@ class QueryWorkspace(TabPane):
         )
         self.current_result: QueryResult | None = None
         self.table: ArrowTable | None = None
+        self.view: TableView | None = None
 
     def compose(self) -> ComposeResult:
         """Yield the persistent SQL editor."""
@@ -72,7 +72,8 @@ class QueryWorkspace(TabPane):
             "1fr" if self.screen.maximized is self.editor else height
         )
 
-    def on_text_area_changed(self) -> None:
+    @on(TextArea.Changed, ".sql-draft")
+    def _on_draft_changed(self) -> None:
         """Scroll after the editor has recalculated its multiline extent."""
         self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
         self._update_run_button()
@@ -94,11 +95,12 @@ class QueryWorkspace(TabPane):
 
     async def show_result(self, result: QueryResult) -> None:
         """Replace data and schema without moving focus or creating another tab."""
-        if self.table is None:
+        if self.view is None:
             self.table = ArrowTable(result.table)
-            await self.mount(self.table)
+            self.view = TableView(self.table)
+            await self.mount(self.view)
         else:
-            self.table.replace_data(result.table)
+            self.view.replace_data(result.table)
         self.current_result = result
 
     def _update_run_button(self) -> None:

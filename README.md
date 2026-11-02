@@ -53,25 +53,7 @@ These display shortcuts apply while a table has focus.
 | `i` | Toggle the row-index column                    |
 | `z` | Toggle zebra striping                          |
 | `c` | Cycle cursor type (cell → row → column → none) |
-
-### SQL query
-
-| Key                  | Action                       |
-| ---                  | ---                          |
-| `ctrl+p` → **Query** | Open a blank query workspace |
-| `ctrl+enter`         | Run the complete SQL query   |
-| `enter`              | Insert a newline             |
-| `tab`                | Indent                       |
-| `shift+tab`          | Move focus backward          |
-| `escape`             | Restore a maximized panel    |
-
-### Sources
-
-| Key                    | Action                         |
-| ---                    | ---                            |
-| `ctrl+p` → **Sources** | Show or hide files and schemas |
-| `←` / `→`              | Collapse or expand a tree item |
-| `enter`                | Open the selected file tab     |
+| `v` | TODO                                           |
 
 ## License
 

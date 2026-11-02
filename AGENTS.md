@@ -1,3 +1,7 @@
+## Documentation language
+
+Write all documentation in English, including READMEs, `GLOSSARY.md`, ADRs, and agent instructions.
+
 ## Agent skills
 
 ### Issue tracker
