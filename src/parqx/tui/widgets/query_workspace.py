@@ -61,7 +61,12 @@ class QueryWorkspace(TabPane):
     def on_resize(self) -> None:
         """Adapt the editor allocation while leaving room for the button and results."""
         self._apply_editor_layout()
-        self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
+        self.editor.call_after_refresh(self._scroll_focused_editor_cursor)
+
+    def _scroll_focused_editor_cursor(self) -> None:
+        """Check focus when a deferred cursor-following request actually runs."""
+        if self.editor.has_focus:
+            self.editor.scroll_cursor_visible()
 
     def _apply_editor_layout(self) -> None:
         if not self.size.height:
@@ -75,7 +80,7 @@ class QueryWorkspace(TabPane):
     @on(TextArea.Changed, ".sql-draft")
     def _on_draft_changed(self) -> None:
         """Scroll after the editor has recalculated its multiline extent."""
-        self.editor.call_after_refresh(self.editor.scroll_cursor_visible)
+        self.editor.call_after_refresh(self._scroll_focused_editor_cursor)
         self._update_run_button()
 
     @property
