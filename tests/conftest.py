@@ -1,10 +1,64 @@
 """Shared test fixtures."""
 
+from decimal import Decimal
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+
+
+@pytest.fixture
+def encoded_scalar_table() -> pa.Table:
+    """Arrow shapes that DuckDB may normalize before they reach the value reader."""
+    return pa.table(
+        {
+            "encoded": pa.DictionaryArray.from_arrays(
+                pa.array([0], pa.int8()),
+                pa.array(
+                    ['{"literal": "[bold]中文[/bold]"}\n'], pa.json_(pa.large_string())
+                ),
+            ),
+            "precise": pa.array(
+                [{"when": 123456789, "elapsed": -123456789}],
+                pa.struct(
+                    {"when": pa.timestamp("ns", "UTC"), "elapsed": pa.duration("ns")}
+                ),
+            ),
+            "identifier": pa.array([bytes(range(16))], pa.uuid()),
+            "bytes": pa.DictionaryArray.from_arrays(
+                pa.array([0], pa.int8()), pa.array([b"\x00A~\xff\nZ"], pa.binary_view())
+            ),
+        }
+    )
+
+
+@pytest.fixture
+def typed_scalars_parquet(tmp_path: Path) -> Path:
+    """Precise scalars and ordinary binary content for both production readers."""
+    path = tmp_path / "typed_scalars.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "amount": pa.array(
+                    [Decimal("12345678901234567890.1200"), Decimal("0.0000"), None],
+                    pa.decimal128(28, 4),
+                ),
+                "measured": [-0.0, float("inf"), None],
+                "recorded": pa.array(
+                    [1704067200123456789, -1, None], pa.timestamp("ns", "UTC")
+                ),
+                "payload": [bytes(range(256)) * 4 + b"END", b"", None],
+                "note": [
+                    '  [bold]literal[/bold] 中文 👋\n{"keep": "text"}\t  ',
+                    "",
+                    None,
+                ],
+            }
+        ),
+        path,
+    )
+    return path
 
 
 @pytest.fixture
