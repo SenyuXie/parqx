@@ -28,7 +28,7 @@ class ValueBrowser(Vertical):
 
     DEFAULT_CSS = """
     ValueBrowser {
-        width: 36%; height: 1fr;
+        width: 33%; height: 1fr;
         border-left: solid $primary-muted;
         padding: 1 1 0 1; background: $surface;
         &:focus-within { border-left: solid $accent; }

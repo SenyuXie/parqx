@@ -49,7 +49,7 @@ async def test_enter_reads_complete_cell_without_following_cursor(
         assert table.has_focus
         assert reader.text == "[bold]literal[/bold] 中文 👋\n" + "read me\n" * 60
         assert browser.region.width == pytest.approx(
-            table.parent.region.width * 0.36, abs=1
+            table.parent.region.width * 0.33, abs=1
         )
         assert browser.region.y == table.region.y
         assert browser.region.height == table.region.height
