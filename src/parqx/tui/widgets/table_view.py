@@ -7,9 +7,11 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
+from textual.coordinate import Coordinate
 
 from parqx.data.view import PageCache
-from parqx.tui.widgets.arrow_table import ArrowTable
+from parqx.tui.value_node import RowValue
+from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
 from parqx.tui.widgets.value_browser import BrowseRoot, ValueBrowser
 
 
@@ -18,7 +20,8 @@ class TableView(Horizontal):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("v", "toggle_browser", "Value"),
-        Binding("escape,backspace", "return_to_table", show=False, priority=True),
+        Binding("escape", "return_to_table", show=False, priority=True),
+        Binding("backspace", "browse_parent", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -43,7 +46,7 @@ class TableView(Horizontal):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Apply reader keys only within this table's own focus region."""
-        if action == "return_to_table":
+        if action in {"return_to_table", "browse_parent"}:
             return self.browser.has_focus_within
         return super().check_action(action, parameters)
 
@@ -51,11 +54,16 @@ class TableView(Horizontal):
         """Hide or resume the selected root without sampling the cursor."""
         if self.browser.has_focus_within:
             self.table.focus()
-        self.browser.display = not self.browser.display
+        self.browser.toggle_visibility()
 
     def action_return_to_table(self) -> None:
         """Leave the root reader open while returning to the table."""
         self.table.focus()
+
+    def action_browse_parent(self) -> None:
+        """Return to the parent value, or to the table when at the root."""
+        if not self.browser.back():
+            self.table.focus()
 
     @on(ArrowTable.CellSelected)
     def _select_cell(self, event: ArrowTable.CellSelected) -> None:
@@ -83,7 +91,26 @@ class TableView(Horizontal):
     def _select_row(self, event: ArrowTable.RowSelected) -> None:
         event.stop()
         if event.control is self.table and event.generation == self.table.generation:
-            self.browser.show_unsupported_row(event.cursor_row, self.table.column_count)
+            try:
+                fields = tuple(
+                    (
+                        field.name,
+                        self.table.get_cell_at(Coordinate(event.cursor_row, column)),
+                    )
+                    for column, field in enumerate(self.table.data.schema)
+                )
+            except CellNotLoadedError:
+                return
+            self.browser.select(
+                BrowseRoot(
+                    self._identity,
+                    event.generation,
+                    event.cursor_row,
+                    None,
+                    "",
+                    RowValue(fields),
+                )
+            )
 
     def on_unmount(self) -> None:
         """Release retained scalar buffers even if the view remains referenced."""

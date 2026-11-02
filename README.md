@@ -31,17 +31,17 @@ parqx data/*.parquet
 
 ### Navigation
 
-| Key                   | Action                        |
-| ---                   | ---                           |
-| `↑` / `↓`             | Move the cursor up or down    |
-| `←` / `→`             | Move the cursor left or right |
-| `pageUp` / `pageDown` | Move one page up or down      |
-| `home`                | Move to the leftmost column   |
-| `end`                 | Move to the rightmost column  |
-| `ctrl+home`           | Move to the first row         |
-| `ctrl+end`            | Move to the last row          |
-| `enter`               | Select the current cell       |
-| `ctrl+w`              | Close the current tab         |
+| Key                   | Action                          |
+| ---                   | ---                             |
+| `↑` / `↓`             | Move the cursor up or down      |
+| `←` / `→`             | Move the cursor left or right   |
+| `pageUp` / `pageDown` | Move one page up or down        |
+| `home`                | Move to the leftmost column     |
+| `end`                 | Move to the rightmost column    |
+| `ctrl+home`           | Move to the first row           |
+| `ctrl+end`            | Move to the last row            |
+| `enter`               | Inspect the current cell or row |
+| `ctrl+w`              | Close the current tab           |
 
 ### Table View
 
@@ -53,7 +53,20 @@ These display shortcuts apply while a table has focus.
 | `i` | Toggle the row-index column                    |
 | `z` | Toggle zebra striping                          |
 | `c` | Cycle cursor type (cell → row → column → none) |
-| `v` | TODO                                           |
+| `v` | Show or hide the selected value sidebar        |
+
+### Value browser
+
+Press `tab` from the table to focus the open sidebar.
+
+| Key                   | Action                               |
+| ---                   | ---                                  |
+| `↑` / `↓`             | Select the previous or next item     |
+| `home` / `end`        | Select the first or last item        |
+| `pageUp` / `pageDown` | Move one page up or down             |
+| `enter`               | Open the selected item               |
+| `backspace`           | Return to the parent (table at root) |
+| `esc`                 | Return focus to the table            |
 
 ## License
 
