@@ -13,11 +13,12 @@ wheel/sdist smoke tests, stopping at the first failure. Package checks use
 artifacts cannot affect the result.
 
 For one CI job, replace `check` with `lint`, `typecheck`, `full`, `core`, or
-`package`. `full` runs all tests; `core` runs unit and smoke tests. `typecheck`
-covers application code, tests, and helper scripts. These tasks keep a fixed
-scope and do not forward extra CLI arguments to the check commands. Poe and the
-project checks use the locked development environment. Run `check` before
-publishing even when focused checks were sufficient during development.
+`package`. By default, `full` runs all tests and `core` runs unit and smoke
+tests. Both accept additional pytest arguments, for example
+`uv run --locked poe full -k value_browser`. `typecheck` covers application code,
+tests, and helper scripts. Poe and the project checks use the locked development
+environment. Run `check` before publishing even when focused checks were
+sufficient during development.
 
 Each behavior belongs at the lowest layer that can verify it:
 

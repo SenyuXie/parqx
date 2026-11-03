@@ -46,7 +46,6 @@ mypy_path = "typings"
 type = "uv"
 locked = true
 
-# Sequences keep extra CLI arguments from changing the checks' fixed scope.
 [tool.poe.tasks.check]
 help = "Run all checks used by CI"
 sequence = ["lint", "typecheck", "full", "package"]
@@ -63,18 +62,15 @@ sequence = ["mypy src tests scripts", "pyright"]
 
 [tool.poe.tasks.full]
 help = "Run the full test suite"
-default_item_type = "cmd"
-sequence = ["pytest -q tests"]
+cmd = "pytest -q tests"
 
 [tool.poe.tasks.core]
 help = "Run unit and smoke tests for the compatibility matrix"
-default_item_type = "cmd"
-sequence = ["pytest -q tests/unit tests/smoke"]
+cmd = "pytest -q tests/unit tests/smoke"
 
 [tool.poe.tasks.package]
 help = "Build and smoke-test fresh wheel and sdist installations"
-default_item_type = "cmd"
-sequence = ["python scripts/check_package.py"]
+cmd = "python scripts/check_package.py"
 
 [tool.pyright]
 typeCheckingMode = "strict"
