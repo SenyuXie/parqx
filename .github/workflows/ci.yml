@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check distributions
-        run: uv run --locked python scripts/check.py package
+        run: uv run --locked poe package
 
   lint:
     name: Lint
@@ -36,7 +36,7 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - name: Check lint and formatting
-        run: uv run --locked python scripts/check.py lint
+        run: uv run --locked poe lint
 
   typecheck:
     name: "Type check"
@@ -50,7 +50,7 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - name: Check types
-        run: uv run --locked python scripts/check.py typecheck
+        run: uv run --locked poe typecheck
 
   test:
     name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }} / ${{ matrix.suite }})
@@ -82,4 +82,4 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - name: Check tests
-        run: uv run --locked python scripts/check.py ${{ matrix.suite }}
+        run: uv run --locked poe ${{ matrix.suite }}
