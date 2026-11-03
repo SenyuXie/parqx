@@ -25,6 +25,7 @@ parqx = "parqx.cli:app"
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
+    "poethepoet>=0.49.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
@@ -40,6 +41,36 @@ build-backend = "uv_build"
 strict = true
 python_version = "3.12"
 mypy_path = "typings"
+
+[tool.poe.executor]
+type = "uv"
+locked = true
+
+[tool.poe.tasks.check]
+help = "Run all checks used by CI"
+sequence = ["lint", "typecheck", "full", "package"]
+
+[tool.poe.tasks.lint]
+help = "Check lint and formatting"
+default_item_type = "cmd"
+sequence = ["ruff check", "ruff format --check"]
+
+[tool.poe.tasks.typecheck]
+help = "Type-check application code, tests, and helper scripts"
+default_item_type = "cmd"
+sequence = ["mypy src tests scripts", "pyright"]
+
+[tool.poe.tasks.full]
+help = "Run the full test suite"
+cmd = "pytest -q tests"
+
+[tool.poe.tasks.core]
+help = "Run unit and smoke tests for the compatibility matrix"
+cmd = "pytest -q tests/unit tests/smoke"
+
+[tool.poe.tasks.package]
+help = "Build and smoke-test fresh wheel and sdist installations"
+cmd = "python scripts/check_package.py"
 
 [tool.pyright]
 typeCheckingMode = "strict"

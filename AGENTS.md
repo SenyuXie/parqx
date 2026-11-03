@@ -15,3 +15,7 @@ Use the five default triage labels. Before applying or interpreting triage label
 ### Domain docs
 
 Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`. Before exploring the codebase or recording domain terms and decisions, read `docs/agents/domain.md`.
+
+## Validation
+
+Before validating changes or publishing a PR, read `tests/README.md`.

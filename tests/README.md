@@ -1,7 +1,26 @@
 # Tests
 
-Run the complete suite with `uv run pytest -q`. Each behavior belongs at the
-lowest layer that can verify it:
+Before publishing changes, run the same checks as CI from the repository root:
+
+```sh
+uv run --locked poe check
+```
+
+Poe tasks in `pyproject.toml` define the commands shared with CI. `check` runs
+lint/format checks, both type checkers, the full test suite, and isolated
+wheel/sdist smoke tests, stopping at the first failure. Package checks use
+`scripts/check_package.py` to build into a temporary directory so previous
+artifacts cannot affect the result.
+
+For one CI job, replace `check` with `lint`, `typecheck`, `full`, `core`, or
+`package`. By default, `full` runs all tests and `core` runs unit and smoke
+tests. Both accept additional pytest arguments, for example
+`uv run --locked poe full -k value_browser`. `typecheck` covers application code,
+tests, and helper scripts. Poe and the project checks use the locked development
+environment. Run `check` before publishing even when focused checks were
+sufficient during development.
+
+Each behavior belongs at the lowest layer that can verify it:
 
 | Directory | Responsibility | CI coverage |
 | --- | --- | --- |
@@ -9,10 +28,6 @@ lowest layer that can verify it:
 | `integration/` | Mounted Textual widgets, multi-file workflows, input/focus, background reads and query lifecycle races | Linux / Python 3.12 |
 | `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
-
-Before publishing changes, match CI's type-checking scope with
-`uv run mypy src tests` and `uv run pyright`. Both commands cover the application
-and its tests, including the repository's Arrow stubs.
 
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes
 one instance to its components; native data helpers receive explicit settings.
@@ -60,18 +75,13 @@ through the real app, delaying `index_document` with events when a race matters.
 
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and
 Windows on Python 3.12. Detailed UI scenarios run once; the other jobs run
-`uv run pytest -q tests/unit tests/smoke`. This checks both operating-system and
+`uv run --locked poe core`. This checks operating-system and
 Python-version compatibility without repeating the full UI suite for every pair.
 
 For focused work, run `uv run pytest -q tests/unit` or
 `uv run pytest -q tests/integration`. Add `--durations=15` to inspect expensive
-scenarios. Package checks run separately against built artifacts:
-
-```sh
-uv build
-uv run --isolated --no-project --with dist/*.whl tests/distribution/check_install.py
-uv run --isolated --no-project --with dist/*.tar.gz tests/distribution/check_install.py
-```
+scenarios. Use `uv run --locked poe package` to repeat the
+isolated distribution checks.
 
 Keep fixtures in `conftest.py` and shared UI actions in `helpers.py`; test modules
 must not import other test modules. Each UI test owns its application and uses
