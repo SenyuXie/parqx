@@ -19,9 +19,8 @@ class ScalarContent:
     bytes_per_line: int | None = None
 
 
-def read_scalar(value: pa.Scalar, *, width: int = 80) -> ScalarContent:
-    """Preserve supported values; never pass an unknown conversion off as complete."""
-    complete = "Complete value\nRead only"
+def scalar_leaf(value: pa.Scalar) -> tuple[pa.Scalar, str]:
+    """Unwrap encoded leaves without materializing their content."""
     wrappers: list[str] = []
     while (
         isinstance(value, (pa.DictionaryScalar, pa.UnionScalar, pa.JsonScalar))
@@ -35,12 +34,20 @@ def read_scalar(value: pa.Scalar, *, width: int = 80) -> ScalarContent:
             wrappers.append("json")
         member = value.value
         if member is None:
-            return ScalarContent("null", str(value.type), "Null value", "muted")
+            break
         value = member
     data_type = value.type
     metadata = str(data_type)
     if wrappers:
         metadata += " · " + " → ".join(wrappers)
+    return value, metadata
+
+
+def read_scalar(value: pa.Scalar, *, width: int = 80) -> ScalarContent:
+    """Preserve supported values; never pass an unknown conversion off as complete."""
+    complete = "Complete value\nRead only"
+    value, metadata = scalar_leaf(value)
+    data_type = value.type
     if not value.is_valid:
         return ScalarContent("null", metadata, "Null value", "muted")
     if (

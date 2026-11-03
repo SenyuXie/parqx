@@ -13,7 +13,7 @@ from rich.style import Style, StyleType
 from rich.text import Text
 
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.scalar_value import read_scalar
+from parqx.tui.scalar_value import scalar_leaf
 
 _COLORS: Mapping[str, StyleType] = {
     "key": "#91b8de",
@@ -120,19 +120,66 @@ class ValueNode:
     def metadata(self) -> str:
         """Compact type and size information, separate from rendered content."""
         if not self.is_container:
-            return read_scalar(self.scalar).metadata
+            value, metadata = scalar_leaf(self.scalar)
+            if value.is_valid and isinstance(
+                value,
+                (
+                    pa.BinaryScalar,
+                    pa.LargeBinaryScalar,
+                    pa.FixedSizeBinaryScalar,
+                    pa.BinaryViewScalar,
+                ),
+            ):
+                metadata += f" · {len(value.as_buffer()):,} bytes"
+            return metadata
         if isinstance(self.value, RowValue):
             name = "row · struct"
         elif self._entry:
             name = "entry · struct"
         else:
-            name = self.type_description.split("<", 1)[0]
+            name = self.kind or "struct"
+            if isinstance(self._actual, pa.LargeListScalar):
+                name = "large_list"
+            elif isinstance(self._actual, pa.FixedSizeListScalar):
+                name = "fixed_size_list"
             if isinstance(self.value, (pa.DictionaryScalar, pa.UnionScalar)):
-                name += f" → {self.kind}"
+                name = (
+                    "dictionary"
+                    if isinstance(self.value, pa.DictionaryScalar)
+                    else "union"
+                ) + f" → {self.kind}"
         unit = {"struct": "fields", "list": "items", "map": "entries"}[
             self.kind or "struct"
         ]
         return f"{name} · {self.child_count:,} {unit}"
+
+    def child_name(self, index: int) -> str:
+        """Read only a child's identity, without fetching or formatting its value."""
+        actual = self._actual
+        if not 0 <= index < self.child_count:
+            raise IndexError(index)
+        if isinstance(actual, RowValue):
+            return actual.fields[index][0]
+        if isinstance(actual, pa.StructScalar):
+            return (
+                ("key", "value")[index]
+                if self._entry
+                else actual.type.field(index).name
+            )
+        return f"[{index}]"
+
+    def child_height(self, index: int, width: int) -> int:
+        """Measure the bounded label without rendering a child's preview."""
+        if self.kind != "struct":
+            return 1
+        _, continuation = self._field_label(index, width)
+        return 1 + continuation
+
+    def _field_label(self, index: int, width: int) -> tuple[str, bool]:
+        width = max(20, width)
+        label = _quoted(self.child_name(index), width - 6)
+        continuation = cell_len(label) + 18 + (index + 1 < self.child_count) > width
+        return label, continuation
 
     def child(self, index: int) -> tuple[str, ValueNode]:
         """Read a child by position, preserving duplicate names and Map entries."""
@@ -251,16 +298,20 @@ class ValueNode:
         if self.kind in {"list", "map"}:
             result.append(f"{index:>3}  ", palette["muted"])
         else:
-            label = _quoted(name, width - 6)
+            label, continuation = self._field_label(index, width)
             result.append(label, palette["key"])
             result.append(": ", palette["muted"])
-            if result.cell_len + 12 + comma > width:
+            if continuation:
                 result.append("\n      ")
         line_width = result.split("\n")[-1].cell_len
         result.append_text(child.preview(width - line_width - comma, styles=palette))
         if comma:
             result.append(",", palette["muted"])
         result.stylize(
-            Style(meta={"value_tooltip": f"{name}\n{child.type_description}"})
+            Style(
+                meta={
+                    "value_tooltip": f"{name}\n{child.metadata if child.is_container else child.type_description}"
+                }
+            )
         )
         return result

@@ -78,6 +78,8 @@ class Buffer:
     def slice(self, offset: int = 0, length: int | None = None) -> Self: ...
     def to_pybytes(self) -> bytes: ...
 
+def py_buffer(obj: bytes) -> Buffer: ...
+
 class BinaryScalar(Scalar):
     def as_buffer(self) -> Buffer: ...
 
@@ -202,6 +204,15 @@ class MapArray(Array):
     def values(self) -> StructArray: ...
 
 class StructArray(Array):
+    @staticmethod
+    def from_arrays(
+        arrays: Sequence[Array],
+        names: Sequence[str] | None = None,
+        fields: Sequence[Field] | None = None,
+        mask: Array | None = None,
+        memory_pool: MemoryPool | None = None,
+        type: StructType | None = None,
+    ) -> StructArray: ...
     def field(self, index: int | str) -> Array: ...
 
 class ChunkedArray:
