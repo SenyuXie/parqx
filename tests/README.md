@@ -41,6 +41,19 @@ Native reads finish naturally after UI exit, with no interrupt or shutdown
 deadline. Cover these ownership and lifecycle boundaries in integration
 tests, using events to coordinate native reads.
 
+`value_document` indexes direct-child positions and wrapped UTF-8 text in bounded
+batches bounded by source bytes as well as visual rows. Oversized combining
+sequences continue across visual rows without truncating the raw Unicode; terminal
+controls are displayed as visible escapes. Binary rows are addressed directly in
+the retained Arrow buffer. Only
+compact offsets and the current decoded text page are retained; no formatted
+history or child widgets are allocated for every value. Check complete content,
+Unicode boundaries and allocation bounds here. `ValueChildren` and `ScalarReader`
+use Textual's line rendering API for the visible viewport. Their owning browser
+preserves selection and pending source positions, while cancellable index workers pause
+when hidden and reject results for replaced documents. Exercise those lifecycles
+through the real app, delaying `index_document` with events when a race matters.
+
 The compatibility matrix covers Linux on Python 3.12 and 3.13, plus macOS and
 Windows on Python 3.12. Detailed UI scenarios run once; the other jobs run
 `uv run pytest -q tests/unit tests/smoke`. This checks both operating-system and

@@ -4,12 +4,14 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from textual.widgets import Button, OptionList, Static, TabbedContent, TextArea
+from textual.widgets import Button, Static, TabbedContent
 
 from parqx.query.engine import QueryResult
 from parqx.tui.app import Parqx
 from parqx.tui.widgets.query_workspace import QueryWorkspace
+from parqx.tui.widgets.scalar_reader import ScalarReader
 from parqx.tui.widgets.value_browser import ValueBrowser
+from parqx.tui.widgets.value_children import ValueChildren
 from tests.helpers import open_query, run_query, wait_for, wait_for_source_table
 
 
@@ -29,7 +31,7 @@ async def test_row_struct_and_scalar_share_one_browser(
         await pilot.press("enter")
         assert browser.display
         assert table.has_focus
-        options = browser.query_one(OptionList)
+        options = browser.query_one(ValueChildren)
         assert options.option_count == 18  # Sixteen columns and two delimiters.
         assert "extra_11" in str(options.get_option_at_index(16).prompt)
         assert "16 fields" in str(browser.query_one(".value-type", Static).content)
@@ -45,7 +47,7 @@ async def test_row_struct_and_scalar_share_one_browser(
         }
         assert len(backgrounds) == 1
         await pilot.press("enter")
-        reader = browser.query_one(TextArea)
+        reader = browser.query_one(ScalarReader)
         assert reader.has_focus
         assert reader.text == "Ada\n[bold]中文[/bold]"
         await pilot.press("backspace")
@@ -70,8 +72,8 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
             table = await run_query(app, pilot, "SELECT * FROM nested")
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
-        options = browser.query_one(OptionList)
-        reader = browser.query_one(TextArea)
+        options = browser.query_one(ValueChildren)
+        reader = browser.query_one(ScalarReader)
         tabs = app.query_one(TabbedContent)
         tab_count = tabs.tab_count
         table.focus()
@@ -139,7 +141,7 @@ async def test_parent_position_survives_hide_and_new_roots_reset_it(
             query = app.query_one(QueryWorkspace)
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
-        options = browser.query_one(OptionList)
+        options = browser.query_one(ValueChildren)
         table.focus()
         table.cursor_type = "row"
         await pilot.press("enter", "tab")
@@ -192,7 +194,7 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
-        options = browser.query_one(OptionList)
+        options = browser.query_one(ValueChildren)
         table.focus()
         await pilot.press("enter", "tab", "down")
         prompt = str(options.get_option_at_index(2).prompt)
@@ -260,7 +262,7 @@ async def test_duplicate_positions_and_empty_structs_at_arrow_delivery(
         await pilot.press("backspace", "backspace", "down", "enter")
         assert browser.reader.text == "second"
         await pilot.press("backspace", "down", "enter")
-        options = browser.query_one(OptionList)
+        options = browser.query_one(ValueChildren)
         assert options.option_count == 1
         assert str(options.get_option_at_index(0).prompt).strip() == "{}"
         assert options.get_option_at_index(0).disabled

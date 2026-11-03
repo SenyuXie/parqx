@@ -1,21 +1,22 @@
 """Read an explicitly selected Arrow value without using table previews."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import ClassVar
 
 import pyarrow as pa
 from rich.style import Style
 from rich.text import Text
-from textual import events, on
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import HorizontalScroll, Vertical
 from textual.content import Content
 from textual.widget import Widget
-from textual.widgets import Button, OptionList, Static, TextArea
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Static
 
-from parqx.tui.scalar_value import read_scalar
+from parqx.tui.value_document import ReadingPosition
 from parqx.tui.value_node import RowValue, ValueNode
+from parqx.tui.widgets.scalar_reader import ScalarReader
+from parqx.tui.widgets.value_children import ValueChildren
 
 
 def _label_text(label: str) -> Text:
@@ -48,7 +49,7 @@ class BrowseFrame:
     label: str
     node: ValueNode
     selected: int = 0
-    scroll: float = 0
+    position: ReadingPosition = field(default_factory=ReadingPosition)
 
 
 @dataclass
@@ -56,22 +57,9 @@ class _MaximizedPosition:
     """Compare the settled enlarged viewport with the user's later position."""
 
     frame: BrowseFrame
-    scroll: float
+    position: ReadingPosition
     selected: int
     enlarged_scroll: float | None = None
-
-
-class ValueChildren(OptionList):
-    """Expose full field identities through tooltips on styled child prompts."""
-
-    def on_mouse_move(self, event: events.MouseMove) -> None:
-        """Read prompt metadata without depending on OptionList's line cache."""
-        label = event.style.meta.get("value_tooltip")
-        self.tooltip = Content(label) if isinstance(label, str) else None
-
-    def on_leave(self) -> None:
-        """Discard the tooltip after leaving the content."""
-        self.tooltip = None
 
 
 class ValueBrowser(Vertical):
@@ -133,7 +121,6 @@ class ValueBrowser(Vertical):
         .value-children {
             height: 1fr; padding: 0; border: none; background: $surface;
             &:focus { border: none; background-tint: transparent; }
-            & > .option-list--option { padding: 0; }
             & > .option-list--option-highlighted {
                 text-style: none; background: $primary 15%;
             }
@@ -188,19 +175,10 @@ class ValueBrowser(Vertical):
         self._render_width = 0
         self._render_styles: dict[str, Style] = {}
         self._reader_width = 0
-        self._binary_columns: int | None = None
         self._resume_frame: BrowseFrame | None = None
         self._maximized_position: _MaximizedPosition | None = None
         self.options.display = False
-        self.reader = TextArea(
-            read_only=True,
-            soft_wrap=True,
-            show_line_numbers=False,
-            highlight_cursor_line=False,
-            classes="value-reader",
-        )
-        self.reader.show_cursor = False
-        self.reader.match_cursor_bracket = False
+        self.reader = ScalarReader(classes="value-reader")
         self.clear(empty=False)
 
     def compose(self) -> ComposeResult:
@@ -247,7 +225,7 @@ class ValueBrowser(Vertical):
         if self.display and self._frames:
             frame = self._frames[-1]
             body = self.options if frame.node.is_container else self.reader
-            frame.scroll = body.scroll_y
+            frame.position = body.capture_position()
         self.display = not self.display
         if self.display and self._frames:
             self.call_after_refresh(self._restore_position, self._frames[-1])
@@ -257,13 +235,15 @@ class ValueBrowser(Vertical):
         if self._frames:
             frame = self._frames[-1]
             body = self.options if frame.node.is_container else self.reader
-            frame.scroll = body.scroll_y
+            frame.position = body.capture_position()
 
     def on_show(self) -> None:
         """Restore after native controls scroll their highlighted item on show."""
         if self._frames:
             self._resume_frame = self._frames[-1]
             self.call_after_refresh(self._resume_viewport, self._frames[-1])
+        else:
+            self.call_after_refresh(self._reflow)
 
     def _resume_viewport(self, frame: BrowseFrame) -> None:
         if self._resume_frame is frame and self._frames and self._frames[-1] is frame:
@@ -274,14 +254,16 @@ class ValueBrowser(Vertical):
     def _restore_position(self, frame: BrowseFrame) -> None:
         if self.display and self._frames and self._frames[-1] is frame:
             body = self.options if frame.node.is_container else self.reader
-            body.scroll_to(y=frame.scroll, animate=False, force=True, immediate=True)
+            body.restore_position(frame.position)
 
     def begin_maximize(self) -> None:
         """Save the reading position before a larger viewport can clamp it."""
         if self._frames:
             frame = self._frames[-1]
             body = self.options if frame.node.is_container else self.reader
-            position = _MaximizedPosition(frame, body.scroll_y, frame.selected)
+            position = _MaximizedPosition(
+                frame, body.capture_position(), frame.selected
+            )
             self._maximized_position = position
             self.call_after_refresh(self._reflow_maximized, position)
 
@@ -317,7 +299,7 @@ class ValueBrowser(Vertical):
     def _reflow_restored(self, position: _MaximizedPosition) -> None:
         if self._has_position(position):
             self._reflow()
-            position.frame.scroll = position.scroll
+            position.frame.position = position.position
             self._restore_position(position.frame)
             self._maximized_position = None
 
@@ -327,15 +309,20 @@ class ValueBrowser(Vertical):
         frame = self._frames[-1]
         self._show_breadcrumbs()
         self.metadata.update(frame.node.metadata)
-        self.metadata.tooltip = Content(frame.node.type_description)
+        self.metadata.tooltip = Content(
+            frame.node.metadata
+            if frame.node.is_container
+            else frame.node.type_description
+        )
         self.options.display = frame.node.is_container
         self.reader.display = not frame.node.is_container
         if frame.node.is_container:
+            self.reader.load_text("")
             self._show_children(frame)
         else:
             self._show_scalar(frame.node.scalar)
         body = self.options if frame.node.is_container else self.reader
-        body.scroll_to(y=frame.scroll, animate=False, force=True)
+        body.restore_position(frame.position)
         body.call_after_refresh(self._restore_position, frame)
         if focus:
             body.focus()
@@ -376,28 +363,40 @@ class ValueBrowser(Vertical):
 
     def _show_scalar(self, value: pa.Scalar) -> None:
         self._reader_width = self._scalar_width()
-        content = read_scalar(value, width=self._reader_width)
-        self._binary_columns = content.bytes_per_line
+        self.reader.show(value, width=self._reader_width)
+        self._update_scalar_metadata()
+
+    @on(ScalarReader.Updated)
+    def _scalar_updated(self, event: ScalarReader.Updated) -> None:
+        event.stop()
+        if (
+            event.document is self.reader.document
+            and self._frames
+            and not self._frames[-1].node.is_container
+        ):
+            self._update_scalar_metadata()
+            position = self._maximized_position
+            if (
+                event.restoring
+                and position is not None
+                and self._has_position(position)
+            ):
+                position.enlarged_scroll = self.reader.scroll_y
+
+    def _update_scalar_metadata(self) -> None:
+        content = self.reader.document
+        if content is None:
+            return
         self.metadata.update(content.metadata)
-        self.metadata.tooltip = Content(str(value.type))
         self.reader.remove_class("string", "number", "boolean", "muted", "error")
         self.reader.add_class(content.role)
-        self.reader.soft_wrap = content.bytes_per_line is None
-        self.reader.load_text(content.text)
-        self.reader.scroll_to(x=0, y=0, animate=False, force=True, immediate=True)
-        self.info.update(content.info)
+        self.info.update(
+            content.info if content.complete else "Preparing text…\nRead only"
+        )
         self.info.tooltip = None
 
-    def _child_prompt(self, frame: BrowseFrame, index: int) -> Text:
-        return frame.node.child_prompt(
-            index,
-            width=self._render_width,
-            selected=index == frame.selected,
-            styles=self._render_styles,
-        )
-
     def _preview_styles(self) -> dict[str, Style]:
-        # Only foreground colors belong to the preview. OptionList owns the
+        # Only foreground colors belong to the preview. ValueChildren owns the
         # background, including its full-width selection and hover states.
         return {
             role: Style(color=self.get_component_rich_style(f"value--{role}").color)
@@ -411,7 +410,7 @@ class ValueBrowser(Vertical):
 
     def _scalar_width(self) -> int:
         # The browser is measurable even when switching from a container to text.
-        # Reserve the scrollbar and TextArea's extra end-of-line cell as well.
+        # Reserve the scrollbar so its appearance does not change wrapping.
         return max(1, self.content_size.width - self.reader.styles.gutter.width - 3)
 
     def on_resize(self) -> None:
@@ -425,7 +424,10 @@ class ValueBrowser(Vertical):
             self.call_after_refresh(self._reflow)
 
     def _reflow(self) -> None:
-        if not (self.is_on_screen and self._frames):
+        if not self.is_on_screen:
+            return
+        if not self._frames:
+            self.reader.reflow(self._scalar_width())
             return
         frame = self._frames[-1]
         if frame.node.is_container:
@@ -434,46 +436,27 @@ class ValueBrowser(Vertical):
                 or self._preview_styles() != self._render_styles
             ):
                 if self._resume_frame is not frame:
-                    frame.scroll = self.options.scroll_y
+                    frame.position = self.options.capture_position()
                 self._show_children(frame)
                 self._restore_position(frame)
-        elif (
-            self._binary_columns is not None
-            and self._scalar_width() != self._reader_width
-        ):
-            position = (
-                frame.scroll if self._resume_frame is frame else self.reader.scroll_y
-            )
-            byte_offset = int(position) * self._binary_columns
-            self._show_scalar(frame.node.scalar)
-            frame.scroll = byte_offset // self._binary_columns
-            self._restore_position(frame)
+        elif self._scalar_width() != self._reader_width:
+            self._reader_width = self._scalar_width()
+            self.reader.reflow(self._reader_width)
 
     def _show_children(self, frame: BrowseFrame) -> None:
         self._render_width = self._body_width()
         self._render_styles = self._preview_styles()
-        self.options.tooltip = None
-        with self.options.prevent(OptionList.OptionHighlighted):
-            self.options.clear_options()
-            left, right = frame.node.delimiters
-            if frame.node.child_count:
-                self.options.add_options(
-                    [Option(Text("  " + left), disabled=True)]
-                    + [
-                        Option(self._child_prompt(frame, i))
-                        for i in range(frame.node.child_count)
-                    ]
-                    + [Option(Text("  " + right), disabled=True)]
-                )
-                self.options.highlighted = frame.selected + 1
-                self._selection_info(frame)
-            else:
-                self.options.add_option(
-                    Option(Text("  " + left + right), disabled=True)
-                )
-                self.options.highlighted = None
-                self.info.update("Empty container\n0 children")
-                self.info.tooltip = None
+        self.options.show(
+            frame.node,
+            width=self._render_width,
+            selected=frame.selected,
+            styles=self._render_styles,
+        )
+        if frame.node.child_count:
+            self._selection_info(frame)
+        else:
+            self.info.update("Empty container\n0 children")
+            self.info.tooltip = None
 
     def _selection_info(self, frame: BrowseFrame) -> None:
         name, child = frame.node.child(frame.selected)
@@ -484,44 +467,35 @@ class ValueBrowser(Vertical):
         metadata.truncate(width, overflow="ellipsis")
         self.info.update(label + Text("\n") + metadata)
         self.info.tooltip = Content(
-            f"{name}\n{child.type_description}\n{child.metadata}"
+            f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
         )
 
-    def _frame_for_option(self, event: OptionList.OptionMessage) -> BrowseFrame | None:
-        """Accept only children belonging to the currently rendered container."""
+    def _frame_for_option(self, event: ValueChildren.Highlighted) -> BrowseFrame | None:
+        """Accept only children from the current rendered container."""
         if (
-            event.option_list is not self.options
-            or not self._frames
-            or not self._frames[-1].node.is_container
-            or not 0 < event.option_index < self.options.option_count - 1
+            self._frames
+            and self.options.document is event.document
+            and self._frames[-1].node is event.document.node
         ):
-            return None
-        if event.option is not self.options.get_option_at_index(event.option_index):
-            return None
-        return self._frames[-1]
+            return self._frames[-1]
+        return None
 
-    @on(OptionList.OptionHighlighted)
-    def _highlighted(self, event: OptionList.OptionHighlighted) -> None:
+    @on(ValueChildren.Highlighted)
+    def _highlighted(self, event: ValueChildren.Highlighted) -> None:
+        event.stop()
+        frame = self._frame_for_option(event)
+        if frame is not None:
+            frame.selected = event.index
+            self._selection_info(frame)
+
+    @on(ValueChildren.Selected)
+    def _open_child(self, event: ValueChildren.Selected) -> None:
         event.stop()
         frame = self._frame_for_option(event)
         if frame is None:
             return
-        previous = frame.selected
-        frame.selected = event.option_index - 1
-        for index in {previous, frame.selected}:
-            self.options.replace_option_prompt_at_index(
-                index + 1, self._child_prompt(frame, index)
-            )
-        self._selection_info(frame)
-
-    @on(OptionList.OptionSelected)
-    def _open_child(self, event: OptionList.OptionSelected) -> None:
-        event.stop()
-        frame = self._frame_for_option(event)
-        if frame is None:
-            return
-        frame.selected = event.option_index - 1
-        frame.scroll = self.options.scroll_y
+        frame.selected = event.index
+        frame.position = self.options.capture_position()
         name, child = frame.node.child(frame.selected)
         self._frames.append(BrowseFrame(name, child))
         self._show_frame(focus=True)
@@ -553,9 +527,7 @@ class ValueBrowser(Vertical):
         self.identity.tooltip = None
         self.metadata.update("")
         self.metadata.tooltip = None
-        self._binary_columns = None
         self._reader_width = 0
-        self.reader.soft_wrap = True
         self.reader.remove_class("string", "number", "boolean", "error")
         self.reader.add_class("muted")
         self.reader.load_text(

@@ -13,6 +13,7 @@ from textual.widgets import Static, TabbedContent, TextArea
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.arrow_table import CursorType
+from parqx.tui.widgets.scalar_reader import ScalarReader
 from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import (
     confirm_query_close,
@@ -41,7 +42,7 @@ async def test_enter_reads_complete_cell_without_following_cursor(
         table.focus()
         assert isinstance(table.parent, Widget)
         browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", TextArea)
+        reader = browser.query_one(".value-reader", ScalarReader)
         assert not browser.display
 
         await pilot.press("enter")
@@ -76,7 +77,7 @@ async def test_visibility_resumes_reading_and_table_focus(scalar_parquet: Path) 
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
         browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", TextArea)
+        reader = browser.query_one(".value-reader", ScalarReader)
         table.focus()
         await pilot.press("v")
         assert browser.display
@@ -126,7 +127,7 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         assert table is not None
         assert isinstance(table.parent, Widget)
         browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", TextArea)
+        reader = browser.query_one(".value-reader", ScalarReader)
         table.focus()
         await pilot.press("enter", "tab", "pagedown")
         assert reader.has_focus
@@ -214,7 +215,7 @@ async def test_scalar_states_and_nonvalue_cursors_are_explicit(
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
         browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", TextArea)
+        reader = browser.query_one(".value-reader", ScalarReader)
         info = browser.query_one(".value-info", Static)
         table.focus()
         table.move_cursor(row=1, column=0)
@@ -256,7 +257,7 @@ async def test_initial_empty_result_has_no_value_to_select(small_parquet: Path) 
         assert table is not None
         assert table.parent is not None
         browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", TextArea)
+        reader = browser.query_one(".value-reader", ScalarReader)
         table.focus()
         await pilot.press("enter")
         assert not browser.display
@@ -285,6 +286,6 @@ async def test_reading_a_value_preserves_the_sql_editor_viewport(
         await pilot.pause()
         assert editor.scroll_y == position
         await pilot.press("enter")
-        assert query.query_one(".value-reader", TextArea).text == "alice"
+        assert query.query_one(".value-reader", ScalarReader).text == "alice"
         assert table.has_focus
         assert editor.scroll_y == position

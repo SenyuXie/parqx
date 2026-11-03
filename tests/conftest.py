@@ -9,6 +9,25 @@ import pytest
 
 
 @pytest.fixture
+def large_values_parquet(tmp_path: Path) -> Path:
+    """Large containers, logical lines, unbroken Unicode and binary content."""
+    path = tmp_path / "large_values.parquet"
+    text = ("中文👩🏽‍💻 e\u0301\t[bold]literal[/bold]\r\n" * 40_000) + "最后-END"
+    pq.write_table(
+        pa.table(
+            {
+                "items": [list(range(100_000))],
+                "text": [text],
+                "binary": [bytes(range(256)) * 8192 + b"END"],
+                "unbroken": ["中e\u0301👩🏽‍💻" * 160_000 + "END"],
+            }
+        ),
+        path,
+    )
+    return path
+
+
+@pytest.fixture
 def paged_values_parquet(tmp_path: Path) -> Path:
     """File values spanning several pages, with nested and scrollable content."""
     path = tmp_path / "paged_values.parquet"
