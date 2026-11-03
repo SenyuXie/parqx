@@ -10,6 +10,10 @@ lowest layer that can verify it:
 | `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
+Before publishing changes, match CI's type-checking scope with
+`uv run mypy src tests` and `uv run pyright`. Both commands cover the application
+and its tests, including the repository's Arrow stubs.
+
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes
 one instance to its components; native data helpers receive explicit settings.
 Configuration validation belongs in unit tests, and budget wiring belongs in

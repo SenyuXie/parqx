@@ -204,6 +204,15 @@ class MapArray(Array):
     def values(self) -> StructArray: ...
 
 class StructArray(Array):
+    @staticmethod
+    def from_arrays(
+        arrays: Sequence[Array],
+        names: Sequence[str] | None = None,
+        fields: Sequence[Field] | None = None,
+        mask: Array | None = None,
+        memory_pool: MemoryPool | None = None,
+        type: StructType | None = None,
+    ) -> StructArray: ...
     def field(self, index: int | str) -> Array: ...
 
 class ChunkedArray:

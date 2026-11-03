@@ -13,6 +13,7 @@ from parqx.tui.value_node import RowValue, ValueNode
 @pytest.mark.parametrize("kind", ["list", "map", "struct", "row"])
 def test_container_navigation_does_not_build_all_child_previews(kind: str) -> None:
     count = 100_000
+    value: pa.Scalar | RowValue
     if kind == "list":
         value = pa.scalar(list(range(count)))
     elif kind == "map":
