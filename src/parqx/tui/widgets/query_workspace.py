@@ -27,6 +27,7 @@ class QueryWorkspace(TabPane):
         & > TextArea {
             height: 10;
             min-height: 4;
+            &:blur { border: tall $primary-muted; }
         }
     }
     """
@@ -34,7 +35,9 @@ class QueryWorkspace(TabPane):
     def __init__(self, title: str, *, id: str) -> None:
         """Create a blank SQL draft without starting an execution."""
         super().__init__(Content(title), id=id)
-        self.editor = TextArea.code_editor("", language="sql", classes="sql-draft")
+        self.editor = TextArea.code_editor(
+            "", language="sql", theme="css", classes="sql-draft"
+        )
         self.editor.border_title = "SQL Editor"
         self.run_button = Button(
             "Run Query",
