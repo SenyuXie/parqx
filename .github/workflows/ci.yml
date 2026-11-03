@@ -21,12 +21,8 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.12"
-      - name: Build
-        run: uv build
-      - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl tests/distribution/check_install.py
-      - name: Smoke test (source distribution)
-        run: uv run --isolated --no-project --with dist/*.tar.gz tests/distribution/check_install.py
+      - name: Check distributions
+        run: uv run --locked python scripts/check.py package
 
   lint:
     name: Lint
@@ -39,12 +35,8 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - name: Sync dev dependencies
-        run: uv sync --locked --group dev
-      - name: Ruff lint
-        run: uv run ruff check
-      - name: Ruff format
-        run: uv run ruff format --diff
+      - name: Check lint and formatting
+        run: uv run --locked python scripts/check.py lint
 
   typecheck:
     name: "Type check"
@@ -57,12 +49,8 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - name: Sync dev dependencies
-        run: uv sync --locked --group dev
-      - name: Mypy
-        run: uv run mypy src tests
-      - name: Pyright
-        run: uv run pyright
+      - name: Check types
+        run: uv run --locked python scripts/check.py typecheck
 
   test:
     name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }} / ${{ matrix.suite }})
@@ -75,19 +63,15 @@ jobs:
           - os: ubuntu-latest
             python-version: "3.12"
             suite: full
-            test-paths: tests
           - os: ubuntu-latest
             python-version: "3.13"
             suite: core
-            test-paths: tests/unit tests/smoke
           - os: macos-latest
             python-version: "3.12"
             suite: core
-            test-paths: tests/unit tests/smoke
           - os: windows-latest
             python-version: "3.12"
             suite: core
-            test-paths: tests/unit tests/smoke
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -97,7 +81,5 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - name: Sync dev dependencies
-        run: uv sync --locked --group dev
-      - name: Pytest
-        run: uv run pytest -q ${{ matrix.test-paths }}
+      - name: Check tests
+        run: uv run --locked python scripts/check.py ${{ matrix.suite }}
