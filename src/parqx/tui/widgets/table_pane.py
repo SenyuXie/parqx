@@ -20,6 +20,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.data.view import PageCache
 from parqx.tui.widgets.arrow_table import ArrowTable
 from parqx.tui.widgets.table_view import TableView
+from parqx.tui.widgets.value_browser import BrowseRoot
 
 logger = logging.getLogger(__name__)
 
@@ -147,15 +148,34 @@ class TablePane(TabPane):
             self._page_timer = None
             self._submit_pending()
 
-    def _submit_pending(self) -> None:
+    @on(TableView.ValueRequested)
+    def _on_value_requested(self, event: TableView.ValueRequested) -> None:
+        event.stop()
         if (
-            self._reading
-            or self._page_timer is not None
-            or self._pending_window is None
+            self.view is not None
+            and self.view is event.view
+            and self.view.pending_root is event.root
         ):
+            self._submit_pending()
+
+    def _submit_pending(self) -> None:
+        if self._reading:
             return
-        start, stop, data = self._pending_window
-        self._pending_window = None
+        # Serve the current root in the same native slot, retaining the latest
+        # pending viewport independently until its debounce interval has elapsed.
+        root = self.view.pending_root if self.view is not None else None
+        if (
+            root is not None
+            and self.table is not None
+            and isinstance(self.table.data, PageCache)
+        ):
+            start, stop, data = root.row, root.row + 1, weakref.ref(self.table.data)
+        else:
+            if self._page_timer is not None or self._pending_window is None:
+                return
+            root = None
+            start, stop, data = self._pending_window
+            self._pending_window = None
         source, spec = self._source, self._spec
         request = self._request_number
         if (
@@ -167,7 +187,13 @@ class TablePane(TabPane):
         # Reserve the slot before Textual schedules the worker, including pool wait.
         self._reading = True
         self._read_page(
-            source, spec, start, max(stop, start + source.page_rows), request, data
+            source,
+            spec,
+            start,
+            stop if root is not None else max(stop, start + source.page_rows),
+            request,
+            data,
+            root,
         )
 
     @work(group="page", description="Read source page")
@@ -179,6 +205,7 @@ class TablePane(TabPane):
         stop: int,
         request: int,
         data: weakref.ReferenceType[PageCache],
+        root: BrowseRoot | None = None,
     ) -> None:
         # Native work receives no widget or cache. Unmount can cancel the async
         # wait (and queued work); an already running native read finishes naturally.
@@ -187,7 +214,15 @@ class TablePane(TabPane):
                 self._executor, source.read_window, start, stop
             )
         except Exception as exc:
-            if (table := self._current_table(source, request, data)) is not None:
+            if root is not None:
+                if (
+                    self._current_table(source, None, data) is not None
+                    and self.view is not None
+                ):
+                    self.view.fail_selection(
+                        root, str(SourceIssue(spec, str(exc) or type(exc).__name__))
+                    )
+            elif (table := self._current_table(source, request, data)) is not None:
                 logger.exception("Failed to read parquet window: %s", source.path)
                 table.fail_window()
                 self.notify(
@@ -197,7 +232,13 @@ class TablePane(TabPane):
                     markup=False,
                 )
         else:
-            if (table := self._current_table(source, request, data)) is not None:
+            if root is not None:
+                if (
+                    self._current_table(source, None, data) is not None
+                    and self.view is not None
+                ):
+                    self.view.resolve_selection(root, page)
+            elif (table := self._current_table(source, request, data)) is not None:
                 table.accept_page(page)
         # CancelledError intentionally skips this: cancelling the waiter does not
         # mean native work finished, and must never free a slot for another read.
@@ -207,13 +248,14 @@ class TablePane(TabPane):
     def _current_table(
         self,
         source: ParquetSource,
-        request: int,
+        request: int | None,
         data: weakref.ReferenceType[PageCache],
     ) -> ArrowTable | None:
+        """Resolve this source generation, optionally checking its viewport request."""
         if (
             self.is_mounted
             and self._source is source
-            and request == self._request_number
+            and (request is None or request == self._request_number)
             and self.table is not None
             and self.table.data is data()
         ):
