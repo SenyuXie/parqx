@@ -37,6 +37,11 @@ dev = [
 requires = ["uv_build>=0.11.21,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "typings"
+
 [tool.poe.executor]
 type = "uv"
 locked = true
@@ -48,28 +53,23 @@ sequence = ["lint", "typecheck", "full", "package"]
 
 [tool.poe.tasks.lint]
 help = "Check lint and formatting"
-sequence = [{ cmd = "ruff check" }, { cmd = "ruff format --check" }]
+sequence = ["ruff check", "ruff format --check"]
 
 [tool.poe.tasks.typecheck]
 help = "Type-check application code, tests, and helper scripts"
-sequence = [{ cmd = "mypy src tests scripts" }, { cmd = "pyright" }]
+sequence = ["mypy src tests scripts", "pyright"]
 
 [tool.poe.tasks.full]
 help = "Run the full test suite"
-sequence = [{ cmd = "pytest -q tests" }]
+sequence = ["pytest -q tests"]
 
 [tool.poe.tasks.core]
 help = "Run unit and smoke tests for the compatibility matrix"
-sequence = [{ cmd = "pytest -q tests/unit tests/smoke" }]
+sequence = ["pytest -q tests/unit tests/smoke"]
 
 [tool.poe.tasks.package]
 help = "Build and smoke-test fresh wheel and sdist installations"
-sequence = [{ cmd = "python scripts/check_package.py" }]
-
-[tool.mypy]
-strict = true
-python_version = "3.12"
-mypy_path = "typings"
+sequence = ["python scripts/check_package.py"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
