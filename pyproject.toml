@@ -53,22 +53,27 @@ sequence = ["lint", "typecheck", "full", "package"]
 
 [tool.poe.tasks.lint]
 help = "Check lint and formatting"
+default_item_type = "cmd"
 sequence = ["ruff check", "ruff format --check"]
 
 [tool.poe.tasks.typecheck]
 help = "Type-check application code, tests, and helper scripts"
+default_item_type = "cmd"
 sequence = ["mypy src tests scripts", "pyright"]
 
 [tool.poe.tasks.full]
 help = "Run the full test suite"
+default_item_type = "cmd"
 sequence = ["pytest -q tests"]
 
 [tool.poe.tasks.core]
 help = "Run unit and smoke tests for the compatibility matrix"
+default_item_type = "cmd"
 sequence = ["pytest -q tests/unit tests/smoke"]
 
 [tool.poe.tasks.package]
 help = "Build and smoke-test fresh wheel and sdist installations"
+default_item_type = "cmd"
 sequence = ["python scripts/check_package.py"]
 
 [tool.pyright]
