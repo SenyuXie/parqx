@@ -9,6 +9,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.coordinate import Coordinate
 from textual.message import Message
+from textual.widget import Widget
 
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.value_node import RowValue
@@ -18,6 +19,8 @@ from parqx.tui.widgets.value_browser import BrowseRoot, ValueBrowser
 
 class TableView(Horizontal):
     """Share the table-height layout and selection rules across source and SQL."""
+
+    ALLOW_MAXIMIZE = True
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("v", "toggle_browser", "Value"),
@@ -101,6 +104,18 @@ class TableView(Horizontal):
         """Keep the browser immediately after the table in focus order."""
         yield self.table
         yield self.browser
+
+    def on_mount(self) -> None:
+        """Preserve the reader around this viewing area's native layout changes."""
+        self.watch(self.screen, "maximized", self._maximized_changed, init=False)
+
+    def _maximized_changed(
+        self, previous: Widget | None, current: Widget | None
+    ) -> None:
+        if current is self:
+            self.browser.begin_maximize()
+        elif previous is self:
+            self.browser.restore_after_maximize()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Apply reader keys only within this table's own focus region."""

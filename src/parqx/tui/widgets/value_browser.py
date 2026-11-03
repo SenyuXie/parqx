@@ -51,6 +51,16 @@ class BrowseFrame:
     scroll: float = 0
 
 
+@dataclass
+class _MaximizedPosition:
+    """Compare the settled enlarged viewport with the user's later position."""
+
+    frame: BrowseFrame
+    scroll: float
+    selected: int
+    enlarged_scroll: float | None = None
+
+
 class ValueChildren(OptionList):
     """Expose full field identities through tooltips on styled child prompts."""
 
@@ -179,6 +189,8 @@ class ValueBrowser(Vertical):
         self._render_styles: dict[str, Style] = {}
         self._reader_width = 0
         self._binary_columns: int | None = None
+        self._resume_frame: BrowseFrame | None = None
+        self._maximized_position: _MaximizedPosition | None = None
         self.options.display = False
         self.reader = TextArea(
             read_only=True,
@@ -240,12 +252,78 @@ class ValueBrowser(Vertical):
         if self.display and self._frames:
             self.call_after_refresh(self._restore_position, self._frames[-1])
 
+    def on_hide(self) -> None:
+        """Retain the viewport when an owning tab or viewing area is hidden."""
+        if self._frames:
+            frame = self._frames[-1]
+            body = self.options if frame.node.is_container else self.reader
+            frame.scroll = body.scroll_y
+
+    def on_show(self) -> None:
+        """Restore after native controls scroll their highlighted item on show."""
+        if self._frames:
+            self._resume_frame = self._frames[-1]
+            self.call_after_refresh(self._resume_viewport, self._frames[-1])
+
+    def _resume_viewport(self, frame: BrowseFrame) -> None:
+        if self._resume_frame is frame and self._frames and self._frames[-1] is frame:
+            self._reflow()
+            self._restore_position(frame)
+            self._resume_frame = None
+
     def _restore_position(self, frame: BrowseFrame) -> None:
         if self.display and self._frames and self._frames[-1] is frame:
             body = self.options if frame.node.is_container else self.reader
-            body.scroll_to(y=frame.scroll, animate=False, force=True)
+            body.scroll_to(y=frame.scroll, animate=False, force=True, immediate=True)
+
+    def begin_maximize(self) -> None:
+        """Save the reading position before a larger viewport can clamp it."""
+        if self._frames:
+            frame = self._frames[-1]
+            body = self.options if frame.node.is_container else self.reader
+            position = _MaximizedPosition(frame, body.scroll_y, frame.selected)
+            self._maximized_position = position
+            self.call_after_refresh(self._reflow_maximized, position)
+
+    def _has_position(self, position: _MaximizedPosition) -> bool:
+        return (
+            self._maximized_position is position
+            and bool(self._frames)
+            and self._frames[-1] is position.frame
+            and self.is_attached
+        )
+
+    def _reflow_maximized(self, position: _MaximizedPosition) -> None:
+        if self._has_position(position):
+            self._reflow()
+            body = self.options if position.frame.node.is_container else self.reader
+            position.enlarged_scroll = body.scroll_y
+
+    def restore_after_maximize(self) -> None:
+        """Restore layout-induced movement while respecting newer user navigation."""
+        position = self._maximized_position
+        if position is None:
+            return
+        body = self.options if position.frame.node.is_container else self.reader
+        if (
+            self._has_position(position)
+            and position.frame.selected == position.selected
+            and body.scroll_y == position.enlarged_scroll
+        ):
+            self.call_after_refresh(self._reflow_restored, position)
+        else:
+            self._maximized_position = None
+
+    def _reflow_restored(self, position: _MaximizedPosition) -> None:
+        if self._has_position(position):
+            self._reflow()
+            position.frame.scroll = position.scroll
+            self._restore_position(position.frame)
+            self._maximized_position = None
 
     def _show_frame(self, *, focus: bool) -> None:
+        self._resume_frame = None
+        self._maximized_position = None
         frame = self._frames[-1]
         self._show_breadcrumbs()
         self.metadata.update(frame.node.metadata)
@@ -306,7 +384,7 @@ class ValueBrowser(Vertical):
         self.reader.add_class(content.role)
         self.reader.soft_wrap = content.bytes_per_line is None
         self.reader.load_text(content.text)
-        self.reader.scroll_to(x=0, y=0, animate=False, force=True)
+        self.reader.scroll_to(x=0, y=0, animate=False, force=True, immediate=True)
         self.info.update(content.info)
         self.info.tooltip = None
 
@@ -347,7 +425,7 @@ class ValueBrowser(Vertical):
             self.call_after_refresh(self._reflow)
 
     def _reflow(self) -> None:
-        if not (self.display and self.is_mounted and self._frames):
+        if not (self.is_on_screen and self._frames):
             return
         frame = self._frames[-1]
         if frame.node.is_container:
@@ -355,17 +433,21 @@ class ValueBrowser(Vertical):
                 self._body_width() != self._render_width
                 or self._preview_styles() != self._render_styles
             ):
-                frame.scroll = self.options.scroll_y
+                if self._resume_frame is not frame:
+                    frame.scroll = self.options.scroll_y
                 self._show_children(frame)
-                self.options.scroll_to(y=frame.scroll, animate=False, force=True)
+                self._restore_position(frame)
         elif (
             self._binary_columns is not None
             and self._scalar_width() != self._reader_width
         ):
-            byte_offset = int(self.reader.scroll_y) * self._binary_columns
+            position = (
+                frame.scroll if self._resume_frame is frame else self.reader.scroll_y
+            )
+            byte_offset = int(position) * self._binary_columns
             self._show_scalar(frame.node.scalar)
             frame.scroll = byte_offset // self._binary_columns
-            self.reader.call_after_refresh(self._restore_position, frame)
+            self._restore_position(frame)
 
     def _show_children(self, frame: BrowseFrame) -> None:
         self._render_width = self._body_width()
@@ -456,6 +538,8 @@ class ValueBrowser(Vertical):
         """Release the selected root when its owning data is replaced or closed."""
         self.root = None
         self._frames.clear()
+        self._resume_frame = None
+        self._maximized_position = None
         self._crumb_depths.clear()
         self.identity.display = True
         if self.crumbs.is_mounted:

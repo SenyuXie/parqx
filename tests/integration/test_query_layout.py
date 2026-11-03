@@ -27,6 +27,7 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
         await pilot.press("ctrl+enter")
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         assert query.table is not None
+        assert query.view is not None
         if show_sources:
             app.action_toggle_sources()
         await pilot.pause()
@@ -63,7 +64,7 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
         await wait_for(lambda: commands.option_count == 1, pilot)
         await pilot.press("enter")
         await wait_for(lambda: not app.screen.is_modal, pilot)
-        assert query.table.is_maximized
+        assert query.view.is_maximized
         assert query.table.region.height > table_region.height
         assert query.table.region.width == size[0]
         await pilot.press("ctrl+p")
@@ -106,16 +107,18 @@ async def test_closing_maximized_workspace_restores_main_view(
         await pilot.press("ctrl+enter")
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         assert query.table is not None
+        assert query.view is not None
         widget = query.editor if target == "editor" else query.table
+        maximized = query.editor if target == "editor" else query.view
         widget.focus()
         await pilot.pause()
         app.screen.action_maximize()
-        await wait_for(lambda: app.screen.maximized is widget, pilot)
+        await wait_for(lambda: app.screen.maximized is maximized, pilot)
         await pilot.press("ctrl+w")
         await wait_for(lambda: app.screen.is_modal, pilot)
         await pilot.press("escape")
         await wait_for(lambda: not app.screen.is_modal, pilot)
-        assert app.screen.maximized is widget
+        assert app.screen.maximized is maximized
         assert widget.has_focus
         assert query.editor.text == "SELECT * FROM smoke"
         await pilot.press("ctrl+w")

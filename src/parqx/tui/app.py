@@ -30,6 +30,7 @@ from parqx.tui.widgets import ArrowTable, TablePane
 from parqx.tui.widgets.arrow_table import CursorType
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.sources_tree import SourcesTree
+from parqx.tui.widgets.table_view import TableView
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,14 @@ class Parqx(App[Any]):
     def _open_sources(self) -> None:
         self._sources.display = True
         self._sources.focus()
+
+    @property
+    def escape_to_minimize(self) -> bool:
+        """Let Escape leave an inspected value before minimizing its viewing area."""
+        maximized = self.screen.maximized
+        if isinstance(maximized, TableView) and maximized.browser.has_focus_within:
+            return False
+        return super().escape_to_minimize
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Protect modal input and scope actions to the active view."""
