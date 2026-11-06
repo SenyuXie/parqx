@@ -470,7 +470,9 @@ class ValueBrowser(Vertical):
             f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
         )
 
-    def _frame_for_option(self, event: ValueChildren.Highlighted) -> BrowseFrame | None:
+    def _frame_for_option(
+        self, event: ValueChildren.ChildMessage
+    ) -> BrowseFrame | None:
         """Accept only children from the current rendered container."""
         if (
             self._frames

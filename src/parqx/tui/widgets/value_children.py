@@ -40,15 +40,18 @@ class ValueChildren(ScrollView, can_focus=True):
     ]
     DEFAULT_CSS = "ValueChildren { overflow-x: hidden; }"
 
-    class Highlighted(Message):
-        """A positional child in a particular document was highlighted."""
+    class ChildMessage(Message):
+        """Base message identifying a positional child in its document."""
 
         def __init__(self, document: ContainerDocument, index: int) -> None:
             """Capture a positional child and its owning document."""
             self.document, self.index = document, index
             super().__init__()
 
-    class Selected(Highlighted):
+    class Highlighted(ChildMessage):
+        """A positional child in a particular document was highlighted."""
+
+    class Selected(ChildMessage):
         """The highlighted child was explicitly opened."""
 
     def __init__(self, *, classes: str) -> None:
