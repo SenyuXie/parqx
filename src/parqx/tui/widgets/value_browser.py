@@ -79,18 +79,17 @@ class ValueBrowser(Vertical):
         border-left: solid $primary-muted;
         padding: 1 1 0 1; background: $surface;
         &:focus-within { border-left: solid $primary; }
-        .value--key { color: #245a86; }
-        .value--string { color: #246d40; }
-        .value--number { color: #925112; }
-        .value--boolean { color: #694c91; }
-        .value--muted { color: #536374; }
+        .value--key { color: #1d4b70; }
+        .value--string, .value-reader.string { color: #1b5632; }
+        .value--number, .value-reader.number { color: #713e0f; }
+        .value--boolean, .value-reader.boolean { color: #583d7c; }
+        .value--muted, .value-reader.muted { color: #454f5e; }
         .value-heading {
             height: 1; padding: 0 1; color: $text-muted; text-style: bold;
         }
         .value-path {
             height: 2; margin-top: 1; padding: 0 1;
             scrollbar-size-horizontal: 1;
-            scrollbar-color: $primary-muted; scrollbar-background: $surface;
         }
         .value-identity { width: auto; height: 1; text-style: bold; }
         .value-crumb {
@@ -108,10 +107,6 @@ class ValueBrowser(Vertical):
         .value-reader {
             height: 1fr; padding: 0 2; border: none; background: $surface;
             &:focus { border: none; }
-            &.string { color: $success; }
-            &.number { color: $warning; }
-            &.boolean { color: $secondary; }
-            &.muted { color: $text-muted; }
             &.error { color: $error; }
         }
         .value-info {
@@ -122,38 +117,19 @@ class ValueBrowser(Vertical):
             height: 1fr; padding: 0; border: none; background: $surface;
             &:focus { border: none; background-tint: transparent; }
             & > .option-list--option-highlighted {
-                text-style: none; background: $primary 15%;
+                text-style: none; background: $block-cursor-blurred-background 25%;
             }
-            &:focus > .option-list--option-highlighted { background: $primary 25%; }
-            & > .option-list--option-hover { background: $primary 10%; }
+            &:focus > .option-list--option-highlighted {
+                background: $block-cursor-background 15%;
+            }
+            & > .option-list--option-hover { background: $block-hover-background; }
         }
         &:dark {
-            background: #19232e;
             .value--key { color: #91b8de; }
-            .value--string { color: #b4cfaa; }
-            .value--number { color: #e5c18a; }
-            .value--boolean { color: #bba7dd; }
-            .value--muted { color: #8493a5; }
-            .value-heading { color: #7c91a6; }
-            .value-path { scrollbar-color: #465c70; scrollbar-background: #19232e; }
-            .value-type, .value-info { color: #91a2b5; border: none; }
-            .value-type { border-bottom: solid #2c3a49; }
-            .value-info { border-top: solid #2c3a49; }
-            .value-reader {
-                background: #19232e;
-                scrollbar-color: #465c70; scrollbar-background: #19232e;
-                &.string { color: #b4cfaa; }
-                &.number { color: #e5c18a; }
-                &.boolean { color: #bba7dd; }
-                &.muted { color: #8493a5; }
-            }
-            .value-children {
-                background: #19232e;
-                scrollbar-color: #465c70; scrollbar-background: #19232e;
-                & > .option-list--option-highlighted { background: #21313f; }
-                &:focus > .option-list--option-highlighted { background: #293e52; }
-                & > .option-list--option-hover { background: #223243; }
-            }
+            .value--string, .value-reader.string { color: #b4cfaa; }
+            .value--number, .value-reader.number { color: #e5c18a; }
+            .value--boolean, .value-reader.boolean { color: #bba7dd; }
+            .value--muted, .value-reader.muted { color: #a3b1bf; }
         }
     }
     """

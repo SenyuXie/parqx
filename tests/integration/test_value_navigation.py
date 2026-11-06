@@ -82,6 +82,9 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
         assert options.has_focus
         assert str(options.get_option_at_index(0).prompt).strip() == "["
         assert str(options.get_option_at_index(3).prompt).strip() == "]"
+        assert options.get_option_at_index(0).disabled
+        assert options.get_option_at_index(3).disabled
+        assert not options.get_option_at_index(1).disabled
         assert await pilot.click(options, offset=(8, 1))
         await pilot.press("enter")
         assert reader.has_focus
@@ -200,6 +203,13 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
         prompt = str(options.get_option_at_index(2).prompt)
         assert "…" in prompt
         assert "\n      {" in prompt
+        for y, text in enumerate(prompt.splitlines(), start=2):
+            line = options.render_line(y)
+            assert line.text.rstrip() == text.rstrip()
+            assert all(
+                segment.style is not None and segment.style.meta.get("value_child") == 1
+                for segment in line
+            )
         assert await pilot.hover(options, offset=(8, 2))
         assert label in str(options.tooltip)
         info = browser.query_one(".value-info", Static)

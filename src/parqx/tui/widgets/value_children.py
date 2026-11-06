@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import ClassVar, cast
+from typing import ClassVar
 
 from rich.style import Style
 from rich.text import Text
@@ -12,6 +12,7 @@ from textual.binding import Binding, BindingType
 from textual.content import Content
 from textual.geometry import Region, Size
 from textual.message import Message
+from textual.reactive import reactive
 from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widgets.option_list import Option
@@ -40,6 +41,8 @@ class ValueChildren(ScrollView, can_focus=True):
     ]
     DEFAULT_CSS = "ValueChildren { overflow-x: hidden; }"
 
+    _hovered: reactive[int | None] = reactive(None)
+
     class ChildMessage(Message):
         """Base message identifying a positional child in its document."""
 
@@ -62,7 +65,6 @@ class ValueChildren(ScrollView, can_focus=True):
         self._palette: dict[str, Style] = {}
         self._pending_selection = False
         self._restore_y: float | None = None
-        self._hovered: int | None = None
         self._index_worker: Worker[None] | None = None
 
     @property
@@ -100,22 +102,25 @@ class ValueChildren(ScrollView, can_focus=True):
 
     def get_option_at_index(self, index: int) -> Option:
         """Materialize one requested prompt, never a collection of all options."""
+        return Option(
+            self._get_prompt(index), disabled=index in {0, self.option_count - 1}
+        )
+
+    def _get_prompt(self, index: int) -> Text:
         document = self.document
         if document is None or not 0 <= index < self.option_count:
             raise IndexError(index)
         node = document.node
         left, right = node.delimiters
         if not node.child_count:
-            return Option(Text("  " + left + right), disabled=True)
+            return Text("  " + left + right)
         if index in {0, self.option_count - 1}:
-            return Option(Text("  " + (left if index == 0 else right)), disabled=True)
-        return Option(
-            node.child_prompt(
-                index - 1,
-                width=document.width,
-                selected=index == self.highlighted,
-                styles=self._palette,
-            )
+            return Text("  " + (left if index == 0 else right))
+        return node.child_prompt(
+            index - 1,
+            width=document.width,
+            selected=index == self.highlighted,
+            styles=self._palette,
         )
 
     def _update_size(self) -> None:
@@ -223,13 +228,11 @@ class ValueChildren(ScrollView, can_focus=True):
         self.tooltip = Content(label) if isinstance(label, str) else None
         hovered = event.style.meta.get("value_child")
         self._hovered = hovered if isinstance(hovered, int) else None
-        self.refresh()
 
     def on_leave(self) -> None:
         """Discard hover state after leaving the body."""
         self.tooltip = None
         self._hovered = None
-        self.refresh()
 
     def on_click(self, event: events.Click) -> None:
         """Confirm the clicked child, matching the option-list interaction."""
@@ -249,11 +252,9 @@ class ValueChildren(ScrollView, can_focus=True):
             return Strip.blank(width, style)
         index = document.child_at_line(line)
         if index is None:
-            option = self.get_option_at_index(0 if line == 0 else self.option_count - 1)
-            prompt = cast(Text, option.prompt)
+            prompt = self._get_prompt(0 if line == 0 else self.option_count - 1)
         else:
-            option = self.get_option_at_index(index + 1)
-            prompt = cast(Text, option.prompt)
+            prompt = self._get_prompt(index + 1)
             prompt = prompt.split("\n")[line - document.child_line(index)]
             style += Style(meta={"value_child": index})
             if self.highlighted == index + 1:
