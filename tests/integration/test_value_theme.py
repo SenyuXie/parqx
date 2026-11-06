@@ -76,7 +76,7 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             variables = app.get_css_variables()
             surface = Color.parse(variables["surface"])
             for widget in (browser, options, browser.reader):
-                assert widget.styles.background == surface
+                assert widget.rich_style.bgcolor == surface.rich_color
             for scroll_view in (browser.crumbs, options, browser.reader):
                 assert scroll_view.styles.scrollbar_color == Color.parse(
                     variables["scrollbar"]
@@ -135,7 +135,8 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             assert browser.reader.show_vertical_scrollbar
             scalar_style = next(iter(browser.reader.render_line(0))).style
             assert scalar_style is not None
-            assert scalar_style.bgcolor == surface.rich_color
+            assert scalar_style.bgcolor == browser.rich_style.bgcolor
+            assert scalar_style.bgcolor != surface.rich_color
             _assert_readable(browser.reader.render_line(0))
             assert await pilot.click(browser.query_one(".value-crumb", Button))
             assert options.display

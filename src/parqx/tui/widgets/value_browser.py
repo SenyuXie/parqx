@@ -78,12 +78,15 @@ class ValueBrowser(Vertical):
         width: 33%; height: 1fr;
         border-left: solid $primary-muted;
         padding: 1 1 0 1; background: $surface;
-        &:focus-within { border-left: solid $primary; }
+        &:focus-within {
+            border-left: solid $primary;
+            background-tint: $foreground 5%;
+        }
         .value--key { color: #1d4b70; }
-        .value--string, .value-reader.string { color: #1b5632; }
-        .value--number, .value-reader.number { color: #713e0f; }
-        .value--boolean, .value-reader.boolean { color: #583d7c; }
-        .value--muted, .value-reader.muted { color: #454f5e; }
+        .value--string, .value-reader.string { color: #19512f; }
+        .value--number, .value-reader.number { color: #6b3a0e; }
+        .value--boolean, .value-reader.boolean { color: #533975; }
+        .value--muted, .value-reader.muted { color: #3e4856; }
         .value-heading {
             height: 1; padding: 0 1; color: $text-muted; text-style: bold;
         }
@@ -105,7 +108,7 @@ class ValueBrowser(Vertical):
             color: $text-muted; border-bottom: solid $primary-muted;
         }
         .value-reader {
-            height: 1fr; padding: 0 2; border: none; background: $surface;
+            height: 1fr; padding: 0 2; border: none; background: transparent;
             &:focus { border: none; }
             &.error { color: $error; }
         }
@@ -114,8 +117,8 @@ class ValueBrowser(Vertical):
             padding: 0 1; color: $text-muted;
         }
         .value-children {
-            height: 1fr; padding: 0; border: none; background: $surface;
-            &:focus { border: none; background-tint: transparent; }
+            height: 1fr; padding: 0; border: none; background: transparent;
+            &:focus { border: none; }
             & > .option-list--option-highlighted {
                 text-style: none; background: $block-cursor-blurred-background 25%;
             }
@@ -125,11 +128,11 @@ class ValueBrowser(Vertical):
             & > .option-list--option-hover { background: $block-hover-background; }
         }
         &:dark {
-            .value--key { color: #91b8de; }
+            .value--key { color: #98bfe5; }
             .value--string, .value-reader.string { color: #b4cfaa; }
             .value--number, .value-reader.number { color: #e5c18a; }
-            .value--boolean, .value-reader.boolean { color: #bba7dd; }
-            .value--muted, .value-reader.muted { color: #a3b1bf; }
+            .value--boolean, .value-reader.boolean { color: #c3afe5; }
+            .value--muted, .value-reader.muted { color: #acbac8; }
         }
     }
     """
