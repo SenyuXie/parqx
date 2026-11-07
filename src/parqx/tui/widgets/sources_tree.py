@@ -5,6 +5,7 @@ from typing import ClassVar
 from rich.text import Text
 from textual.binding import Binding, BindingType
 from textual.widgets import Tree
+from textual.widgets.tree import TreeNode
 
 from parqx.catalog import SourceEntry
 
@@ -24,15 +25,15 @@ class SourcesTree(Tree[str]):
         self.show_root = False
         self.auto_expand = False
         self.root.expand()
+        self._source_nodes: dict[str, TreeNode[str]] = {}
         for entry in entries:
-            self.root.add("", data=entry.spec.source_id)
+            source_id = entry.spec.source_id
+            self._source_nodes[source_id] = self.root.add("", data=source_id)
             self.update_source(entry)
 
     def update_source(self, entry: SourceEntry) -> None:
         """Refresh one source's availability and schema without replacing the tree."""
-        node = next(
-            node for node in self.root.children if node.data == entry.spec.source_id
-        )
+        node = self._source_nodes[entry.spec.source_id]
         label = Text(entry.spec.display_name, style="bold")
         if entry.state == "loading":
             label.append(" (loading)", style="dim")

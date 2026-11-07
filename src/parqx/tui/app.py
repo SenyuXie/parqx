@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -94,7 +95,11 @@ class Parqx(App[Any]):
         super().__init__()
         self.config = config or ParqxConfig()
         self.catalog = SourceCatalog(paths)
-        self._sources = SourcesTree(self.catalog.entries)
+        entries = self.catalog.entries
+        self._display_name_counts = Counter(
+            entry.spec.display_name.casefold() for entry in entries
+        )
+        self._sources = SourcesTree(entries)
         self._sources.display = False
         self._tabs = WorkspaceTabs(id="results")
         self._empty = Vertical(id="no-tabs")
@@ -147,13 +152,7 @@ class Parqx(App[Any]):
         entry = self.catalog.get(source_id)
         source = entry.spec
         title = source.display_name
-        if (
-            sum(
-                item.spec.display_name.casefold() == title.casefold()
-                for item in self.catalog.entries
-            )
-            > 1
-        ):
+        if self._display_name_counts[title.casefold()] > 1:
             title += f" ({source.quoted_name})"
         pane = TablePane(
             title, source, id=source_id, executor=self._source_pool, config=self.config

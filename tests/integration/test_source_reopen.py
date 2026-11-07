@@ -32,7 +32,7 @@ async def test_sidebar_activates_and_reopens_one_default_view_per_source(
     tmp_path: Path,
 ) -> None:
     first = tmp_path / "one" / "sales.parquet"
-    second = tmp_path / "two" / first.name
+    second = tmp_path / "two" / "sales.PARQUET"
     for path in (first, second):
         path.parent.mkdir()
     pq.write_table(pa.table({"amount": [10, 20, 30]}), first)
@@ -90,7 +90,8 @@ async def test_sidebar_activates_and_reopens_one_default_view_per_source(
             "sales",
             "sales_2",
         ]
-        assert '"sales"' in str(tabs.get_tab("source-1").label)
+        assert str(tabs.get_tab("source-1").label) == 'sales.parquet ("sales")'
+        assert str(tabs.get_tab("source-2").label) == 'sales.PARQUET ("sales_2")'
         assert str(first.resolve()) in str(tabs.get_tab("source-1").tooltip)
         sources.focus()
         await pilot.press("home", "right", "down", "down", "down", "enter")
