@@ -8,7 +8,7 @@ from textual.widgets import Button, TabbedContent
 
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import open_query, open_sql_query, wait_for
+from tests.helpers import open_query, open_sql_query, press_run_button, wait_for
 
 
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
@@ -24,7 +24,7 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         assert query.table is not None
         assert query.view is not None
@@ -104,7 +104,7 @@ async def test_closing_maximized_workspace_restores_main_view(
             await wait_for(lambda: tabs.tab_count == 0, pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         assert query.table is not None
         assert query.view is not None
@@ -161,7 +161,7 @@ async def test_long_sql_and_wide_results_stay_usable_after_resize(
             * 39
         )
         query.editor.load_text(sql)
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         table = query.table
         assert table is not None

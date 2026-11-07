@@ -19,6 +19,7 @@ from tests.helpers import (
     confirm_query_close,
     open_query,
     open_sql_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -45,7 +46,7 @@ async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
         assert str(source_action.label) == "Open Sources"
         assert app.screen.region.contains_region(query_action.region)
         assert app.screen.region.contains_region(source_action.region)
-        await pilot.press("ctrl+enter", "ctrl+w", "tab")
+        await pilot.press("ctrl+w", "tab")
         assert tabs.tab_count == 0
         assert source_action.has_focus
         await pilot.press("shift+tab", "enter")
@@ -56,7 +57,7 @@ async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
         assert query.editor.text == ""
         assert query.current_result is None
         query.editor.load_text('SELECT count(*) AS total FROM "smoke"')
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
         assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 5
         assert tabs.tab_count == 1
@@ -87,7 +88,7 @@ async def test_last_query_requires_confirmation_and_palette_starts_fresh(
         await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 0, pilot)
         assert table.row_count == 0
-        await pilot.press("ctrl+enter", "ctrl+w")
+        await pilot.press("ctrl+w")
         fresh = await open_sql_query(pilot)
         assert tabs.active == "query-2"
         assert fresh.editor.text == ""
@@ -224,30 +225,17 @@ async def test_source_load_finishes_after_all_views_close_without_reopening_them
                 release.set()
 
 
-async def test_sidebar_shortcuts_use_active_workspace_and_never_selected_source(
+async def test_sidebar_focus_scopes_table_keys_and_closes_the_active_tab(
     small_parquet: Path,
 ) -> None:
     app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         table = await run_query(app, pilot, "SELECT sum(id) FROM smoke")
         tabs = app.query_one(TabbedContent)
-        query = tabs.active_pane
-        assert isinstance(query, QueryWorkspace)
-        query.editor.load_text("SELECT count(*) AS total FROM smoke")
         app.action_toggle_sources()
         sources = app.query_one(SourcesTree)
         sources.focus()
-        await pilot.press("home", "enter")
-        await wait_for(lambda: tabs.active == "source-1", pilot)
-        await pilot.press("ctrl+enter")
-        assert not query.running
-        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 15
-        await select_tab(tabs, "query-1", pilot)
-        sources.focus()
-        await pilot.press("h", "i", "z", "c", "ctrl+enter")
-        await wait_for(lambda: table.columns[0].name == "total", pilot)
-        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
-        assert query.editor.text == "SELECT count(*) AS total FROM smoke"
+        await pilot.press("h", "i", "z", "c")
         assert table.show_header
         assert table.show_row_index
         assert not table.zebra_stripes
@@ -283,7 +271,7 @@ async def test_last_running_workspace_stays_open_until_execution_finishes(
                 await wait_for(lambda: tabs.tab_count == 0, pilot)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT 42 AS answer")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 await pilot.press("ctrl+w")
                 assert not app.screen.is_modal

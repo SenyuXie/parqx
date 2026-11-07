@@ -6,7 +6,13 @@ import pytest
 from textual.widgets import TabbedContent, TextArea
 
 from parqx.tui.app import Parqx
-from tests.helpers import confirm_query_close, open_sql_query, select_tab, wait_for
+from tests.helpers import (
+    confirm_query_close,
+    open_sql_query,
+    press_run_button,
+    select_tab,
+    wait_for,
+)
 
 
 async def test_query_palette_opens_independent_blank_workspaces(
@@ -53,7 +59,7 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         query = await open_query(app, pilot)
         assert query.run_button.disabled
         query.editor.load_text("SELECT name FROM smoke ORDER BY id")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
         table = query.query_one(ArrowTable)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
@@ -64,16 +70,11 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         await pilot.press("shift+right")
         assert query.editor.selected_text == "c"
         table.focus()
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: table.columns[0].name == "total", pilot)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 5
         assert table.row_count == 1
         assert table.has_focus
-        query.editor.load_text("SELECT 7 AS from_tab_strip")
-        await select_tab(tabs, "query-1", pilot)
-        await pilot.press("ctrl+enter")
-        await wait_for(lambda: table.columns[0].name == "from_tab_strip", pilot)
-        assert table.get_cell_at(Coordinate(0, 0)).as_py() == 7
         query.editor.load_text("SELECT 9 AS from_button")
         await wait_for(lambda: not query.run_button.disabled, pilot)
         assert await pilot.click(query.run_button)
@@ -84,6 +85,30 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         assert not query.run_button.disabled
         assert tabs.tab_count == 2
         assert len(app.catalog.snapshot()) == 1
+
+
+async def test_run_button_executes_its_own_draft_after_tab_switch(
+    small_parquet: Path,
+) -> None:
+    from tests.helpers import open_query
+
+    app = Parqx([small_parquet])
+    async with app.run_test() as pilot:
+        tabs = app.query_one(TabbedContent)
+        first = await open_query(app, pilot)
+        first.editor.load_text("SELECT 11")
+        second = await open_query(app, pilot)
+        second.editor.load_text("SELECT 22")
+        await select_tab(tabs, "query-1", pilot)
+
+        # Switch before Textual delivers the button's queued Pressed message.
+        first.run_button.press()
+        tabs.active = "query-2"
+        await wait_for(lambda: first.current_result is not None, pilot)
+        assert first.current_result is not None
+        assert first.current_result.table.column(0)[0].as_py() == 11
+        assert second.current_result is None
+        assert tabs.active_pane is second
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -119,15 +144,15 @@ async def test_completion_never_moves_focus_from_another_workspace(
                 tabs = app.query_one(TabbedContent)
                 first = await open_query(app, pilot)
                 first.editor.load_text("SELECT 42 AS answer")
-                await pilot.press("ctrl+enter")
+                await press_run_button(first, pilot)
                 await wait_for(started.is_set, pilot)
-                await pilot.press("ctrl+enter", "x", "enter", "backspace", "ctrl+w")
+                await pilot.press("x", "enter", "backspace", "ctrl+w")
                 assert first.editor.text == "SELECT 42 AS answer"
                 assert first.editor.read_only
                 assert tabs.active == "query-1"
                 second = await open_query(app, pilot)
                 second.editor.load_text("SELECT 17")
-                await pilot.press("ctrl+enter")
+                await press_run_button(second, pilot)
                 assert not second.editor.read_only
                 second.editor.move_cursor((0, 9))
                 await pilot.press("space", "-", "-", "space", "x")
@@ -147,7 +172,7 @@ async def test_completion_never_moves_focus_from_another_workspace(
                 assert second.editor.has_focus
                 assert not first.editor.read_only
                 assert not second.query(ArrowTable)
-                await pilot.press("ctrl+enter")
+                await press_run_button(second, pilot)
                 await wait_for(lambda: bool(second.query(ArrowTable)), pilot)
                 assert (
                     second.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py()

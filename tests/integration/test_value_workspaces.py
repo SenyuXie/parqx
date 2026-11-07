@@ -6,7 +6,7 @@ import pytest
 
 from parqx.tui.app import Parqx
 from parqx.tui.widgets.table_view import TableView
-from tests.helpers import run_query, wait_for, wait_for_source_table
+from tests.helpers import press_run_button, run_query, wait_for, wait_for_source_table
 
 
 @pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
@@ -168,9 +168,6 @@ async def test_failed_execution_preserves_nested_inspection(
         assert browser.reader.text.startswith("row 0\n")
         if hidden:
             await pilot.press("v")
-        else:
-            app.screen.action_maximize()
-            await wait_for(lambda: app.screen.maximized is query.view, pilot)
         focused = app.focused
         started, release = Event(), Event()
         original_sql = duckdb.DuckDBPyConnection.sql
@@ -187,8 +184,11 @@ async def test_failed_execution_preserves_nested_inspection(
             patch.object(app, "notify", wraps=app.notify) as notify,
         ):
             try:
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
+                if not hidden:
+                    app.screen.action_maximize()
+                    await wait_for(lambda: app.screen.maximized is query.view, pilot)
                 assert query.running
                 assert browser.root is root
                 assert browser.reader.scroll_y == position
@@ -290,7 +290,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
 
         with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
             try:
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.current_result is previous_result
                 assert browser.root is not None
@@ -406,7 +406,7 @@ async def test_background_queries_update_only_their_own_inspection(
 
             with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
                 try:
-                    await pilot.press("ctrl+enter")
+                    await press_run_button(running, pilot)
                     await wait_for(started.is_set, pilot)
                     await select_tab(tabs, active_id, pilot)
                     active_reader.focus()
@@ -567,11 +567,11 @@ async def test_shutdown_releases_inspection_before_pending_query_finishes(
                 assert browser.root is not None
                 value = weakref.ref(browser.root.value)
                 data = weakref.ref(table.data)
+                query.editor.load_text("SELECT 42 AS delayed")
+                await press_run_button(query, pilot)
+                await wait_for(started.is_set, pilot)
                 app.screen.action_maximize()
                 await wait_for(lambda: app.screen.maximized is query.view, pilot)
-                query.editor.load_text("SELECT 42 AS delayed")
-                await pilot.press("ctrl+enter")
-                await wait_for(started.is_set, pilot)
             gc.collect()
             assert browser.root is None
             assert value() is None

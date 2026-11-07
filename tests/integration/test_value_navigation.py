@@ -12,7 +12,13 @@ from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.scalar_reader import ScalarReader
 from parqx.tui.widgets.value_browser import ValueBrowser
 from parqx.tui.widgets.value_children import ValueChildren
-from tests.helpers import open_query, run_query, wait_for, wait_for_source_table
+from tests.helpers import (
+    open_query,
+    press_run_button,
+    run_query,
+    wait_for,
+    wait_for_source_table,
+)
 
 
 @pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
@@ -180,7 +186,7 @@ async def test_parent_position_survives_hide_and_new_roots_reset_it(
         assert options.has_focus
         if query is not None:
             query.editor.load_text("SELECT * FROM nested")
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             await wait_for(lambda: not query.running and browser.root is None, pilot)
             assert browser.display
             assert browser.reader.has_focus

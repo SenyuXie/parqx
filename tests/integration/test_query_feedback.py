@@ -7,7 +7,7 @@ from textual.widgets import TabbedContent
 
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import open_query, wait_for, wait_for_query_error
+from tests.helpers import open_query, press_run_button, wait_for, wait_for_query_error
 
 
 async def test_draft_edits_preserve_current_result(small_parquet: Path) -> None:
@@ -19,7 +19,7 @@ async def test_draft_edits_preserve_current_result(small_parquet: Path) -> None:
         assert not query.query(ArrowTable)
         sql = "SELECT name FROM smoke ORDER BY id"
         query.editor.load_text(sql)
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(
             lambda: bool(query.query(ArrowTable)) and not query.running, pilot
         )
@@ -68,14 +68,14 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
                 query = await open_query(app, pilot)
                 first_sql = "SELECT name FROM smoke ORDER BY id"
                 query.editor.load_text(first_sql)
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(
                     lambda: bool(query.query(ArrowTable)) and not query.running, pilot
                 )
                 table = query.query_one(ArrowTable)
                 first_data = weakref.ref(table.data)
                 query.editor.load_text(failing_sql)
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.run_button.disabled
                 assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
@@ -88,7 +88,7 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
                 assert table.row_count == 5
                 query.editor.focus()
                 query.editor.load_text("SELECT 42 AS recovered")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(
                     lambda: table.columns[0].name == "recovered" and not query.running,
                     pilot,
@@ -101,7 +101,7 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
 
                 await wait_for(released, pilot)
                 query.editor.load_text("SELECT id AS empty_id FROM smoke WHERE false")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(
                     lambda: table.row_count == 0 and not query.running, pilot
                 )
@@ -137,7 +137,7 @@ async def test_failure_notifies_and_allows_retry(small_parquet: Path) -> None:
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT * FROM missing_table")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.run_button.disabled
                 assert not query.query(ArrowTable)
@@ -151,7 +151,7 @@ async def test_failure_notifies_and_allows_retry(small_parquet: Path) -> None:
                 started.clear()
                 release.clear()
                 query.editor.focus()
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.run_button.disabled
                 assert not query.query(ArrowTable)

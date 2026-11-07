@@ -93,10 +93,18 @@ async def toggle_sources(
     await wait_for(lambda: app.screen is not palette, pilot)
 
 
+async def press_run_button(query: QueryWorkspace, pilot: Pilot[Any]) -> None:
+    """Activate Run Query without moving the focus under test."""
+    await wait_for(lambda: not query.run_button.disabled, pilot)
+    query.run_button.press()
+    await pilot.pause()
+
+
 async def run_query(app: Parqx, pilot: Pilot[Any], sql: str) -> ArrowTable:
     query = await open_query(app, pilot)
     query.editor.load_text(sql)
-    await pilot.press("ctrl+enter")
+    await wait_for(lambda: not query.run_button.disabled, pilot)
+    assert await pilot.click(query.run_button)
     await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
     table = query.query_one(ArrowTable)
     table.focus()

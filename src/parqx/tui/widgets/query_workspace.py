@@ -45,7 +45,6 @@ class QueryWorkspace(TabPane):
             variant="primary",
             compact=True,
             disabled=True,
-            tooltip="Ctrl+Enter",
         )
         self.current_result: QueryResult | None = None
         self.table: ArrowTable | None = None

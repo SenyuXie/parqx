@@ -15,6 +15,7 @@ from parqx.tui.widgets.sources_tree import SourcesTree
 from tests.helpers import (
     confirm_query_close,
     open_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -136,7 +137,7 @@ async def test_empty_workspaces_and_file_views_close_without_confirmation(
         assert tabs.active_pane is query
         query.editor.load_text("SELECT count(*) AS total FROM smoke")
         query.editor.focus()
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
         assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 5
 
@@ -165,7 +166,7 @@ async def test_background_completion_preserves_close_target_and_modal_focus(
                 tabs = app.query_one(TabbedContent)
                 running = await open_query(app, pilot)
                 running.editor.load_text("SELECT 42 AS answer")
-                await pilot.press("ctrl+enter")
+                await press_run_button(running, pilot)
                 await wait_for(started.is_set, pilot)
                 await pilot.press("ctrl+w")
                 assert not app.screen.is_modal
@@ -179,7 +180,7 @@ async def test_background_completion_preserves_close_target_and_modal_focus(
                 assert isinstance(app.focused, Button)
                 assert str(app.focused.label) == "Cancel"
                 cancel = app.focused
-                await pilot.press("ctrl+w", "ctrl+w", "ctrl+enter")
+                await pilot.press("ctrl+w", "ctrl+w")
                 assert app.screen is modal
                 assert app.focused is cancel
                 assert tabs.tab_count == 3

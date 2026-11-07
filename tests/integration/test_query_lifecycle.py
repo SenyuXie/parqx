@@ -19,6 +19,7 @@ from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import (
     open_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -50,11 +51,12 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                 tabs = app.query_one(TabbedContent)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT 42")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.run_button.disabled
                 with patch.object(app, "notify", wraps=app.notify) as notify:
-                    await pilot.press("ctrl+enter", "enter", "x", "backspace", "ctrl+w")
+                    query.run_button.press()
+                    await pilot.press("enter", "x", "backspace", "ctrl+w")
                     assert "busy" in str(notify.call_args).lower()
                     assert query.editor.text == "SELECT 42"
                     assert query.editor.read_only
@@ -67,7 +69,7 @@ async def test_running_query_blocks_edits_and_duplicate_execution(
                     await select_tab(tabs, "source-1", pilot)
                     source = tabs.get_pane("source-1").query_one(ArrowTable)
                     source.focus()
-                    await pilot.press("down", "ctrl+enter")
+                    await pilot.press("down")
                     assert source.cursor_coordinate.row == 1
                     assert calls == 1
                     await pilot.press("ctrl+w")
@@ -167,7 +169,7 @@ async def test_native_failure_unlocks_editor_and_allows_another_query(
             patch.object(duckdb.DuckDBPyConnection, "sql", side_effect=failure),
             patch.object(app, "notify", wraps=app.notify) as notify,
         ):
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             message = await wait_for_query_error(notify, query, pilot)
             assert (str(failure) or type(failure).__name__) in message
             assert not query.editor.read_only
@@ -218,7 +220,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
                 query = await open_query(app, pilot)
                 query.editor.load_text("SELECT 42")
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
             assert not closed.is_set()
             release.set()
@@ -254,10 +256,12 @@ async def test_completed_worker_keeps_workspace_locked_until_message_delivery(
             return post_message(message)
 
         with patch.object(app, "post_message", hold_completion):
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             await wait_for(lambda: bool(held), pilot)
             await pilot.press("ctrl+w")
-            await pilot.press("ctrl+enter")
+            assert query.run_button.disabled
+            query.run_button.press()
+            await pilot.pause()
             assert query.running
             assert app.query_one(TabbedContent).active_pane is query
             assert query.editor.read_only

@@ -27,7 +27,6 @@ from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.screens.confirm_close import ConfirmClose
 from parqx.tui.widgets import ArrowTable, TablePane
-from parqx.tui.widgets.arrow_table import CursorType
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.sources_tree import SourcesTree
 from parqx.tui.widgets.table_view import TableView
@@ -78,21 +77,8 @@ class Parqx(App[Any]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+w", "close_tab", "Close tab", priority=True),
-        Binding("ctrl+enter", "run_query", "Run SQL", priority=True),
-        Binding("h", "toggle_header", "Header"),
-        Binding("i", "toggle_row_index", "Index"),
-        Binding("z", "toggle_zebra", "Zebra"),
-        Binding("c", "cycle_cursor_type", "Cursor"),
+        Binding("ctrl+w", "close_tab", "Close tab", priority=True)
     ]
-
-    _CURSOR_TYPE_CYCLE: ClassVar[tuple[CursorType, ...]] = (
-        "cell",
-        "row",
-        "column",
-        "none",
-    )
-    """Order in which `action_cycle_cursor_type` advances the cursor type."""
 
     def __init__(
         self, paths: Sequence[Path], *, config: ParqxConfig | None = None
@@ -231,29 +217,8 @@ class Parqx(App[Any]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Protect modal input and scope actions to the active view."""
-        if (
-            action
-            in {
-                "close_tab",
-                "open_query",
-                "run_query",
-                "toggle_header",
-                "toggle_row_index",
-                "toggle_zebra",
-                "cycle_cursor_type",
-            }
-            and self.screen.is_modal
-        ):
+        if self.screen.is_modal and action in {"open_query", "close_tab"}:
             return False
-        if action in {
-            "toggle_header",
-            "toggle_row_index",
-            "toggle_zebra",
-            "cycle_cursor_type",
-        }:
-            return isinstance(self.focused, ArrowTable)
-        if action == "run_query":
-            return isinstance(self._active_pane(), QueryWorkspace)
         if action == "close_tab":
             return self._active_pane() is not None
         return super().check_action(action, parameters)
@@ -386,17 +351,17 @@ class Parqx(App[Any]):
             pane.editor.focus()
 
     @on(Button.Pressed, ".run-query")
-    def action_run_query(self) -> None:
-        """Submit the entire active workspace draft to the single execution slot."""
-        if self.screen.is_modal or self._shutting_down:
+    def _on_run_query(self, event: Button.Pressed) -> None:
+        """Submit the draft belonging to the pressed button."""
+        if self.screen.is_modal or self._shutting_down or not event.button.is_attached:
             return
-        pane = self._active_pane()
-        if not isinstance(pane, QueryWorkspace) or not pane.editor.text.strip():
+        pane = event.button.query_ancestor(QueryWorkspace)
+        sql = pane.editor.text
+        if not sql.strip():
             return
         if self._execution is not None:
             self.notify("A query is already running", title="Query busy", markup=False)
             return
-        sql = pane.editor.text
         sources = self.catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
@@ -507,24 +472,3 @@ class Parqx(App[Any]):
             self.call_after_refresh(self._focus_active_table)
         else:
             self.call_after_refresh(self.query_one("#new-query", Button).focus)
-
-    def action_toggle_header(self) -> None:
-        """Toggle the active table's column header row."""
-        if (table := self._active_table()) is not None:
-            table.show_header = not table.show_header
-
-    def action_toggle_row_index(self) -> None:
-        """Toggle the active table's row-index column."""
-        if (table := self._active_table()) is not None:
-            table.show_row_index = not table.show_row_index
-
-    def action_toggle_zebra(self) -> None:
-        """Toggle zebra striping on the active table."""
-        if (table := self._active_table()) is not None:
-            table.zebra_stripes = not table.zebra_stripes
-
-    def action_cycle_cursor_type(self) -> None:
-        """Advance the active table's cursor type."""
-        if (table := self._active_table()) is not None:
-            cycle = self._CURSOR_TYPE_CYCLE
-            table.cursor_type = cycle[(cycle.index(table.cursor_type) + 1) % len(cycle)]

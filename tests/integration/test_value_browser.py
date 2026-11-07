@@ -18,6 +18,7 @@ from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import (
     confirm_query_close,
     open_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -35,7 +36,7 @@ async def test_enter_reads_complete_cell_without_following_cursor(
         if query_result:
             query = await open_query(app, pilot)
             query.editor.load_text("SELECT * FROM scalars")
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             await wait_for(lambda: query.table is not None and not query.running, pilot)
             assert query.table is not None
             table = query.table
@@ -121,7 +122,7 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM scalars")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         table = query.table
         assert table is not None
@@ -145,7 +146,7 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         assert browser.display
         query.editor.load_text("SELECT 'new result' AS note")
         reader.focus()
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: table.column_count == 1 and not query.running, pilot)
         assert reader.has_focus
         assert browser.display
@@ -154,7 +155,7 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         await pilot.press("escape", "enter")
         assert reader.text == "new result"
         query.editor.load_text("SELECT 'no rows' AS note WHERE false")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: table.row_count == 0 and not query.running, pilot)
         assert reader.text == "No rows to inspect."
         assert table.has_focus
@@ -177,7 +178,7 @@ async def test_views_keep_independent_selections_and_release_on_close(
         source_value = weakref.ref(source_browser.root.value)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT true AS enabled")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         browser = query.query_one(ValueBrowser)
         assert not browser.display
@@ -251,7 +252,7 @@ async def test_initial_empty_result_has_no_value_to_select(small_parquet: Path) 
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT 42 AS value WHERE false")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         table = query.table
         assert table is not None

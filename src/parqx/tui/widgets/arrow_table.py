@@ -196,6 +196,10 @@ class ArrowTable(ScrollView, can_focus=True):
             return self.arrow_table
 
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("h", "toggle('show_header')", "Header"),
+        Binding("i", "toggle('show_row_index')", "Index"),
+        Binding("z", "toggle('zebra_stripes')", "Zebra"),
+        Binding("c", "cycle_cursor_type", "Cursor"),
         Binding("enter", "select_cursor", "Select", show=False),
         Binding("up", "cursor_up", "Cursor up", show=False),
         Binding("down", "cursor_down", "Cursor down", show=False),
@@ -211,6 +215,10 @@ class ArrowTable(ScrollView, can_focus=True):
     """ArrowTable bindings:
     | Key       | Description                                  |
     | :---      | :---                                         |
+    | h         | Toggle the column header row.                |
+    | i         | Toggle the row-index column.                 |
+    | z         | Toggle zebra striping.                       |
+    | c         | Cycle through the cursor modes.              |
     | enter     | Select cells under the cursor.               |
     | up        | Move the cursor up.                          |
     | down      | Move the cursor down.                        |
@@ -223,6 +231,13 @@ class ArrowTable(ScrollView, can_focus=True):
     | home      | Move to the home position (leftmost column). |
     | end       | Move to the end position (rightmost column). |
     """
+
+    _CURSOR_TYPE_CYCLE: ClassVar[tuple[CursorType, ...]] = (
+        "cell",
+        "row",
+        "column",
+        "none",
+    )
 
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "arrowtable--cursor",
@@ -2012,6 +2027,12 @@ class ArrowTable(ScrollView, can_focus=True):
             self.move_cursor(column=len(self.columns) - 1)
         else:
             self.scroll_x = self.max_scroll_x
+
+    def action_cycle_cursor_type(self) -> None:
+        """Advance this table's cursor mode."""
+        cycle = self._CURSOR_TYPE_CYCLE
+        index = cycle.index(self.cursor_type)
+        self.cursor_type = cycle[(index + 1) % len(cycle)]
 
     def action_cursor_up(self) -> None:
         """Move the cursor up or scroll up when cursor movement is disabled."""

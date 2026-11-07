@@ -18,7 +18,14 @@ from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
-from tests.helpers import open_query, run_query, select_tab, toggle_sources, wait_for
+from tests.helpers import (
+    open_query,
+    press_run_button,
+    run_query,
+    select_tab,
+    toggle_sources,
+    wait_for,
+)
 
 
 async def test_sidebar_activates_and_reopens_one_default_view_per_source(
@@ -212,7 +219,7 @@ async def test_reopen_failure_preserves_query_draft_and_current_result(
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT sum(id) FROM smoke")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(lambda: query.current_result is not None, pilot)
         query.editor.load_text("SELECT name FROM smoke")
         tabs = app.query_one(TabbedContent)
@@ -262,7 +269,7 @@ async def test_source_reopening_preserves_running_query_owner_and_other_drafts(
             executing = await open_query(app, pilot)
             executing.editor.load_text('SELECT sum(id) FROM "smoke"')
             with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_query):
-                await pilot.press("ctrl+enter")
+                await press_run_button(executing, pilot)
                 await wait_for(started.is_set, pilot)
                 draft = await open_query(app, pilot)
                 draft.editor.load_text("SELECT name FROM other")

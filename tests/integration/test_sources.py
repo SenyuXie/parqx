@@ -22,6 +22,7 @@ from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable, TablePane
 from tests.helpers import (
     open_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -58,6 +59,10 @@ async def test_sources_keep_order_labels_state_and_sql_after_tabs_close(
 
         first.focus()
         await pilot.press("h", "i", "z", "c")
+        assert not first.show_header
+        assert not first.show_row_index
+        assert first.zebra_stripes
+        assert first.cursor_type == "row"
         first.move_cursor(row=2, column=1, animate=False)
         await pilot.pause()
         state = (
@@ -444,7 +449,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
                 )
                 query = await open_query(app, pilot)
                 query.editor.load_text('SELECT count(*) FROM "pending"')
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(query_started.is_set, pilot)
                 metadata_release.set()
                 await wait_for(
@@ -457,7 +462,7 @@ async def test_running_query_uses_frozen_sources_until_retried(
                 assert "pending" in message
                 assert "Still loading" in message
                 assert query.editor.has_focus
-                await pilot.press("ctrl+enter")
+                await press_run_button(query, pilot)
                 await wait_for(
                     lambda: bool(query.query(ArrowTable)) and not query.running, pilot
                 )

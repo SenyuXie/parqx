@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from textual import events
-from textual._xterm_parser import XTermParser
 from textual.command import CommandPalette
 from textual.coordinate import Coordinate
 from textual.widgets import Footer, TabbedContent
@@ -19,6 +18,7 @@ from tests.helpers import (
     confirm_query_close,
     open_query,
     open_sql_query,
+    press_run_button,
     run_query,
     select_tab,
     wait_for,
@@ -42,7 +42,7 @@ async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
         query.editor.focus()
         query.editor.load_text('SELECT "missing [bold]汉字[/bold]" FROM smoke')
         with patch.object(app, "notify") as notify:
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             message = await wait_for_query_error(notify, query, pilot)
             assert "missing [bold]汉字[/bold]" in message
             assert query.editor.has_focus
@@ -52,7 +52,7 @@ async def test_bounded_results_and_error_recovery(small_parquet: Path) -> None:
             assert query.current_result is not None
             assert query.current_result.sql == "SELECT name FROM smoke ORDER BY id"
             query.editor.load_text("SELECT name FROM smoke WHERE false")
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             await wait_for(lambda: table.row_count == 0 and not query.running, pilot)
             assert table.columns[0].name == "name"
             assert tabs.tab_count == 2
@@ -136,13 +136,13 @@ async def test_unavailable_sources_are_identified_and_recover(
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM smoke")
         with patch.object(app, "notify", wraps=app.notify) as notify:
-            await pilot.press("ctrl+enter")
+            await press_run_button(query, pilot)
             message = await wait_for_query_error(notify, query, pilot)
         assert "Unavailable sources" in message
         assert str(small_parquet) in message
         small_parquet.write_bytes(contents)
         query.editor.load_text("SELECT count(*) FROM smoke")
-        await pilot.press("ctrl+enter")
+        await press_run_button(query, pilot)
         await wait_for(
             lambda: bool(query.query(ArrowTable)) and not query.running, pilot
         )
@@ -174,7 +174,8 @@ async def test_palette_preserves_editor_selection_and_history(
         assert editor.text == "SELECT 42"
         await pilot.press("ctrl+z")
         assert editor.text == "SELECT "
-        await pilot.press("ctrl+y", "ctrl+enter")
+        await pilot.press("ctrl+y")
+        await press_run_button(query, pilot)
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
         assert query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 42
         second = await open_sql_query(pilot)
@@ -194,7 +195,8 @@ async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -
         assert editor.region.height > 0
         assert 0 <= footer.region.y < footer.region.bottom <= 24
         editor.load_text(" \n ")
-        await pilot.press("ctrl+enter")
+        await pilot.pause()
+        assert query.run_button.disabled
         assert not query.running
         assert not query.query(ArrowTable)
         editor.load_text("")
@@ -216,17 +218,13 @@ async def test_compact_editor_keyboard_and_terminal_input(small_parquet: Path) -
         editor.move_cursor((0, 7))
         await pilot.press("shift+right", "shift+right")
         assert editor.selected_text == "42"
-        for message in XTermParser().feed("\x1b[13;5u"):
-            app.post_message(message)
+        query.run_button.focus()
+        await pilot.press("enter")
         await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
         table = query.query_one(ArrowTable)
         assert table.get_cell_at(Coordinate(0, 0)).as_py() == 42
         assert table.columns[0].name == "answer"
         assert tabs.tab_count == 2
-        await select_tab(tabs, "source-1", pilot)
-        await pilot.press("ctrl+enter")
-        assert tabs.tab_count == 2
-        assert not query.running
 
 
 async def test_query_editor_retains_height_through_multiline_edits(
