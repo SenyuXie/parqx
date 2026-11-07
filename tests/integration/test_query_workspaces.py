@@ -57,6 +57,8 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
         query = await open_query(app, pilot)
+        # Exercise consecutive submissions without the button animation suppressing a click.
+        query.run_button.active_effect_duration = 0
         assert query.run_button.disabled
         query.editor.load_text("SELECT name FROM smoke ORDER BY id")
         await press_run_button(query, pilot)

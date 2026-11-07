@@ -1,5 +1,7 @@
 """Large value journeys through production file and retained Query views."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pyarrow as pa
@@ -11,6 +13,24 @@ from parqx.tui.app import Parqx
 from parqx.tui.value_document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import run_query, wait_for, wait_for_source_table
+
+
+def pause_indexing(
+    patch: pytest.MonkeyPatch, document_type: type[ContainerDocument | ScalarDocument]
+) -> tuple[asyncio.Event, asyncio.Event]:
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed(
+        document: ContainerDocument | ScalarDocument,
+    ) -> AsyncIterator[None]:
+        if isinstance(document, document_type):
+            started.set()
+            await release.wait()
+        async for progress in index_document(document):
+            yield progress
+
+    patch.setattr(value_document, "index_document", delayed)
+    return started, release
 
 
 @pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
@@ -73,9 +93,6 @@ async def test_large_list_last_child_and_long_unicode_are_readable(
 async def test_large_map_and_struct_keep_positional_identity(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
-    from collections.abc import AsyncIterator
-
     from parqx.query.engine import QueryResult
     from tests.helpers import open_query
 
@@ -112,19 +129,8 @@ async def test_large_map_and_struct_keep_positional_identity(
         position = browser.options.scroll_y
         await pilot.press("enter")
         assert browser.reader.text == str(count - 1)
-        started, release = asyncio.Event(), asyncio.Event()
-
-        async def delayed(
-            document: ContainerDocument | ScalarDocument,
-        ) -> AsyncIterator[None]:
-            if isinstance(document, ContainerDocument):
-                started.set()
-                await release.wait()
-            async for progress in index_document(document):
-                yield progress
-
         with monkeypatch.context() as patch:
-            patch.setattr(value_document, "index_document", delayed)
+            started, release = pause_indexing(patch, ContainerDocument)
             try:
                 await pilot.press("backspace")
                 await wait_for(started.is_set, pilot)
@@ -150,9 +156,6 @@ async def test_large_map_and_struct_keep_positional_identity(
 async def test_delayed_formatting_cannot_overwrite_navigation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
-    import asyncio
-    from collections.abc import AsyncIterator
-
     path = tmp_path / "delayed_values.parquet"
     pq.write_table(
         pa.table(
@@ -272,20 +275,6 @@ async def test_long_wrapped_text_restores_after_native_maximize(
 async def test_hide_during_reflow_preserves_the_pending_source_position(
     large_values_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
-    from collections.abc import AsyncIterator
-
-    started, release = asyncio.Event(), asyncio.Event()
-
-    async def delayed(
-        document: ContainerDocument | ScalarDocument,
-    ) -> AsyncIterator[None]:
-        if isinstance(document, ScalarDocument):
-            started.set()
-            await release.wait()
-        async for progress in index_document(document):
-            yield progress
-
     app = Parqx([large_values_parquet])
     async with app.run_test(size=(160, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
@@ -300,7 +289,7 @@ async def test_hide_during_reflow_preserves_the_pending_source_position(
         )
         assert reader.document is not None
         offset = reader.document.byte_offset(int(reader.scroll_y))
-        monkeypatch.setattr(value_document, "index_document", delayed)
+        started, release = pause_indexing(monkeypatch, ScalarDocument)
         try:
             await pilot.resize_terminal(120, 40)
             await wait_for(started.is_set, pilot)
