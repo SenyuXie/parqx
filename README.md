@@ -1,5 +1,9 @@
 # Parqx
 
+[![PyPI version](https://img.shields.io/pypi/v/parqx)](https://pypi.org/project/parqx/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://pypi.org/project/parqx/#requires)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
 Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
 
 ![Parqx screenshot](https://github.com/user-attachments/assets/ff7d1f08-1f64-4f9d-a22f-c171f8bbf20a)

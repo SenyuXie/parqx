@@ -6,6 +6,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Senyu Xie", email = "senyuxie@qq.com" }]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = [
     "duckdb>=1.5.5,<2",
     "platformdirs>=4.10.0",
@@ -17,7 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-repository = "https://github.com/SenyuXie/parqx.git"
+homepage = "https://github.com/SenyuXie/parqx"
+repository = "https://github.com/SenyuXie/parqx"
 
 [project.scripts]
 parqx = "parqx.cli:app"
