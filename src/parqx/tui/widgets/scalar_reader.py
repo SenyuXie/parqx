@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 from typing import ClassVar
 
 import pyarrow as pa
@@ -10,14 +9,13 @@ from rich.segment import Segment
 from textual.binding import Binding, BindingType
 from textual.geometry import Size
 from textual.message import Message
-from textual.scroll_view import ScrollView
 from textual.strip import Strip
-from textual.worker import Worker
 
-from parqx.tui.value_document import ReadingPosition, ScalarDocument, index_document
+from parqx.tui.value_document import ReadingPosition, ScalarDocument
+from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 
-class ScalarReader(ScrollView, can_focus=True):
+class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
     """Keep native Arrow content and render only requested terminal lines."""
 
     ALLOW_MAXIMIZE = True
@@ -44,11 +42,9 @@ class ScalarReader(ScrollView, can_focus=True):
     def __init__(self, *, classes: str) -> None:
         """Start with no document or outstanding formatting work."""
         super().__init__(classes=classes)
-        self.document: ScalarDocument | None = None
         self._restore_y: float | None = None
         self._anchor: int | None = None
         self._to_end = False
-        self._index_worker: Worker[None] | None = None
 
     @property
     def soft_wrap(self) -> bool:
@@ -131,31 +127,6 @@ class ScalarReader(ScrollView, can_focus=True):
                 self._restore_y = None
         self.refresh()
         self.post_message(self.Updated(document, restoring=restoring))
-
-    def _start_indexing(self) -> None:
-        if self.document is not None and not self.document.complete and self.is_mounted:
-            self._index_worker = self.run_worker(
-                partial(self._index, self.document), group="value-index", exclusive=True
-            )
-
-    def _cancel_index(self) -> None:
-        if self._index_worker is not None:
-            self._index_worker.cancel()
-            self._index_worker = None
-
-    async def _index(self, document: ScalarDocument) -> None:
-        async for _ in index_document(document):
-            if self.document is not document or not self.is_on_screen:
-                break
-            self._update_size()
-
-    def on_show(self) -> None:
-        """Resume indexing when this reader becomes visible again."""
-        self._start_indexing()
-
-    def on_hide(self) -> None:
-        """Pause hidden formatting without releasing the selected native value."""
-        self._cancel_index()
 
     def action_move(self, delta: int) -> None:
         """Scroll read-only content without moving an editing cursor."""

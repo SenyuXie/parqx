@@ -6,7 +6,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from parqx.tui import value_document
 from parqx.tui.app import Parqx
+from parqx.tui.value_document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import run_query, wait_for, wait_for_source_table
 
@@ -75,8 +77,6 @@ async def test_large_map_and_struct_keep_positional_identity(
     from collections.abc import AsyncIterator
 
     from parqx.query.engine import QueryResult
-    from parqx.tui.value_document import ContainerDocument, index_document
-    from parqx.tui.widgets import value_children
     from tests.helpers import open_query
 
     count = 10_000
@@ -114,14 +114,17 @@ async def test_large_map_and_struct_keep_positional_identity(
         assert browser.reader.text == str(count - 1)
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def delayed(document: ContainerDocument) -> AsyncIterator[None]:
-            started.set()
-            await release.wait()
+        async def delayed(
+            document: ContainerDocument | ScalarDocument,
+        ) -> AsyncIterator[None]:
+            if isinstance(document, ContainerDocument):
+                started.set()
+                await release.wait()
             async for progress in index_document(document):
                 yield progress
 
         with monkeypatch.context() as patch:
-            patch.setattr(value_children, "index_document", delayed)
+            patch.setattr(value_document, "index_document", delayed)
             try:
                 await pilot.press("backspace")
                 await wait_for(started.is_set, pilot)
@@ -150,9 +153,6 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
     import asyncio
     from collections.abc import AsyncIterator
 
-    from parqx.tui.value_document import ScalarDocument, index_document
-    from parqx.tui.widgets import scalar_reader
-
     path = tmp_path / "delayed_values.parquet"
     pq.write_table(
         pa.table(
@@ -162,17 +162,20 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
     )
     started, release, cancelled, finished = (asyncio.Event() for _ in range(4))
 
-    async def delayed(document: ScalarDocument) -> AsyncIterator[None]:
-        started.set()
-        # Simulate a batch already underway when its view stops owning it.
-        while not release.is_set():
-            try:
-                await release.wait()
-            except asyncio.CancelledError:
-                cancelled.set()
-        document.advance()
-        finished.set()
-        yield
+    async def delayed(
+        document: ContainerDocument | ScalarDocument,
+    ) -> AsyncIterator[None]:
+        if isinstance(document, ScalarDocument):
+            started.set()
+            # Simulate a batch already underway when its view stops owning it.
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+            document.advance()
+            finished.set()
+            yield
         async for progress in index_document(document):
             yield progress
 
@@ -183,7 +186,7 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
         browser = table.parent.query_one(ValueBrowser)
         table.focus()
         await pilot.press("enter", "tab")
-        monkeypatch.setattr(scalar_reader, "index_document", delayed)
+        monkeypatch.setattr(value_document, "index_document", delayed)
         try:
             await pilot.press("enter")
             await wait_for(started.is_set, pilot)
@@ -272,14 +275,14 @@ async def test_hide_during_reflow_preserves_the_pending_source_position(
     import asyncio
     from collections.abc import AsyncIterator
 
-    from parqx.tui.value_document import ScalarDocument, index_document
-    from parqx.tui.widgets import scalar_reader
-
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def delayed(document: ScalarDocument) -> AsyncIterator[None]:
-        started.set()
-        await release.wait()
+    async def delayed(
+        document: ContainerDocument | ScalarDocument,
+    ) -> AsyncIterator[None]:
+        if isinstance(document, ScalarDocument):
+            started.set()
+            await release.wait()
         async for progress in index_document(document):
             yield progress
 
@@ -297,7 +300,7 @@ async def test_hide_during_reflow_preserves_the_pending_source_position(
         )
         assert reader.document is not None
         offset = reader.document.byte_offset(int(reader.scroll_y))
-        monkeypatch.setattr(scalar_reader, "index_document", delayed)
+        monkeypatch.setattr(value_document, "index_document", delayed)
         try:
             await pilot.resize_terminal(120, 40)
             await wait_for(started.is_set, pilot)

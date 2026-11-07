@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 from typing import ClassVar
 
 from rich.style import Style
@@ -13,16 +12,15 @@ from textual.content import Content
 from textual.geometry import Region, Size
 from textual.message import Message
 from textual.reactive import reactive
-from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widgets.option_list import Option
-from textual.worker import Worker
 
-from parqx.tui.value_document import ContainerDocument, ReadingPosition, index_document
+from parqx.tui.value_document import ContainerDocument, ReadingPosition
 from parqx.tui.value_node import ValueNode
+from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 
-class ValueChildren(ScrollView, can_focus=True):
+class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     """Render visible options only, retaining absolute positional identities."""
 
     ALLOW_MAXIMIZE = True
@@ -60,12 +58,10 @@ class ValueChildren(ScrollView, can_focus=True):
     def __init__(self, *, classes: str) -> None:
         """Start with no retained node or child widgets."""
         super().__init__(classes=classes)
-        self.document: ContainerDocument | None = None
         self.highlighted: int | None = None
         self._palette: dict[str, Style] = {}
         self._pending_selection = False
         self._restore_y: float | None = None
-        self._index_worker: Worker[None] | None = None
 
     @property
     def option_count(self) -> int:
@@ -147,31 +143,6 @@ class ValueChildren(ScrollView, can_focus=True):
         self._restore_y = position.scroll
         self._pending_selection = position.reveal_selection
         self._update_size()
-
-    def _start_indexing(self) -> None:
-        if self.document is not None and not self.document.complete and self.is_mounted:
-            self._index_worker = self.run_worker(
-                partial(self._index, self.document), group="value-index", exclusive=True
-            )
-
-    def _cancel_index(self) -> None:
-        if self._index_worker is not None:
-            self._index_worker.cancel()
-            self._index_worker = None
-
-    async def _index(self, document: ContainerDocument) -> None:
-        async for _ in index_document(document):
-            if self.document is not document or not self.is_on_screen:
-                break
-            self._update_size()
-
-    def on_show(self) -> None:
-        """Resume indexing when a hidden workspace becomes visible."""
-        self._start_indexing()
-
-    def on_hide(self) -> None:
-        """Stop background formatting while this body is hidden."""
-        self._cancel_index()
 
     def _reveal_selection(self) -> None:
         document = self.document
