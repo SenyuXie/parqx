@@ -5,6 +5,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
+from textual.reactive import var
 from textual.widgets import Button, TabPane, TextArea
 
 from parqx.query.engine import QueryResult
@@ -14,6 +15,9 @@ from parqx.tui.widgets.table_view import TableView
 
 class QueryWorkspace(TabPane):
     """Keep one independent SQL editor mounted across tab changes."""
+
+    running = var(False, init=False)
+    """Whether this workspace is waiting for its submitted query to be delivered."""
 
     DEFAULT_CSS = """
     QueryWorkspace {
@@ -85,19 +89,9 @@ class QueryWorkspace(TabPane):
         self.editor.call_after_refresh(self._scroll_focused_editor_cursor)
         self._update_run_button()
 
-    @property
-    def running(self) -> bool:
-        """Whether this draft is reserved by the application's execution slot."""
-        return self.editor.read_only
-
-    def start_execution(self) -> None:
-        """Keep the current result visible while locking the submitted draft."""
-        self.editor.read_only = True
-        self._update_run_button()
-
-    def finish_execution(self) -> None:
-        """Restore editing after the application applies completion."""
-        self.editor.read_only = False
+    def watch_running(self, running: bool) -> None:
+        """Synchronize the editor and Run button with the workspace's execution state."""
+        self.editor.read_only = running
         self._update_run_button()
 
     async def show_result(self, result: QueryResult) -> None:

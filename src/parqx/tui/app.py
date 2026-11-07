@@ -368,8 +368,8 @@ class Parqx(App[Any]):
             for entry in self.catalog.entries
             if entry.state != "ready"
         )
-        pane.start_execution()
         self._execution = (self._run_query(sources, sql, unavailable), pane)
+        pane.running = True
 
     @work(thread=True, exit_on_error=False, group="query")
     def _run_query(
@@ -424,7 +424,7 @@ class Parqx(App[Any]):
             if self._execution is execution:
                 self._execution = None
             if pane.is_attached and not self._shutting_down:
-                pane.finish_execution()
+                pane.running = False
 
     async def action_close_tab(self) -> None:
         """Close the active tab, confirming before discarding query work."""
