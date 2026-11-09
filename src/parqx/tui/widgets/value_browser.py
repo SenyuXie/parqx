@@ -120,10 +120,14 @@ class ValueBrowser(Vertical):
             height: 1fr; padding: 0; border: none; background: transparent;
             &:focus { border: none; }
             & > .option-list--option-highlighted {
-                text-style: none; background: $block-cursor-blurred-background 25%;
+                background: $block-cursor-blurred-background;
+                color: $block-cursor-blurred-foreground;
+                text-style: $block-cursor-blurred-text-style;
             }
             &:focus > .option-list--option-highlighted {
-                background: $block-cursor-background 15%;
+                background: $block-cursor-background;
+                color: $block-cursor-foreground 100%;
+                text-style: $block-cursor-text-style;
             }
             & > .option-list--option-hover { background: $block-hover-background; }
         }

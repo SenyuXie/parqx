@@ -7,6 +7,7 @@ from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import Button
 
+from parqx.tui.widgets.arrow_table import ArrowTable
 from parqx.tui.widgets.value_browser import BrowseRoot, ValueBrowser
 
 
@@ -36,14 +37,14 @@ def _assert_readable(line: Strip) -> None:
 
 
 async def test_theme_switch_updates_browser_surfaces_and_interaction_states() -> None:
-    outside = Button("Outside")
+    table = ArrowTable(pa.table({"count": [42]}))
 
     class BrowserApp(App[None]):
         CSS = "ValueBrowser { width: 60; }"
 
         def compose(self) -> ComposeResult:
             yield ValueBrowser()
-            yield outside
+            yield table
 
     app = BrowserApp()
     async with app.run_test(size=(80, 30)) as pilot:
@@ -70,8 +71,8 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
         appearances: list[tuple[RichColor | None, ...]] = []
         for theme in ("textual-light", "textual-dark", "dracula"):
             app.theme = theme
-            outside.focus()
-            await pilot.hover(outside)
+            table.focus()
+            await pilot.hover(table)
             await pilot.pause()
             variables = app.get_css_variables()
             surface = Color.parse(variables["surface"])
@@ -85,10 +86,22 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                     variables["scrollbar-background"]
                 )
             assert options.show_vertical_scrollbar
-            blurred = next(iter(options.render_line(1))).style
+            active_cursor = table.get_component_rich_style("arrowtable--cursor")
+            blurred_line = options.render_line(1)
+            blurred = next(iter(blurred_line)).style
             options.focus()
             await pilot.pause()
-            focused = next(iter(options.render_line(1))).style
+            inactive_cursor = table.get_component_rich_style("arrowtable--cursor")
+            focused_line = options.render_line(1)
+            focused = next(iter(focused_line)).style
+            for line, cursor in (
+                (focused_line, active_cursor),
+                (blurred_line, inactive_cursor),
+            ):
+                assert all(
+                    segment.style and segment.style.bgcolor == cursor.bgcolor
+                    for segment in line
+                )
             assert await pilot.hover(options, offset=(10, 2))
             hovered = next(iter(options.render_line(2))).style
             assert blurred is not None
@@ -105,7 +118,7 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             )
 
             # Check every type in the normal, hovered, focused and blurred states.
-            await pilot.hover(outside)
+            await pilot.hover(table)
             await pilot.press("down", "down", "down", "down")
             colors: set[RichColor | None] = set()
             for row in range(1, 5):
@@ -123,7 +136,7 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             await pilot.press("home")
             for row in range(1, 5):
                 _assert_readable(options.render_line(row))
-                outside.focus()
+                table.focus()
                 await pilot.pause()
                 _assert_readable(options.render_line(row))
                 options.focus()
