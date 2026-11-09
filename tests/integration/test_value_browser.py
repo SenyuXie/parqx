@@ -272,6 +272,7 @@ async def test_reading_a_value_preserves_the_sql_editor_viewport(
 ) -> None:
     app = Parqx([small_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT name FROM smoke")
         query = app.query_one("#query-1")
         editor = query.query_one(".sql-draft", TextArea)

@@ -194,6 +194,7 @@ async def test_closed_workspace_releases_result_while_table_reference_survives(
 
     app = Parqx([small_parquet])
     async with app.run_test() as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT * FROM smoke")
         data = weakref.ref(table.data)
         tabs = app.query_one(TabbedContent)

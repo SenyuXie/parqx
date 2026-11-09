@@ -7,7 +7,7 @@ from unittest.mock import patch
 import duckdb
 import pytest
 from textual.coordinate import Coordinate
-from textual.widgets import Button, Static, TabbedContent, TextArea
+from textual.widgets import Button, Static, TabbedContent, Tabs, TextArea
 
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
@@ -22,12 +22,12 @@ from tests.helpers import (
 )
 
 
-@pytest.mark.parametrize("focus", ["editor", "result", "tabs", "sources"])
 async def test_close_confirmation_cancellation_preserves_workspace(
-    small_parquet: Path, focus: str
+    small_parquet: Path,
 ) -> None:
     app = Parqx([small_parquet])
     async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT name FROM smoke ORDER BY id")
         tabs = app.query_one(TabbedContent)
         query = tabs.active_pane
@@ -42,51 +42,43 @@ async def test_close_confirmation_cancellation_preserves_workspace(
         table.focus()
         await pilot.press("down", "down")
         assert table.cursor_coordinate == Coordinate(2, 0)
-        if focus == "editor":
-            editor.focus()
-        elif focus == "tabs":
-            await select_tab(tabs, "query-1", pilot)
-        elif focus == "sources":
-            app.action_toggle_sources()
-            sources = app.query_one(SourcesTree)
-            sources.focus()
-            await pilot.press("right", "down", "left")
-            assert sources.cursor_node is not None
-            assert sources.cursor_node.data == "source-1"
+        app.action_toggle_sources()
+        sources = app.query_one(SourcesTree)
         await pilot.pause()
-        focused = app.focused
-        assert focused is not None
         layout = (editor.region, table.region)
-        await pilot.press("ctrl+w")
-        assert app.screen.is_modal
-        assert editor.text == draft
-        text = " ".join(str(widget.content) for widget in app.screen.query(Static))
-        assert "Close Query 1?" in text
-        assert "SQL draft" in text
-        assert "query result" in text
-        assert isinstance(app.focused, Button)
-        assert str(app.focused.label) == "Cancel"
-        await pilot.press("enter")
-        await wait_for(lambda: not app.screen.is_modal, pilot)
-        assert tabs.active == "query-1"
-        assert app.focused is focused
-        assert editor.text == draft
-        assert editor.selection == selection
-        assert (editor.region, table.region) == layout
-        assert table.cursor_coordinate == Coordinate(2, 0)
-        assert table.get_cell_at(table.cursor_coordinate).as_py() == "carol"
-        await pilot.press("ctrl+w", "escape")
-        await wait_for(lambda: not app.screen.is_modal, pilot)
-        assert tabs.active == "query-1"
-        assert tabs.tab_count == 2
-        assert editor.text == draft
-        assert editor.selection == selection
+
+        for focused in (editor, table, tabs.query_one(Tabs), sources):
+            focused.focus()
+            await pilot.pause()
+            assert focused.has_focus
+            if focused is sources:
+                await pilot.press("right", "down", "left")
+                assert sources.cursor_node is not None
+                assert sources.cursor_node.data == "source-1"
+            await pilot.press("ctrl+w")
+            assert app.screen.is_modal
+            assert isinstance(app.focused, Button)
+            assert str(app.focused.label) == "Cancel"
+            text = " ".join(str(widget.content) for widget in app.screen.query(Static))
+            assert "Close Query 1?" in text
+            assert "SQL draft" in text
+            assert "query result" in text
+            await pilot.press("enter" if focused is editor else "escape")
+            await wait_for(lambda: not app.screen.is_modal, pilot)
+            assert focused.has_focus
+            assert tabs.active == "query-1"
+            assert tabs.tab_count == 2
+            assert editor.text == draft
+            assert editor.selection == selection
+            assert (editor.region, table.region) == layout
+            assert table.cursor_coordinate == Coordinate(2, 0)
+            assert table.get_cell_at(table.cursor_coordinate).as_py() == "carol"
+
         editor.focus()
         await pilot.press("ctrl+z")
         assert editor.text == "SELECT name FROM smoke ORDER BY id"
         await pilot.press("ctrl+y")
         assert editor.text == draft
-        focused.focus()
         await pilot.press("ctrl+w")
         await confirm_query_close(app, pilot)
         await wait_for(lambda: tabs.tab_count == 1, pilot)

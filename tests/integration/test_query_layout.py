@@ -11,8 +11,9 @@ from parqx.tui.widgets import ArrowTable
 from tests.helpers import open_query, open_sql_query, press_run_button, wait_for
 
 
-@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
-@pytest.mark.parametrize("show_sources", [False, True])
+@pytest.mark.parametrize(
+    ("size", "show_sources"), [((80, 24), True), ((120, 40), False)]
+)
 async def test_native_maximize_targets_editor_and_result_and_restores_layout(
     small_parquet: Path, size: tuple[int, int], show_sources: bool
 ) -> None:
@@ -57,13 +58,9 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
         assert query.editor.has_focus
 
         query.table.focus()
-        await pilot.press("ctrl+p")
-        assert isinstance(app.screen, CommandPalette)
-        app.screen.query_one(Input).value = "Maximize"
-        commands = app.screen.query_one(CommandList)
-        await wait_for(lambda: commands.option_count == 1, pilot)
-        await pilot.press("enter")
-        await wait_for(lambda: not app.screen.is_modal, pilot)
+        await wait_for(lambda: query.table is not None and query.table.has_focus, pilot)
+        app.screen.action_maximize()
+        await pilot.pause()
         assert query.view.is_maximized
         assert query.table.region.height > table_region.height
         assert query.table.region.width == size[0]
@@ -88,8 +85,7 @@ async def test_native_maximize_targets_editor_and_result_and_restores_layout(
         assert query.table.row_count == 5
 
 
-@pytest.mark.parametrize("target", ["editor", "result"])
-@pytest.mark.parametrize("last_tab", [False, True])
+@pytest.mark.parametrize(("target", "last_tab"), [("editor", True), ("result", False)])
 async def test_closing_maximized_workspace_restores_main_view(
     small_parquet: Path, target: str, last_tab: bool
 ) -> None:

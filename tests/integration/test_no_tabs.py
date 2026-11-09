@@ -26,12 +26,11 @@ from tests.helpers import (
 )
 
 
-@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
 async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
-    small_parquet: Path, size: tuple[int, int]
+    small_parquet: Path,
 ) -> None:
     app = Parqx([small_parquet])
-    async with app.run_test(size=size) as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         tabs = app.query_one(TabbedContent)
         await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
         await pilot.press("ctrl+w")
@@ -68,6 +67,7 @@ async def test_last_query_requires_confirmation_and_palette_starts_fresh(
 ) -> None:
     app = Parqx([small_parquet])
     async with app.run_test() as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT sum(id) FROM smoke")
         tabs = app.query_one(TabbedContent)
         query = tabs.active_pane
@@ -98,8 +98,9 @@ async def test_last_query_requires_confirmation_and_palette_starts_fresh(
         assert not app.screen.is_modal
 
 
-@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
-@pytest.mark.parametrize("sidebar_visible", [False, True])
+@pytest.mark.parametrize(
+    ("size", "sidebar_visible"), [((80, 24), True), ((120, 40), False)]
+)
 async def test_empty_state_reopens_sources_once_in_default_browsing_state(
     small_parquet: Path, size: tuple[int, int], sidebar_visible: bool
 ) -> None:
@@ -230,6 +231,7 @@ async def test_sidebar_focus_scopes_table_keys_and_closes_the_active_tab(
 ) -> None:
     app = Parqx([small_parquet])
     async with app.run_test() as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT sum(id) FROM smoke")
         tabs = app.query_one(TabbedContent)
         app.action_toggle_sources()

@@ -67,7 +67,7 @@ async def test_sidebar_keeps_duplicate_source_identity_and_schema_after_view_clo
     app = Parqx([second, first, second])
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(lambda: len(app.query(ArrowTable)) == 2, pilot)
-        await toggle_sources(app, pilot)
+        app.action_toggle_sources()
         sources = app.query_one(SourcesTree)
         nodes = sources.root.children
         assert len(nodes) == 2
@@ -118,7 +118,7 @@ async def test_source_tree_uses_left_right_and_native_focus_without_table_action
     app = Parqx([small_parquet])
     async with app.run_test() as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
-        await toggle_sources(app, pilot)
+        app.action_toggle_sources()
         sources = app.query_one(SourcesTree)
         table = app.query_one(ArrowTable)
         table.focus()
@@ -140,7 +140,8 @@ async def test_source_tree_uses_left_right_and_native_focus_without_table_action
         assert table.show_row_index
         assert not table.zebra_stripes
         assert table.cursor_type == "cell"
-        await toggle_sources(app, pilot)
+        app.action_toggle_sources()
+        await wait_for(lambda: not sources.has_focus, pilot)
         assert not sources.display
         assert not sources.has_focus
         assert sources not in app.screen.focus_chain
@@ -173,7 +174,7 @@ async def test_closed_loading_sources_finish_as_ready_or_failed_without_new_view
                 await wait_for(
                     lambda: all(event.is_set() for event in started.values()), pilot
                 )
-                await toggle_sources(app, pilot)
+                app.action_toggle_sources()
                 sources = app.query_one(SourcesTree)
                 pending_node, failed_node, _ = sources.root.children
                 assert str(pending_node.label) == "pending.parquet (loading)"
@@ -237,7 +238,7 @@ async def test_metadata_arrival_preserves_sidebar_inspection_focus(
         async with app.run_test() as pilot:
             try:
                 await wait_for(started.is_set, pilot)
-                await toggle_sources(app, pilot)
+                app.action_toggle_sources()
                 sources = app.query_one(SourcesTree)
                 sources.focus()
                 await pilot.press("home", "right", "down")

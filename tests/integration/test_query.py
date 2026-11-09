@@ -269,13 +269,29 @@ async def test_query_editor_scrolls_within_resized_terminal(
         await wait_for(lambda: editor.text == long_line and editor.scroll_x > 0, pilot)
         assert editor.region.height == initial_height
         editor.load_text("")
+        await pilot.press("enter")
+        assert not editor.show_vertical_scrollbar
+        editor.history.checkpoint()
+        app.post_message(events.Paste("SELECT 1\nAS answer"))
+        await wait_for(lambda: editor.document.line_count == 3, pilot)
+        assert not editor.show_vertical_scrollbar
+        await pilot.press("ctrl+z")
+        assert editor.document.line_count == 2
+        assert not editor.show_vertical_scrollbar
+        await pilot.press("f7")
         multiline_sql = "SELECT 1" + "\n-- another line" * 49
         app.post_message(events.Paste(multiline_sql))
         await wait_for(
-            lambda: editor.text == multiline_sql and editor.scroll_y > 0, pilot
+            lambda: (
+                editor.text == multiline_sql
+                and editor.show_vertical_scrollbar
+                and editor.scroll_y > 0
+            ),
+            pilot,
         )
         assert editor.region.height == initial_height
         assert editor.cursor_location == (49, len("-- another line"))
+        assert editor.scrollable_content_region.contains(*editor.cursor_screen_offset)
         await pilot.resize_terminal(40, 12)
         await wait_for(lambda: query.region.width == 40, pilot)
         assert 0 < editor.region.height < query.region.height
@@ -293,35 +309,3 @@ async def test_query_editor_scrolls_within_resized_terminal(
         await pilot.resize_terminal(120, 40)
         await wait_for(lambda: editor.content_region.height == 8, pilot)
         assert editor.has_focus
-
-
-async def test_query_editor_only_shows_scrollbar_when_lines_overflow(
-    small_parquet: Path,
-) -> None:
-    app = Parqx([small_parquet])
-    async with app.run_test(size=(80, 24)) as pilot:
-        query = await open_query(app, pilot)
-        editor = query.editor
-        await wait_for(lambda: editor.region.height > 0, pilot)
-        await pilot.press("enter")
-        assert not editor.show_vertical_scrollbar
-        editor.history.checkpoint()
-        app.post_message(events.Paste("SELECT 1\nAS answer"))
-        await wait_for(lambda: editor.document.line_count == 3, pilot)
-        assert not editor.show_vertical_scrollbar
-        await pilot.press("ctrl+z")
-        assert editor.document.line_count == 2
-        assert not editor.show_vertical_scrollbar
-        await pilot.press("f7")
-        overflow_sql = "SELECT 1" + "\n-- another line" * 49
-        app.post_message(events.Paste(overflow_sql))
-        await wait_for(
-            lambda: (
-                editor.text == overflow_sql
-                and editor.show_vertical_scrollbar
-                and editor.scroll_y > 0
-            ),
-            pilot,
-        )
-        assert editor.region.height < 50
-        assert editor.scrollable_content_region.contains(*editor.cursor_screen_offset)

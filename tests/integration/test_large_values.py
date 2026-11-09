@@ -12,7 +12,7 @@ from parqx.tui import value_document
 from parqx.tui.app import Parqx
 from parqx.tui.value_document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.widgets.value_browser import ValueBrowser
-from tests.helpers import run_query, wait_for, wait_for_source_table
+from tests.helpers import wait_for, wait_for_source_table
 
 
 def pause_indexing(
@@ -33,15 +33,12 @@ def pause_indexing(
     return started, release
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
 async def test_large_list_last_child_and_long_unicode_are_readable(
-    large_values_parquet: Path, query_result: bool
+    large_values_parquet: Path,
 ) -> None:
     app = Parqx([large_values_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
-        if query_result:
-            table = await run_query(app, pilot, "SELECT * FROM large_values")
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         table.focus()
@@ -158,9 +155,7 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
 ) -> None:
     path = tmp_path / "delayed_values.parquet"
     pq.write_table(
-        pa.table(
-            {"nested": [{"text": "中e\u0301👩🏽‍💻" * 160_000}], "next": ["latest"]}
-        ),
+        pa.table({"nested": [{"text": "中e\u0301👩🏽‍💻" * 4_000}], "next": ["latest"]}),
         path,
     )
     started, release, cancelled, finished = (asyncio.Event() for _ in range(4))

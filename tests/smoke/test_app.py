@@ -8,7 +8,7 @@ from textual.widgets import Button, TabbedContent, TextArea
 from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
-from tests.helpers import confirm_query_close, run_query, wait_for
+from tests.helpers import confirm_query_close, open_query, wait_for
 
 
 async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
@@ -28,8 +28,17 @@ async def test_open_browse_query_and_quit(small_parquet: Path) -> None:
         assert source.get_cell_at(source.cursor_coordinate).as_py() == "carol"
 
         sql = 'SELECT count(*) AS total FROM "smoke"'
-        result = await run_query(app, pilot, sql)
-        workspace = tabs.get_pane("query-1")
+        workspace = await open_query(app, pilot)
+        workspace.editor.load_text(sql)
+        await wait_for(lambda: not workspace.run_button.disabled, pilot)
+        assert await pilot.click(workspace.run_button)
+        await wait_for(
+            lambda: workspace.table is not None and not workspace.running, pilot
+        )
+        result = workspace.table
+        assert result is not None
+        result.focus()
+        await wait_for(lambda: result.has_focus, pilot)
         assert workspace.query_one(TextArea).text == sql
         assert workspace.query_one(ArrowTable) is result
         assert not app.screen.is_modal

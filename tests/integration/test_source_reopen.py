@@ -18,14 +18,7 @@ from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from parqx.tui.widgets.sources_tree import SourcesTree
-from tests.helpers import (
-    open_query,
-    press_run_button,
-    run_query,
-    select_tab,
-    toggle_sources,
-    wait_for,
-)
+from tests.helpers import open_query, press_run_button, run_query, select_tab, wait_for
 
 
 async def test_sidebar_activates_and_reopens_one_default_view_per_source(
@@ -228,7 +221,7 @@ async def test_reopen_failure_preserves_query_draft_and_current_result(
         await pilot.press("ctrl+w")
         await wait_for(lambda: not tabs.query("#source-1"), pilot)
         small_parquet.unlink()
-        await toggle_sources(app, pilot)
+        app.action_toggle_sources()
         sources = app.query_one(SourcesTree)
         sources.focus()
         await pilot.press("home", "enter")

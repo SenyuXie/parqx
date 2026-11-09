@@ -12,14 +12,16 @@ import pytest
 def large_values_parquet(tmp_path: Path) -> Path:
     """Large containers, logical lines, unbroken Unicode and binary content."""
     path = tmp_path / "large_values.parquet"
-    text = ("中文👩🏽‍💻 e\u0301\t[bold]literal[/bold]\r\n" * 40_000) + "最后-END"
+    # Cross multiple index batches and viewports. Million-character values
+    # and allocation limits are exercised directly in test_value_document.
+    text = ("中文👩🏽‍💻 e\u0301\t[bold]literal[/bold]\r\n" * 600) + "最后-END"
     pq.write_table(
         pa.table(
             {
                 "items": [list(range(100_000))],
                 "text": [text],
-                "binary": [bytes(range(256)) * 8192 + b"END"],
-                "unbroken": ["中e\u0301👩🏽‍💻" * 160_000 + "END"],
+                "binary": [bytes(range(256)) * 32 + b"END"],
+                "unbroken": ["中e\u0301👩🏽‍💻" * 4_000 + "END"],
             }
         ),
         path,

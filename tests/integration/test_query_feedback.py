@@ -10,30 +10,6 @@ from parqx.tui.widgets import ArrowTable
 from tests.helpers import open_query, press_run_button, wait_for, wait_for_query_error
 
 
-async def test_draft_edits_preserve_current_result(small_parquet: Path) -> None:
-    app = Parqx([small_parquet])
-    async with app.run_test(size=(120, 40)) as pilot:
-        tabs = app.query_one(TabbedContent)
-        await wait_for(lambda: not tabs.get_pane("source-1").loading, pilot)
-        query = await open_query(app, pilot)
-        assert not query.query(ArrowTable)
-        sql = "SELECT name FROM smoke ORDER BY id"
-        query.editor.load_text(sql)
-        await press_run_button(query, pilot)
-        await wait_for(
-            lambda: bool(query.query(ArrowTable)) and not query.running, pilot
-        )
-        table = query.query_one(ArrowTable)
-        assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
-        query.editor.load_text("SELECT count(*) FROM smoke")
-        await pilot.pause()
-        assert table.row_count == 5
-        assert table.columns[0].name == "name"
-        query.editor.load_text(sql)
-        await pilot.pause()
-        assert table.get_cell_at(Coordinate(0, 0)).as_py() == "alice"
-
-
 async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_rows(
     small_parquet: Path,
 ) -> None:
@@ -75,6 +51,9 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
                 table = query.query_one(ArrowTable)
                 first_data = weakref.ref(table.data)
                 query.editor.load_text(failing_sql)
+                await pilot.pause()
+                assert table.data is first_data()
+                assert table.columns[0].name == "name"
                 await press_run_button(query, pilot)
                 await wait_for(started.is_set, pilot)
                 assert query.run_button.disabled

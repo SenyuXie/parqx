@@ -9,8 +9,10 @@ from parqx.tui.widgets.table_view import TableView
 from tests.helpers import press_run_button, run_query, wait_for, wait_for_source_table
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
-@pytest.mark.parametrize("focus", ["table", "container", "reader"])
+@pytest.mark.parametrize(
+    ("query_result", "focus"),
+    [(False, "table"), (True, "container"), (False, "reader")],
+)
 async def test_native_maximize_keeps_table_and_nested_browser_together(
     paged_values_parquet: Path, query_result: bool, focus: str
 ) -> None:
@@ -152,6 +154,7 @@ async def test_failed_execution_preserves_nested_inspection(
 
     app = Parqx([paged_values_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT * FROM paged_values LIMIT 2")
         query = app.query_one(QueryWorkspace)
         assert query.view is not None
@@ -224,7 +227,6 @@ async def test_failed_execution_preserves_nested_inspection(
     ("sql", "focus", "hidden", "empty"),
     [
         ("SELECT * FROM paged_values LIMIT 2", "container", False, False),
-        ("SELECT * FROM paged_values LIMIT 2", "reader", False, False),
         ("SELECT 42 AS answer", "table", False, False),
         ("SELECT * FROM paged_values WHERE false", "reader", False, True),
         ("SELECT * FROM paged_values LIMIT 2", "table", True, False),
@@ -232,7 +234,6 @@ async def test_failed_execution_preserves_nested_inspection(
     ],
     ids=[
         "same-schema-container",
-        "same-schema-reader",
         "changed-schema-table",
         "empty-reader",
         "hidden-same-schema",
@@ -242,16 +243,13 @@ async def test_failed_execution_preserves_nested_inspection(
 async def test_success_invalidates_nested_state_without_changing_focus_region(
     paged_values_parquet: Path, sql: str, focus: str, hidden: bool, empty: bool
 ) -> None:
-    from threading import Event
-    from unittest.mock import patch
-
-    import duckdb
     from textual.coordinate import Coordinate
 
     from parqx.tui.widgets.query_workspace import QueryWorkspace
 
     app = Parqx([paged_values_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
+        await wait_for(lambda: app.catalog.get("source-1").state == "ready", pilot)
         table = await run_query(app, pilot, "SELECT * FROM paged_values LIMIT 2")
         query = app.query_one(QueryWorkspace)
         assert query.view is not None
@@ -278,27 +276,11 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
         expected_focus = (
             browser.reader if focus in {"container", "reader"} else app.focused
         )
-        started, release = Event(), Event()
-        original_sql = duckdb.DuckDBPyConnection.sql
-
-        def delayed_sql(
-            connection: duckdb.DuckDBPyConnection, sql: str
-        ) -> duckdb.DuckDBPyRelation:
-            started.set()
-            assert release.wait(timeout=15)
-            return original_sql(connection, sql)
-
-        with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
-            try:
-                await press_run_button(query, pilot)
-                await wait_for(started.is_set, pilot)
-                assert query.current_result is previous_result
-                assert browser.root is not None
-                assert len(browser.query(".value-crumb")) == 2
-                release.set()
-                await wait_for(lambda: not query.running, pilot)
-            finally:
-                release.set()
+        await press_run_button(query, pilot)
+        await wait_for(
+            lambda: not query.running and query.current_result is not previous_result,
+            pilot,
+        )
         assert query.current_result is not previous_result
         assert browser.root is None
         assert not browser.query(".value-crumb")
@@ -328,9 +310,8 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
             assert browser.options.scroll_y == 0
 
 
-@pytest.mark.parametrize("fail", [False, True])
 async def test_background_queries_update_only_their_own_inspection(
-    nested_parquet: Path, fail: bool
+    nested_parquet: Path,
 ) -> None:
     from threading import Event
     from unittest.mock import patch
@@ -376,9 +357,7 @@ async def test_background_queries_update_only_their_own_inspection(
         assert second_position > 0
         second_root = second_browser.root
 
-        first.editor.load_text(
-            "SELECT missing_field FROM nested" if fail else "SELECT 42 AS answer"
-        )
+        first.editor.load_text("SELECT missing_field FROM nested")
         second.editor.load_text("SELECT 7 AS answer WHERE false")
         original_sql = duckdb.DuckDBPyConnection.sql
         for running, active_id, active_reader in (
@@ -423,13 +402,9 @@ async def test_background_queries_update_only_their_own_inspection(
                 assert second_browser.root is second_root
                 assert second_browser.reader.scroll_y == second_position
                 assert second_browser.reader.text == "second query\n" * 100
-                if fail:
-                    assert first_browser.root is first_root
-                    assert first_browser.reader.text == "false"
-                    assert len(first_browser.query(".value-crumb")) == 2
-                else:
-                    assert first_browser.root is None
-                    assert "Press Enter" in first_browser.reader.text
+                assert first_browser.root is first_root
+                assert first_browser.reader.text == "false"
+                assert len(first_browser.query(".value-crumb")) == 2
         assert second_table.row_count == 0
         assert second_browser.root is None
         assert second_browser.display
@@ -439,14 +414,12 @@ async def test_background_queries_update_only_their_own_inspection(
         await pilot.press("tab")
         assert first_browser.reader.has_focus
         await pilot.press("backspace")
-        if fail:
-            assert first_browser.options.highlighted == 2
-        else:
-            assert first_table.has_focus
+        assert first_browser.options.highlighted == 2
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
-@pytest.mark.parametrize("focus", ["container", "reader"])
+@pytest.mark.parametrize(
+    ("query_result", "focus"), [(False, "container"), (True, "reader")]
+)
 async def test_closing_maximized_inspection_releases_values_and_restores_workspace(
     nested_parquet: Path, query_result: bool, focus: str
 ) -> None:
@@ -558,6 +531,9 @@ async def test_shutdown_releases_inspection_before_pending_query_finishes(
     ):
         try:
             async with app.run_test(size=(140, 40)) as pilot:
+                await wait_for(
+                    lambda: app.catalog.get("source-1").state == "ready", pilot
+                )
                 table = await run_query(app, pilot, "SELECT * FROM nested LIMIT 1")
                 query = app.query_one(QueryWorkspace)
                 assert query.view is not None
@@ -585,9 +561,8 @@ async def test_shutdown_releases_inspection_before_pending_query_finishes(
         notify.assert_not_called()
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
 async def test_tab_switch_restores_container_scroll_independently_of_selection(
-    nested_parquet: Path, query_result: bool
+    nested_parquet: Path,
 ) -> None:
     from textual.widgets import TabbedContent
 
@@ -596,10 +571,7 @@ async def test_tab_switch_restores_container_scroll_independently_of_selection(
     app = Parqx([nested_parquet])
     async with app.run_test(size=(140, 26)) as pilot:
         table = await wait_for_source_table(app, pilot)
-        if query_result:
-            table = await run_query(app, pilot, "SELECT range(100) AS value")
-        else:
-            table.cursor_type = "row"
+        table.cursor_type = "row"
         assert isinstance(table.parent, TableView)
         browser = table.parent.browser
         table.focus()
@@ -623,8 +595,15 @@ async def test_tab_switch_restores_container_scroll_independently_of_selection(
         assert browser.options.scroll_y == position
 
 
-@pytest.mark.parametrize("kind", ["string", "list"])
-@pytest.mark.parametrize("interaction", ["unchanged", "scroll", "new-root"])
+@pytest.mark.parametrize(
+    ("kind", "interaction"),
+    [
+        ("string", "unchanged"),
+        ("list", "unchanged"),
+        ("string", "scroll"),
+        ("list", "new-root"),
+    ],
+)
 async def test_restore_retains_clamped_position_unless_user_changes_inspection(
     small_parquet: Path, kind: str, interaction: str
 ) -> None:

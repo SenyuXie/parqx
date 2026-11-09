@@ -98,6 +98,7 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                 (focused_line, active_cursor),
                 (blurred_line, inactive_cursor),
             ):
+                _assert_readable(line)
                 assert all(
                     segment.style and segment.style.bgcolor == cursor.bgcolor
                     for segment in line
@@ -117,9 +118,9 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                 (surface.rich_color, blurred.bgcolor, focused.bgcolor, hovered.bgcolor)
             )
 
-            # Check every type in the normal, hovered, focused and blurred states.
+            # Unselected rows use a different foreground for each value type.
             await pilot.hover(table)
-            await pilot.press("down", "down", "down", "down")
+            options.action_move(4)
             colors: set[RichColor | None] = set()
             for row in range(1, 5):
                 for segment in options.render_line(row):
@@ -133,17 +134,14 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             for row in range(1, 5):
                 assert await pilot.hover(options, offset=(10, row))
                 _assert_readable(options.render_line(row))
-            await pilot.press("home")
-            for row in range(1, 5):
-                _assert_readable(options.render_line(row))
-                table.focus()
+            for focus_target in (table, options):
+                focus_target.focus()
                 await pilot.pause()
-                _assert_readable(options.render_line(row))
-                options.focus()
-                await pilot.press("down")
-            await pilot.press("home")
-
-            await pilot.press("enter")
+                options.action_first()
+                for row in range(1, 5):
+                    _assert_readable(options.render_line(row))
+                    options.action_move(1)
+            await pilot.press("home", "enter")
             assert browser.reader.text == "Ada\n" * 60
             assert browser.reader.show_vertical_scrollbar
             scalar_style = next(iter(browser.reader.render_line(0))).style

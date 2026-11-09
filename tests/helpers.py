@@ -76,19 +76,16 @@ async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
     return query
 
 
-async def toggle_sources(
-    app: Parqx, pilot: Pilot[Any], *, expected_help: str | None = None
-) -> None:
+async def toggle_sources(app: Parqx, pilot: Pilot[Any], *, expected_help: str) -> None:
     await pilot.press("ctrl+p")
     palette = app.screen
     assert isinstance(palette, CommandPalette)
     palette.query_one(Input).value = "Sources"
     commands = palette.query_one(CommandList)
     await wait_for(lambda: commands.option_count == 1, pilot)
-    if expected_help is not None:
-        option = commands.get_option_at_index(0)
-        assert isinstance(option, Command)
-        assert option.hit.help == expected_help
+    option = commands.get_option_at_index(0)
+    assert isinstance(option, Command)
+    assert option.hit.help == expected_help
     await pilot.press("down", "enter")
     await wait_for(lambda: app.screen is not palette, pilot)
 
@@ -103,9 +100,8 @@ async def press_run_button(query: QueryWorkspace, pilot: Pilot[Any]) -> None:
 async def run_query(app: Parqx, pilot: Pilot[Any], sql: str) -> ArrowTable:
     query = await open_query(app, pilot)
     query.editor.load_text(sql)
-    await wait_for(lambda: not query.run_button.disabled, pilot)
-    assert await pilot.click(query.run_button)
-    await wait_for(lambda: bool(query.query(ArrowTable)), pilot)
+    await press_run_button(query, pilot)
+    await wait_for(lambda: query.table is not None and not query.running, pilot)
     table = query.query_one(ArrowTable)
     table.focus()
     await wait_for(lambda: table.has_focus, pilot)

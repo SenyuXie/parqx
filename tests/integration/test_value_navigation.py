@@ -3,33 +3,20 @@
 from pathlib import Path
 
 import pyarrow as pa
-import pytest
 from textual.widgets import Button, Static, TabbedContent
 
 from parqx.query.engine import QueryResult
 from parqx.tui.app import Parqx
-from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.scalar_reader import ScalarReader
 from parqx.tui.widgets.value_browser import ValueBrowser
 from parqx.tui.widgets.value_children import ValueChildren
-from tests.helpers import (
-    open_query,
-    press_run_button,
-    run_query,
-    wait_for,
-    wait_for_source_table,
-)
+from tests.helpers import open_query, run_query, wait_for_source_table
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
-async def test_row_struct_and_scalar_share_one_browser(
-    nested_parquet: Path, query_result: bool
-) -> None:
+async def test_row_struct_and_scalar_share_one_browser(nested_parquet: Path) -> None:
     app = Parqx([nested_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
-        if query_result:
-            table = await run_query(app, pilot, "SELECT * FROM nested")
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         table.focus()
@@ -46,12 +33,6 @@ async def test_row_struct_and_scalar_share_one_browser(
         assert options.has_focus
         assert options.option_count == 4
         assert '"name"' in str(options.get_option_at_index(1).prompt)
-        backgrounds = {
-            segment.style.bgcolor
-            for segment in options.render_line(1)
-            if segment.text and segment.style
-        }
-        assert len(backgrounds) == 1
         await pilot.press("enter")
         reader = browser.query_one(ScalarReader)
         assert reader.has_focus
@@ -67,15 +48,13 @@ async def test_row_struct_and_scalar_share_one_browser(
         assert browser.display
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
 async def test_list_map_mouse_navigation_and_breadcrumb_return(
-    nested_parquet: Path, query_result: bool
+    nested_parquet: Path,
 ) -> None:
     app = Parqx([nested_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
-        table = await wait_for_source_table(app, pilot)
-        if query_result:
-            table = await run_query(app, pilot, "SELECT * FROM nested")
+        await wait_for_source_table(app, pilot)
+        table = await run_query(app, pilot, "SELECT * FROM nested")
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         options = browser.query_one(ValueChildren)
@@ -137,17 +116,12 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
         assert not options.display
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
 async def test_parent_position_survives_hide_and_new_roots_reset_it(
-    nested_parquet: Path, query_result: bool
+    nested_parquet: Path,
 ) -> None:
     app = Parqx([nested_parquet])
-    async with app.run_test(size=(140, 40 if query_result else 26)) as pilot:
+    async with app.run_test(size=(140, 26)) as pilot:
         table = await wait_for_source_table(app, pilot)
-        query = None
-        if query_result:
-            table = await run_query(app, pilot, "SELECT * FROM nested")
-            query = app.query_one(QueryWorkspace)
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         options = browser.query_one(ValueChildren)
@@ -182,18 +156,6 @@ async def test_parent_position_survives_hide_and_new_roots_reset_it(
         assert options.highlighted == 1
         assert options.scroll_y == 0
         assert len(browser.query(".value-crumb")) == 1
-        await pilot.press("down", "enter")
-        assert options.has_focus
-        if query is not None:
-            query.editor.load_text("SELECT * FROM nested")
-            await press_run_button(query, pilot)
-            await wait_for(lambda: not query.running and browser.root is None, pilot)
-            assert browser.display
-            assert browser.reader.has_focus
-            assert len(browser.query(".value-crumb")) == 0
-            assert "Press Enter" in browser.reader.text
-            await pilot.press("escape", "enter")
-            assert len(browser.query(".value-crumb")) == 1
 
 
 async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -> None:

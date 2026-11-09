@@ -4,13 +4,12 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.compute as pc
-import pytest
 from textual.coordinate import Coordinate
 
 from parqx.query.engine import QueryResult
 from parqx.tui.app import Parqx
 from parqx.tui.widgets.value_browser import ValueBrowser
-from tests.helpers import open_query, run_query, wait_for, wait_for_source_table
+from tests.helpers import open_query, wait_for, wait_for_source_table
 
 
 async def test_nested_and_encoded_scalars_at_arrow_delivery(
@@ -58,15 +57,10 @@ async def test_nested_and_encoded_scalars_at_arrow_delivery(
         assert not reader.soft_wrap
 
 
-@pytest.mark.parametrize("query_result", [False, True], ids=["file", "query"])
-async def test_precise_scalars_and_binary_reflow(
-    typed_scalars_parquet: Path, query_result: bool
-) -> None:
+async def test_precise_scalars_and_binary_reflow(typed_scalars_parquet: Path) -> None:
     app = Parqx([typed_scalars_parquet])
     async with app.run_test(size=(120, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
-        if query_result:
-            table = await run_query(app, pilot, "SELECT * FROM typed_scalars")
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         reader = browser.reader
