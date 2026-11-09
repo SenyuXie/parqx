@@ -20,6 +20,18 @@ tests, and helper scripts. Poe and the project checks use the locked development
 environment. Run `check` before publishing even when focused checks were
 sufficient during development.
 
+## Coverage reports
+
+Run `uv run --locked poe coverage` from the repository root to measure statement
+and branch coverage for `parqx` across the unit, integration, and smoke tests.
+The terminal report lists missing lines and branch destinations for each module.
+Open `htmlcov/index.html` to inspect highlighted source lines and partial
+branches, or use `coverage.xml` for tools that consume Cobertura XML. The same
+test run produces all three reports. Use `poe full` or `poe check` for routine
+validation and `poe coverage` when you need a report.
+
+## Test layout
+
 Each behavior belongs at the lowest layer that can verify it:
 
 | Directory | Responsibility | CI coverage |
@@ -28,6 +40,29 @@ Each behavior belongs at the lowest layer that can verify it:
 | `integration/` | Mounted Textual widgets, multi-file workflows, input/focus, background reads and query lifecycle races | Linux / Python 3.12 |
 | `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
+
+Place unit tests beside tests of the same application package. The `data/`,
+`query/`, and `tui/` directories under `unit/` mirror `src/parqx/`. Tests for
+top-level modules such as the catalog, CLI, and configuration live directly
+under `unit/`.
+
+Find mounted tests by the feature under test:
+
+| Integration path | What belongs here |
+| --- | --- |
+| `integration/sources/` | Source discovery, tree navigation, reopening files, and page reads |
+| `integration/query/` | SQL editing, execution, feedback, workspace layout, and close confirmation |
+| `integration/values/` | Value selection, nested navigation, rendering, large values, and inspection across workspaces |
+| `integration/` | Cross-feature scenarios such as application budget wiring and the empty workspace |
+
+Keep fixtures in the nearest `conftest.py` shared by their consumers. The root
+`conftest.py` supplies the small Parquet file used by all three pytest suites.
+`integration/values/conftest.py` owns the specialized Arrow and Parquet inputs
+for value inspection. `helpers.py` holds UI actions shared with the smoke test.
+Run a feature group directly, for example
+`uv run --locked pytest -q tests/integration/values`.
+
+## What to test at each layer
 
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes
 one instance to its components; native data helpers receive explicit settings.
@@ -83,8 +118,7 @@ For focused work, run `uv run pytest -q tests/unit` or
 scenarios. Use `uv run --locked poe package` to repeat the
 isolated distribution checks.
 
-Keep fixtures in `conftest.py` and shared UI actions in `helpers.py`; test modules
-must not import other test modules. Each UI test owns its application and uses
+Test modules must not import other test modules. Each UI test owns its application and uses
 observable-state waits. Coordinate background races with events, release them in
 `finally` blocks, and avoid fixed sleeps. Combine closely related assertions in a
 single user journey, but keep independent failure modes in separate tests.

@@ -41,6 +41,7 @@ dev = [
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.15.17",
     "textual-dev>=1.8.0",
 ]
@@ -76,6 +77,10 @@ sequence = ["mypy src tests scripts", "pyright"]
 help = "Run the full test suite"
 cmd = "pytest -q tests"
 
+[tool.poe.tasks.coverage]
+help = "Run the full suite with terminal, HTML, and XML coverage reports"
+cmd = "pytest -q --cov --cov-report=term-missing --cov-report=html --cov-report=xml tests"
+
 [tool.poe.tasks.core]
 help = "Run unit and smoke tests for the compatibility matrix"
 cmd = "pytest -q tests/unit tests/smoke"
@@ -91,6 +96,10 @@ stubPath = "typings"
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/smoke"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["parqx"]
+branch = true
 
 [tool.ruff]
 target-version = "py312"
