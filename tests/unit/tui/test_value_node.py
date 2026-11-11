@@ -110,6 +110,17 @@ def test_previews_show_leading_content_and_balanced_truncation() -> None:
         assert "\n" not in text.preview(width).plain
 
 
+@pytest.mark.parametrize(
+    ("width", "expected"), [(6, '"中…"'), (8, r'"中\"…"'), (10, r'"中\"\n…"')]
+)
+def test_string_preview_truncates_at_character_boundaries(
+    width: int, expected: str
+) -> None:
+    node = ValueNode(pa.scalar('中"\n文末尾'))
+
+    assert node.preview(width).plain == expected
+
+
 def test_long_field_labels_use_a_bounded_continuation_line() -> None:
     node = ValueNode(
         pa.scalar({"非常长的字段名称" * 10: "first value\nsecond line", "after": 3})

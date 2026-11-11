@@ -2,15 +2,40 @@
 
 from __future__ import annotations
 
-import json
+import re
 from dataclasses import dataclass
 from math import ceil
 from typing import cast
 
+import orjson
 import pyarrow as pa
 import pyarrow.compute as pc
 from rich.cells import cell_len
 from rich.text import Text
+
+
+def quote_json_string(value: str) -> str:
+    """Return a JSON string literal as terminal display text."""
+    return orjson.dumps(value).decode("utf-8")
+
+
+class ContainerPreview(Text):
+    """Styled table preview containing JSON-quoted field names and strings."""
+
+    def fit_escapes(self, width: int) -> Text:
+        """Keep a terminal ellipsis from splitting a JSON escape sequence."""
+        if width < 2 or "\\" not in self.plain or self.cell_len <= width:
+            return self
+
+        prefix = self.copy()
+        prefix.truncate(width - 1)
+        for escape in re.finditer(r"\\(?:u[0-9a-fA-F]{4}|.)", self.plain):
+            if escape.start() < len(prefix) < escape.end():
+                prefix = self[: escape.start()]
+                prefix.pad_right(width - 1 - prefix.cell_len)
+                prefix.append("…")
+                return prefix
+        return self
 
 
 def _format_field_name(value: str, limit: int) -> str:
@@ -18,7 +43,7 @@ def _format_field_name(value: str, limit: int) -> str:
     value = value[:limit]
     if value.isidentifier():
         return value + ("…" if truncated else "")
-    return json.dumps(value + ("…" if truncated else ""), ensure_ascii=False)
+    return quote_json_string(value + ("…" if truncated else ""))
 
 
 def _single_line(value: str) -> str:
@@ -173,18 +198,12 @@ class CellFormatter:
             # The byte slice may end in the middle of a multibyte UTF-8 character.
             # Ignore only that incomplete trailing character.
             decoded = prefix.decode("utf-8", errors="ignore")
-            rendered = (
-                json.dumps(decoded, ensure_ascii=False)
-                if nested
-                else _single_line(decoded)
-            )
+            rendered = quote_json_string(decoded) if nested else _single_line(decoded)
 
             overflows = cell_len(rendered) > self.inline_limit
             if byte_count == byte_limit and byte_limit < total_bytes and not overflows:
                 rendered = (
-                    json.dumps(decoded + "…", ensure_ascii=False)
-                    if nested
-                    else rendered + "…"
+                    quote_json_string(decoded + "…") if nested else rendered + "…"
                 )
             if byte_count == byte_limit or overflows:
                 return Text(rendered)
@@ -199,7 +218,7 @@ class CellFormatter:
         if depth >= self.max_nested_depth:
             return Text("<list>", style="dim blue")
 
-        result = Text("[", style="blue")
+        result = ContainerPreview("[", style="blue")
 
         for index in range(len(value)):
             if index:
@@ -223,7 +242,7 @@ class CellFormatter:
         if depth >= self.max_nested_depth:
             return Text("<struct>", style="dim blue")
 
-        result = Text("{", style="blue")
+        result = ContainerPreview("{", style="blue")
 
         for index in range(len(value)):
             if index:
@@ -258,7 +277,7 @@ class CellFormatter:
 
         keys = entries.field(0)
         values = entries.field(1)
-        result = Text("{", style="blue")
+        result = ContainerPreview("{", style="blue")
 
         for index in range(len(entries)):
             if index:

@@ -39,7 +39,7 @@ from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
 
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.cell_formatter import CellFormatter
+from parqx.tui.cell_formatter import CellFormatter, ContainerPreview
 
 logger = logging.getLogger(__name__)
 
@@ -1502,6 +1502,8 @@ class ArrowTable(ScrollView, can_focus=True):
         base_style += Style.from_meta({"row": row_index, "column": column_index})
 
         cell = self._get_cell_renderable(row_index, column_index)
+        if isinstance(cell, ContainerPreview):
+            cell = cell.fit_escapes(width - 2 * self.cell_padding)
 
         component_style, post_style = self._get_styles_to_render_cell(
             is_header_cell,

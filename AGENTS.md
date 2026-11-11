@@ -1,6 +1,14 @@
+# Parqx
+
+Parqx is a lightweight terminal UI for inspecting Apache Parquet files.
+
 ## Documentation language
 
 Write all documentation in English, including READMEs, `GLOSSARY.md`, ADRs, and agent instructions.
+
+## Coding Standard
+
+- Always `orjson.loads(s)`, `orjson.dumps(d)` for JSON.
 
 ## Agent skills
 

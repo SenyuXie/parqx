@@ -36,7 +36,7 @@ parqx data/*.parquet
 ### Navigation
 
 | Key                   | Action                          |
-| ---                   | ---                             |
+| --------------------- | ------------------------------- |
 | `↑` / `↓`             | Move the cursor up or down      |
 | `←` / `→`             | Move the cursor left or right   |
 | `pageUp` / `pageDown` | Move one page up or down        |
@@ -52,7 +52,7 @@ parqx data/*.parquet
 These display shortcuts apply while a table has focus.
 
 | Key | Action                                         |
-| --- | ---                                            |
+| --- | ---------------------------------------------- |
 | `h` | Toggle the column header row                   |
 | `i` | Toggle the row-index column                    |
 | `z` | Toggle zebra striping                          |
@@ -64,7 +64,7 @@ These display shortcuts apply while a table has focus.
 Press `tab` from the table to focus the open sidebar.
 
 | Key                   | Action                               |
-| ---                   | ---                                  |
+| --------------------- | ------------------------------------ |
 | `↑` / `↓`             | Select the previous or next item     |
 | `home` / `end`        | Select the first or last item        |
 | `pageUp` / `pageDown` | Move one page up or down             |

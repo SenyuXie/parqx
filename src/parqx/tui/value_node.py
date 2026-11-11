@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -12,7 +11,7 @@ from rich.cells import cell_len
 from rich.style import Style, StyleType
 from rich.text import Text
 
-from parqx.tui.cell_formatter import CellFormatter
+from parqx.tui.cell_formatter import CellFormatter, quote_json_string
 from parqx.tui.scalar_value import scalar_leaf
 
 _COLORS: Mapping[str, StyleType] = {
@@ -29,7 +28,7 @@ def _quoted(value: str, width: int, *, shortened: bool = False) -> str:
     shortened |= len(value) > width * 4
     value = value[: width * 4]
     while True:
-        rendered = json.dumps(value + ("…" if shortened else ""), ensure_ascii=False)
+        rendered = quote_json_string(value + ("…" if shortened else ""))
         if cell_len(rendered) <= width or not value:
             return rendered
         value = value[:-1]

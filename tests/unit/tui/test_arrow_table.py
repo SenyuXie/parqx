@@ -117,6 +117,20 @@ def test_single_line_cell_preserves_padding_styles_and_metadata(
         assert any(segment.style and segment.style.dim for segment in segments)
 
 
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [(6, r'["中 …'), (7, r'["中\"…'), (8, r'["中\" …'), (9, r'["中\"\n…')],
+)
+def test_nested_string_truncates_at_escape_boundaries(
+    width: int, expected: str
+) -> None:
+    widget = ArrowTable(pa.table({"items": [['中"\n文末尾']]}), cell_padding=0)
+
+    segments = widget._render_cell(0, 0, Style(), width)
+
+    assert "".join(segment.text for segment in segments) == expected
+
+
 def test_horizontal_crop_preserves_fixed_index_styles_and_coordinates() -> None:
     widget = ArrowTable(
         pa.table({"first": ["界界界界"], "second": ["abcdef"], "third": ["tail"]}),
