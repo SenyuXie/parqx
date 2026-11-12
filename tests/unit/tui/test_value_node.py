@@ -125,8 +125,7 @@ def test_long_field_labels_use_a_bounded_continuation_line() -> None:
     node = ValueNode(
         pa.scalar({"非常长的字段名称" * 10: "first value\nsecond line", "after": 3})
     )
-    prompt = node.child_prompt(0, width=38, selected=True)
-    assert prompt.plain.startswith("▸ ")
+    prompt = node.child_prompt(0, width=38)
     assert '\n      "first value' in prompt.plain
     assert "\\n" in prompt.plain
     assert "…" in prompt.plain

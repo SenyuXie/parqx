@@ -36,6 +36,14 @@ def _assert_readable(line: Strip) -> None:
         assert contrast >= 4.5, (segment.text, style.color, style.bgcolor, contrast)
 
 
+def _text_with_background(line: Strip, background: RichColor | None) -> str:
+    return "".join(
+        segment.text
+        for segment in line
+        if segment.style and segment.style.bgcolor == background
+    )
+
+
 async def test_theme_switch_updates_browser_surfaces_and_interaction_states() -> None:
     table = ArrowTable(pa.table({"count": [42]}))
 
@@ -87,36 +95,41 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                 )
             assert options.show_vertical_scrollbar
             active_cursor = table.get_component_rich_style("arrowtable--cursor")
-            blurred_line = options.render_line(1)
-            blurred = next(iter(blurred_line)).style
+            options.action_first()
+            options.action_move(1)
+            blurred_line = options.render_line(2)
             options.focus()
             await pilot.pause()
             inactive_cursor = table.get_component_rich_style("arrowtable--cursor")
-            focused_line = options.render_line(1)
-            focused = next(iter(focused_line)).style
+            focused_line = options.render_line(2)
+            assert await pilot.hover(options, offset=(10, 2))
+            hovered_selection = options.render_line(2)
+            content = '"count": 42,'
             for line, cursor in (
                 (focused_line, active_cursor),
                 (blurred_line, inactive_cursor),
+                (hovered_selection, active_cursor),
             ):
                 _assert_readable(line)
-                assert all(
-                    segment.style and segment.style.bgcolor == cursor.bgcolor
-                    for segment in line
-                )
-            assert await pilot.hover(options, offset=(10, 2))
-            hovered = next(iter(options.render_line(2))).style
-            assert blurred is not None
-            assert focused is not None
-            assert hovered is not None
-            assert len({blurred.bgcolor, focused.bgcolor, hovered.bgcolor}) == 3
-            assert surface.rich_color not in {
-                blurred.bgcolor,
-                focused.bgcolor,
-                hovered.bgcolor,
-            }
-            appearances.append(
-                (surface.rich_color, blurred.bgcolor, focused.bgcolor, hovered.bgcolor)
+                assert line.text.strip() == content
+                assert _text_with_background(line, cursor.bgcolor) == content
+            assert await pilot.hover(options, offset=(10, 3))
+            hovered_line = options.render_line(3)
+            hover_color = options.get_component_rich_style(
+                "option-list--option-hover"
+            ).bgcolor
+            assert _text_with_background(hovered_line, hover_color) == hovered_line.text
+            assert _text_with_background(hovered_selection, hover_color) == (
+                hovered_selection.text.replace(content, "")
             )
+            backgrounds = (
+                surface.rich_color,
+                inactive_cursor.bgcolor,
+                active_cursor.bgcolor,
+                hover_color,
+            )
+            assert len(set(backgrounds)) == 4
+            appearances.append(backgrounds)
 
             # Unselected rows use a different foreground for each value type.
             await pilot.hover(table)
@@ -134,9 +147,16 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             for row in range(1, 5):
                 assert await pilot.hover(options, offset=(10, row))
                 _assert_readable(options.render_line(row))
-            for focus_target in (table, options):
+            for focus_target, border_color in (
+                (table, "primary-muted"),
+                (options, "primary"),
+            ):
                 focus_target.focus()
                 await pilot.pause()
+                expected_border = ("solid", Color.parse(variables[border_color]))
+                assert browser.styles.border_left == expected_border
+                assert browser.metadata.styles.border_bottom == expected_border
+                assert browser.info.styles.border_top == expected_border
                 options.action_first()
                 for row in range(1, 5):
                     _assert_readable(options.render_line(row))

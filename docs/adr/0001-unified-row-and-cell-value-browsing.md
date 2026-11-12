@@ -34,7 +34,7 @@ The sidebar shares the table's height. In a query workspace, the SQL editor rema
 
 Maximize the table and sidebar together as one viewing area, preserving browsing state when restoring the layout. Maximizing the SQL editor still shows only the editor.
 
-Use the visual conventions of a JSON viewer: braces and indentation for Struct and row values, prominent field names, subdued type information, explicit List indices, and type-colored values. Container children show a structural summary, type, and field or element count. Highlight the entire selected item using both a background and a cursor marker. Keep borders, spacing, and colors consistent with the Parqx theme.
+Use the visual conventions of a JSON viewer: braces and indentation for Struct and row values, prominent field names, subdued type information, explicit List indices, and type-colored values. Container children show a structural summary, type, and field or element count. Highlight the selected item's text through its trailing comma, when present. Hover shades the full row underneath the selection. Keep borders, spacing, and colors consistent with the Parqx theme.
 
 Each container view shows only its direct children. Enter replaces that view with the selected child's contents. This visual language must preserve the input's types, precision, order, and duplicate fields; it does not require converting values to JSON.
 

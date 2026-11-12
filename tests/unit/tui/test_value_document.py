@@ -38,7 +38,7 @@ def test_container_navigation_does_not_build_all_child_previews(kind: str) -> No
     last_y = document.child_line(count - 1)
     assert document.child_at_line(last_y) == count - 1
     assert document.child_at_line(document.line_count - 1) is None
-    assert "99" in node.child_prompt(count - 1, width=36, selected=True).plain
+    assert "99" in node.child_prompt(count - 1, width=36).plain
 
 
 def test_long_unicode_is_indexed_incrementally_and_preserved() -> None:
