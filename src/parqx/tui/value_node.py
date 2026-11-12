@@ -281,18 +281,13 @@ class ValueNode:
         return Text(rendered.plain, style=styles[role])
 
     def child_prompt(
-        self,
-        index: int,
-        *,
-        width: int,
-        selected: bool,
-        styles: Mapping[str, StyleType] | None = None,
+        self, index: int, *, width: int, styles: Mapping[str, StyleType] | None = None
     ) -> Text:
         """Render one selectable child with a gutter and an optional continuation."""
         palette = styles or _COLORS
         width = max(20, width)
         name, child = self.child(index)
-        result = Text("▸   " if selected else "    ", style=palette["muted"])
+        result = Text("    ", style=palette["muted"])
         comma = index + 1 < self.child_count
         if self.kind in {"list", "map"}:
             result.append(f"{index:>3}  ", palette["muted"])

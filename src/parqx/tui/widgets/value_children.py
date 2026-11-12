@@ -112,12 +112,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             return Text("  " + left + right)
         if index in {0, self.option_count - 1}:
             return Text("  " + (left if index == 0 else right))
-        return node.child_prompt(
-            index - 1,
-            width=document.width,
-            selected=index == self.highlighted,
-            styles=self._palette,
-        )
+        return node.child_prompt(index - 1, width=document.width, styles=self._palette)
 
     def _update_size(self) -> None:
         document = self.document
@@ -222,23 +217,22 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         if document is None or line >= document.line_count:
             return Strip.blank(width, style)
         index = document.child_at_line(line)
-        selected = index is not None and self.highlighted == index + 1
         if index is None:
             prompt = self._get_prompt(0 if line == 0 else self.option_count - 1)
         else:
             prompt = self._get_prompt(index + 1)
             prompt = prompt.split("\n")[line - document.child_line(index)]
             style += Style(meta={"value_child": index})
-            if selected:
-                style += self.get_component_rich_style(
-                    "option-list--option-highlighted"
-                )
-            elif self._hovered == index:
+            if self._hovered == index:
                 style += self.get_component_rich_style("option-list--option-hover")
-        if selected:
-            prompt.stylize(style)
-        else:
-            prompt.stylize_before(style)
+            if self.highlighted == index + 1:
+                text = prompt.plain
+                prompt.stylize(
+                    self.get_component_rich_style("option-list--option-highlighted"),
+                    start=len(text) - len(text.lstrip(" ")),
+                    end=len(text.rstrip(" ")),
+                )
+        prompt.stylize_before(style)
         console = self.app.console  # pyright: ignore[reportUnknownMemberType]
         return (
             Strip(list(prompt.render(console, end="")))

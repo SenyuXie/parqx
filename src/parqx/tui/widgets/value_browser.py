@@ -81,6 +81,8 @@ class ValueBrowser(Vertical):
         &:focus-within {
             border-left: solid $primary;
             background-tint: $foreground 5%;
+            .value-type { border-bottom: solid $primary; }
+            .value-info { border-top: solid $primary; }
         }
         .value--key { color: #1d4b70; }
         .value--string, .value-reader.string { color: #19512f; }
@@ -380,7 +382,7 @@ class ValueBrowser(Vertical):
 
     def _preview_styles(self) -> dict[str, Style]:
         # Only foreground colors belong to the preview. ValueChildren owns the
-        # background, including its full-width selection and hover states.
+        # selection and hover backgrounds.
         return {
             role: Style(color=self.get_component_rich_style(f"value--{role}").color)
             for role in ("key", "string", "number", "boolean", "muted")
