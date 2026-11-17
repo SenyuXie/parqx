@@ -16,7 +16,11 @@ from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 
 class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
-    """Keep native Arrow content and render only requested terminal lines."""
+    """Display a ScalarDocument with read-only scrolling and keyboard navigation.
+
+    ValueBrowser supplies the value and width through show(). This widget owns
+    indexing and scrolling, drawing visible rows with document.line().
+    """
 
     ALLOW_MAXIMIZE = True
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -53,7 +57,10 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
 
     @property
     def text(self) -> str:
-        """Read the indexed document; viewport rendering never calls this."""
+        """Materialize the currently indexed content for inspection.
+
+        Rendering reads individual rows through document.line().
+        """
         document = self.document
         if document is None:
             return ""
@@ -66,7 +73,7 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         self.show(pa.scalar(text), width=max(1, self.scrollable_content_region.width))
 
     def show(self, value: pa.Scalar, *, width: int) -> None:
-        """Replace the document and cancel any stale index builder."""
+        """Replace the document, prepare its first batch and restart indexing."""
         self._cancel_index()
         self.document = ScalarDocument(value, width=width)
         self.document.advance()

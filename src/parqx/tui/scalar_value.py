@@ -1,4 +1,4 @@
-"""Complete content for the supported scalar reader, separate from previews."""
+"""Text and display metadata for Arrow scalars used by ScalarDocument."""
 
 from dataclasses import dataclass
 from math import isinf, isnan
@@ -10,7 +10,14 @@ import pyarrow.compute as pc
 
 @dataclass(frozen=True)
 class ScalarContent:
-    """Literal reader text and the metadata that describes its completeness."""
+    """Formatted content returned by read_scalar.
+
+    Attributes:
+        text: Complete text or an explicit reading-state message.
+        metadata: Arrow type and optional size information.
+        info: Reading status, including NULL and empty values.
+        role: Color category for the displayed value.
+    """
 
     text: str
     metadata: str
@@ -19,7 +26,10 @@ class ScalarContent:
 
 
 def scalar_leaf(value: pa.Scalar) -> tuple[pa.Scalar, str]:
-    """Unwrap encoded leaves without materializing their content."""
+    """Unwrap Dictionary, Union and JSON scalars, retaining Arrow storage.
+
+    Return the underlying value and a type description recording its encodings.
+    """
     wrappers: list[str] = []
     while (
         isinstance(value, (pa.DictionaryScalar, pa.UnionScalar, pa.JsonScalar))
@@ -43,7 +53,13 @@ def scalar_leaf(value: pa.Scalar) -> tuple[pa.Scalar, str]:
 
 
 def read_scalar(value: pa.Scalar) -> ScalarContent:
-    """Format scalar text. ScalarDocument renders binary values by row."""
+    """Convert an Arrow value into complete text and display metadata.
+
+    ScalarDocument calls this for typed text such as numbers, dates and NULL.
+    Strings are materialized in full here. ScalarDocument handles non-empty
+    strings and binary directly. Valid binary and container inputs here return
+    an unsupported-type message.
+    """
     complete = "Complete value\nRead only"
     value, metadata = scalar_leaf(value)
     data_type = value.type

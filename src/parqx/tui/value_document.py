@@ -105,10 +105,16 @@ class _TextRow:
 
 
 class ScalarDocument:
-    """Read typed leaves a viewport at a time, with incremental Unicode wrapping."""
+    """Provide width-dependent scalar lines to the ScalarReader widget.
+
+    Index string buffers in bounded batches and format binary rows on demand.
+    Numbers and dates use read_scalar. Call advance() to prepare text, then line()
+    for display. line_count tracks available rows, and complete marks the end
+    of indexing. Byte offsets let the reader restore its position after reflow.
+    """
 
     def __init__(self, value: pa.Scalar, *, width: int) -> None:
-        """Keep native string/binary buffers; format only bounded scalar types."""
+        """Retain an Arrow value and set its display width in terminal cells."""
         self.width = max(1, width)
         self.value = value
         leaf, self._metadata = scalar_leaf(value)
@@ -262,7 +268,10 @@ class ScalarDocument:
         yield _TextRow(start, offset, line)
 
     def advance(self) -> None:
-        """Index one page and release decoded content from the previous page."""
+        """Index a bounded text batch, updating line_count and complete.
+
+        The UI worker yields between calls to keep navigation responsive.
+        """
         if self.complete:
             return
         rows: list[_TextRow] = []
@@ -321,11 +330,17 @@ class ScalarDocument:
         return self._cached_rows[within]
 
     def raw_line(self, index: int) -> str:
-        """Return one wrapped text slice with its original logical terminator."""
+        """Return an indexed text row with original tabs, controls and line breaks.
+
+        Use line() for binary hex rows. The index must be in range(line_count).
+        """
         return self._row(index).raw
 
     def line(self, index: int) -> str:
-        """Format one binary row or decode one indexed text row."""
+        """Return a display row with text controls escaped or binary bytes as hex.
+
+        ScalarReader applies styling. The index must be in range(line_count).
+        """
         columns = self.bytes_per_line
         if columns is None:
             text = self.raw_line(index).rstrip("\r\n")
