@@ -16,7 +16,6 @@ class ScalarContent:
     metadata: str
     info: str
     role: Literal["string", "number", "boolean", "muted"]
-    bytes_per_line: int | None = None
 
 
 def scalar_leaf(value: pa.Scalar) -> tuple[pa.Scalar, str]:
@@ -43,8 +42,8 @@ def scalar_leaf(value: pa.Scalar) -> tuple[pa.Scalar, str]:
     return value, metadata
 
 
-def read_scalar(value: pa.Scalar, *, width: int = 80) -> ScalarContent:
-    """Preserve supported values; never pass an unknown conversion off as complete."""
+def read_scalar(value: pa.Scalar) -> ScalarContent:
+    """Format scalar text. ScalarDocument renders binary values by row."""
     complete = "Complete value\nRead only"
     value, metadata = scalar_leaf(value)
     data_type = value.type
@@ -93,28 +92,6 @@ def read_scalar(value: pa.Scalar, *, width: int = 80) -> ScalarContent:
         return ScalarContent(text, metadata, complete, "number")
     if isinstance(value, pa.UuidScalar):
         return ScalarContent(str(value.as_py()), metadata, complete, "string")
-    if (
-        pa.types.is_binary(data_type)
-        or pa.types.is_large_binary(data_type)
-        or pa.types.is_fixed_size_binary(data_type)
-        or pa.types.is_binary_view(data_type)
-    ):
-        data: bytes = value.as_py()
-        metadata += f" · {len(data):,} bytes"
-        if not data:
-            return ScalarContent("0x", metadata, "Empty binary\n0 bytes", "muted")
-        offset_width = max(8, len(f"{len(data) - 1:x}"))
-        columns = max(1, min(16, (width - offset_width - 5) // 4))
-        lines: list[str] = []
-        for offset in range(0, len(data), columns):
-            chunk = data[offset : offset + columns]
-            printable = "".join(
-                chr(byte) if 32 <= byte < 127 else "." for byte in chunk
-            )
-            lines.append(
-                f"{offset:0{offset_width}x}  {chunk.hex(' '):<{3 * columns - 1}}  |{printable:<{columns}}|"
-            )
-        return ScalarContent("\n".join(lines), metadata, complete, "muted", columns)
     return ScalarContent(
         "Unsupported value type.\nThis type cannot be explored yet.",
         metadata,

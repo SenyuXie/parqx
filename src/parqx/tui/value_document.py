@@ -137,31 +137,32 @@ class ScalarDocument:
             self._buffer = leaf.as_buffer()
             self.role = "string"
             self._string = True
-        elif (
-            leaf.is_valid
-            and isinstance(
-                leaf,
-                (
-                    pa.BinaryScalar,
-                    pa.LargeBinaryScalar,
-                    pa.FixedSizeBinaryScalar,
-                    pa.BinaryViewScalar,
-                ),
-            )
-            and len(leaf.as_buffer())
+        elif leaf.is_valid and isinstance(
+            leaf,
+            (
+                pa.BinaryScalar,
+                pa.LargeBinaryScalar,
+                pa.FixedSizeBinaryScalar,
+                pa.BinaryViewScalar,
+            ),
         ):
             self._buffer = leaf.as_buffer()
-            self._offset_width = max(8, len(f"{len(self._buffer) - 1:x}"))
-            self.bytes_per_line = max(
-                1, min(16, (self.width - self._offset_width - 5) // 4)
-            )
-            self.line_count = (
-                len(self._buffer) + self.bytes_per_line - 1
-            ) // self.bytes_per_line
-            self._metadata += f" · {len(self._buffer):,} bytes"
-            self.complete = True
+            size = len(self._buffer)
+            self._metadata += f" · {size:,} bytes"
+            if size:
+                self._offset_width = max(8, len(f"{size - 1:x}"))
+                self.bytes_per_line = max(
+                    1, min(16, (self.width - self._offset_width - 5) // 4)
+                )
+                self.line_count = (
+                    size + self.bytes_per_line - 1
+                ) // self.bytes_per_line
+                self.complete = True
+            else:
+                self._buffer = pa.py_buffer(b"0x")
+                self.info = "Empty binary\n0 bytes"
         else:
-            content = read_scalar(value, width=self.width)
+            content = read_scalar(value)
             self._buffer = pa.py_buffer(content.text.encode("utf-8"))
             self._metadata, self.info, self.role = (
                 content.metadata,

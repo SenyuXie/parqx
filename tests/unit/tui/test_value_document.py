@@ -61,6 +61,53 @@ def test_long_unicode_is_indexed_incrementally_and_preserved() -> None:
     assert "".join(document.raw_line(i) for i in range(document.line_count)) == text
 
 
+@pytest.mark.parametrize(
+    "data_type", [pa.binary(), pa.large_binary(), pa.binary(6), pa.binary_view()]
+)
+def test_binary_families_show_offsets_hex_and_printable_bytes(
+    data_type: pa.DataType,
+) -> None:
+    document = ScalarDocument(pa.scalar(b"\x00A~\xff\nZ", type=data_type), width=29)
+    assert document.line_count == 2
+    assert document.line(0) == "00000000  00 41 7e ff  |.A~.|"
+    assert document.line(1) == "00000004  0a 5a        |.Z  |"
+    assert document.metadata == f"{data_type} · 6 bytes"
+    assert document.info.startswith("Complete value")
+
+
+@pytest.mark.parametrize(
+    "data_type", [pa.binary(), pa.large_binary(), pa.binary(0), pa.binary_view()]
+)
+def test_empty_binary_is_distinct_from_null(data_type: pa.DataType) -> None:
+    empty = ScalarDocument(pa.scalar(b"", type=data_type), width=29)
+    empty.advance()
+    assert empty.line(0) == "0x"
+    assert empty.metadata == f"{data_type} · 0 bytes"
+    assert empty.info == "Empty binary\n0 bytes"
+
+    null = ScalarDocument(pa.scalar(None, type=data_type), width=29)
+    null.advance()
+    assert null.line(0) == "null"
+    assert null.info == "Null value"
+
+
+@pytest.mark.parametrize(("width", "line_count"), [(29, 65), (45, 33), (77, 17)])
+def test_binary_layout_adapts_without_losing_any_bytes(
+    width: int, line_count: int
+) -> None:
+    data = bytes(range(256)) + b"END"
+    document = ScalarDocument(pa.scalar(data), width=width)
+    assert document.line_count == line_count
+    decoded = bytearray()
+    for index in range(line_count):
+        line = document.line(index)
+        assert len(line) <= width
+        assert int(line[:8], 16) == len(decoded)
+        hex_bytes, _, _ = line[10:].partition("  |")
+        decoded.extend(bytes.fromhex(hex_bytes))
+    assert decoded == data
+
+
 def test_binary_last_byte_is_available_without_formatting_preceding_bytes() -> None:
     data = bytes(range(256)) * 8192 + b"END"
     document = ScalarDocument(pa.scalar(data), width=29)
