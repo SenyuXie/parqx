@@ -211,7 +211,7 @@ async def test_loading_completion_preserves_visibility_and_focus(
                         await pilot.press("v")
                     await pilot.press("tab")
                 assert browser.options.has_focus
-                assert browser.options.option_count == 5
+                assert "3 fields" in str(browser.metadata.content)
                 await pilot.press("down", "enter", "enter")
                 assert browser.reader.text == "person 300"
                 assert browser.reader.has_focus
@@ -302,7 +302,7 @@ async def test_page_eviction_preserves_path_scroll_and_only_the_current_root(
         await pilot.press("v", "v", "tab")
         assert browser.reader.scroll_y == position
         await pilot.press("backspace")
-        assert browser.options.highlighted == 3
+        assert browser.options.highlighted == 2
         await pilot.press("up", "enter", "enter")
         assert browser.reader.text == "person 0"
         await pilot.press("escape")

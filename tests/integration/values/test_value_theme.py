@@ -155,8 +155,12 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                 await pilot.pause()
                 expected_border = ("solid", Color.parse(variables[border_color]))
                 assert browser.styles.border_left == expected_border
-                assert browser.metadata.styles.border_bottom == expected_border
-                assert browser.info.styles.border_top == expected_border
+                separator = (
+                    "solid",
+                    Color.parse(variables["foreground"]).with_alpha(0.2),
+                )
+                assert browser.metadata.styles.border_bottom == separator
+                assert browser.info.styles.border_top == separator
                 options.action_first()
                 for row in range(1, 5):
                     _assert_readable(options.render_line(row))
@@ -171,6 +175,6 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             _assert_readable(browser.reader.render_line(0))
             assert await pilot.click(browser.query_one(".value-crumb", Button))
             assert options.display
-            assert options.highlighted == 1
+            assert options.highlighted == 0
         for state in zip(*appearances, strict=True):
             assert len(set(state)) == 3

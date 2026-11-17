@@ -81,8 +81,6 @@ class ValueBrowser(Vertical):
         &:focus-within {
             border-left: solid $primary;
             background-tint: $foreground 5%;
-            .value-type { border-bottom: solid $primary; }
-            .value-info { border-top: solid $primary; }
         }
         .value--key { color: #1d4b70; }
         .value--string, .value-reader.string { color: #19512f; }
@@ -107,7 +105,7 @@ class ValueBrowser(Vertical):
         .value-separator { width: 3; height: 1; color: $text-muted; }
         .value-type {
             height: 2; padding: 0 1; margin-bottom: 1;
-            color: $text-muted; border-bottom: solid $primary-muted;
+            color: $text-muted; border-bottom: solid $foreground 20%;
         }
         .value-reader {
             height: 1fr; padding: 0 2; border: none; background: transparent;
@@ -115,7 +113,7 @@ class ValueBrowser(Vertical):
             &.error { color: $error; }
         }
         .value-info {
-            height: 3; border-top: solid $primary-muted;
+            height: 3; border-top: solid $foreground 20%;
             padding: 0 1; color: $text-muted;
         }
         .value-children {
@@ -455,9 +453,7 @@ class ValueBrowser(Vertical):
             f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
         )
 
-    def _frame_for_option(
-        self, event: ValueChildren.ChildMessage
-    ) -> BrowseFrame | None:
+    def _frame_for_child(self, event: ValueChildren.ChildMessage) -> BrowseFrame | None:
         """Accept only children from the current rendered container."""
         if (
             self._frames
@@ -470,7 +466,7 @@ class ValueBrowser(Vertical):
     @on(ValueChildren.Highlighted)
     def _highlighted(self, event: ValueChildren.Highlighted) -> None:
         event.stop()
-        frame = self._frame_for_option(event)
+        frame = self._frame_for_child(event)
         if frame is not None:
             frame.selected = event.index
             self._selection_info(frame)
@@ -478,7 +474,7 @@ class ValueBrowser(Vertical):
     @on(ValueChildren.Selected)
     def _open_child(self, event: ValueChildren.Selected) -> None:
         event.stop()
-        frame = self._frame_for_option(event)
+        frame = self._frame_for_child(event)
         if frame is None:
             return
         frame.selected = event.index
@@ -508,7 +504,7 @@ class ValueBrowser(Vertical):
             self.crumbs.scroll_to(x=0, animate=False)
         had_focus = self.options.has_focus
         self.options.display = False
-        self.options.clear_options()
+        self.options.clear()
         self.reader.display = True
         self.identity.update("No selection")
         self.identity.tooltip = None

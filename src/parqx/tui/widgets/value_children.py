@@ -1,4 +1,4 @@
-"""A virtual option list over the direct children of an Arrow value."""
+"""A virtual view of the direct children of an Arrow value."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from textual.geometry import Region, Size
 from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
-from textual.widgets.option_list import Option
 
 from parqx.tui.value_document import ContainerDocument, ReadingPosition
 from parqx.tui.value_node import ValueNode
@@ -21,7 +20,7 @@ from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 
 class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
-    """Render visible options only, retaining absolute positional identities."""
+    """Render visible children only, retaining absolute positional identities."""
 
     ALLOW_MAXIMIZE = True
     COMPONENT_CLASSES: ClassVar[set[str]] = {
@@ -59,17 +58,10 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         """Start with no retained node or child widgets."""
         super().__init__(classes=classes)
         self.highlighted: int | None = None
+        """Zero-based child position, or None when no child is available."""
         self._palette: dict[str, Style] = {}
         self._pending_selection = False
         self._restore_y: float | None = None
-
-    @property
-    def option_count(self) -> int:
-        """Virtual options, including unselectable delimiters."""
-        if self.document is None:
-            return 0
-        count = self.document.node.child_count
-        return count + 2 if count else 1
 
     def show(
         self, node: ValueNode, *, width: int, selected: int, styles: dict[str, Style]
@@ -78,7 +70,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._cancel_index()
         self.document = ContainerDocument(node, width=width)
         self.document.advance()
-        self.highlighted = selected + 1 if node.child_count else None
+        self.highlighted = selected if node.child_count else None
         self._palette = styles
         self._pending_selection = False
         self._restore_y = None
@@ -87,7 +79,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._update_size()
         self._start_indexing()
 
-    def clear_options(self) -> None:
+    def clear(self) -> None:
         """Release this view's document and cancel its index builder."""
         self._cancel_index()
         self.document = None
@@ -95,24 +87,6 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._restore_y = None
         self.virtual_size = Size(0, 0)
         self.refresh()
-
-    def get_option_at_index(self, index: int) -> Option:
-        """Materialize one requested prompt, never a collection of all options."""
-        return Option(
-            self._get_prompt(index), disabled=index in {0, self.option_count - 1}
-        )
-
-    def _get_prompt(self, index: int) -> Text:
-        document = self.document
-        if document is None or not 0 <= index < self.option_count:
-            raise IndexError(index)
-        node = document.node
-        left, right = node.delimiters
-        if not node.child_count:
-            return Text("  " + left + right)
-        if index in {0, self.option_count - 1}:
-            return Text("  " + (left if index == 0 else right))
-        return node.child_prompt(index - 1, width=document.width, styles=self._palette)
 
     def _update_size(self) -> None:
         document = self.document
@@ -143,7 +117,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         document = self.document
         if document is None or self.highlighted is None:
             return
-        index = self.highlighted - 1
+        index = self.highlighted
         if index >= document.indexed_children:
             self._pending_selection = True
             return
@@ -160,24 +134,25 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         document = self.document
         if document is None or not document.node.child_count:
             return
-        self.highlighted = max(1, min(index, document.node.child_count))
+        self.highlighted = max(0, min(index, document.node.child_count - 1))
         self._restore_y = None
         self._reveal_selection()
         self.refresh()
-        self.post_message(self.Highlighted(document, self.highlighted - 1))
+        self.post_message(self.Highlighted(document, self.highlighted))
 
     def action_move(self, delta: int) -> None:
         """Move by one child, independent of its visual height."""
-        self._highlight((self.highlighted or 1) + delta)
+        self._highlight((self.highlighted or 0) + delta)
 
     def action_first(self) -> None:
         """Select the first child and expose the opening delimiter."""
-        self._highlight(1)
+        self._highlight(0)
         self.scroll_to(y=0, animate=False, immediate=True)
 
     def action_last(self) -> None:
         """Select the absolute final child, including during field indexing."""
-        self._highlight(self.option_count - 2)
+        if self.document is not None:
+            self._highlight(self.document.node.child_count - 1)
 
     def action_page(self, direction: int) -> None:
         """Move by one viewport of children."""
@@ -186,7 +161,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     def action_select(self) -> None:
         """Open a child without requiring preceding values to be formatted."""
         if self.document is not None and self.highlighted is not None:
-            self.post_message(self.Selected(self.document, self.highlighted - 1))
+            self.post_message(self.Selected(self.document, self.highlighted))
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         """Expose complete identity and a full-width hover background."""
@@ -201,11 +176,11 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._hovered = None
 
     def on_click(self, event: events.Click) -> None:
-        """Confirm the clicked child, matching the option-list interaction."""
+        """Highlight and open the clicked child."""
         index = event.style.meta.get("value_child")
         if isinstance(index, int):
             event.stop()
-            self._highlight(index + 1)
+            self._highlight(index)
             self.action_select()
 
     def render_line(self, y: int) -> Strip:
@@ -217,15 +192,25 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         if document is None or line >= document.line_count:
             return Strip.blank(width, style)
         index = document.child_at_line(line)
+        node = document.node
         if index is None:
-            prompt = self._get_prompt(0 if line == 0 else self.option_count - 1)
+            left, right = node.delimiters
+            if not node.child_count:
+                delimiter = left + right
+            elif line == 0:
+                delimiter = left
+            else:
+                delimiter = right
+            prompt = Text("  " + delimiter)
         else:
-            prompt = self._get_prompt(index + 1)
+            prompt = node.child_prompt(
+                index, width=document.width, styles=self._palette
+            )
             prompt = prompt.split("\n")[line - document.child_line(index)]
             style += Style(meta={"value_child": index})
             if self._hovered == index:
                 style += self.get_component_rich_style("option-list--option-hover")
-            if self.highlighted == index + 1:
+            if self.highlighted == index:
                 text = prompt.plain
                 prompt.stylize(
                     self.get_component_rich_style("option-list--option-highlighted"),

@@ -33,8 +33,10 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         children.focus()
         document = children.document
         assert document is not None
+        assert children.highlighted == 0
 
         await pilot.press("down")
+        assert children.highlighted == 1
         assert received == [("highlighted", document, 1)]
         received.clear()
 
@@ -44,6 +46,7 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
 
         # The opening delimiter occupies line zero; the first child is on line one.
         assert await pilot.click(children, offset=(2, 1))
+        assert children.highlighted == 0
         assert received == [("highlighted", document, 0), ("selected", document, 0)]
 
 

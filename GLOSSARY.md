@@ -21,3 +21,6 @@ A cell value or row value explicitly selected as the starting point for value br
 
 **Browse path**:
 The sequence of fields or elements traversed from the browse root to the value currently being inspected.
+
+**Highlighted child**:
+The direct child currently targeted for opening in a container shown by the value browser. Its position among that container's children identifies it even when field names or Map keys repeat.

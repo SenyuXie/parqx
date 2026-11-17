@@ -51,7 +51,7 @@ async def test_native_maximize_keeps_table_and_nested_browser_together(
             assert browser.reader.text.startswith("row 0\n")
             assert browser.reader.scroll_y == position
         else:
-            assert browser.options.highlighted == 3
+            assert browser.options.highlighted == 2
 
         app.screen.action_minimize()
         await wait_for(lambda: (table.region, browser.region) == geometry, pilot)
@@ -60,10 +60,10 @@ async def test_native_maximize_keeps_table_and_nested_browser_together(
         if focus == "reader":
             assert browser.reader.scroll_y == position
             await pilot.press("backspace")
-            assert browser.options.highlighted == 3
+            assert browser.options.highlighted == 2
         await pilot.press("escape", "v", "v", "tab")
         assert browser.options.has_focus
-        assert browser.options.highlighted == 3
+        assert browser.options.highlighted == 2
 
 
 async def test_tabs_restore_independent_nested_paths_and_reading_positions(
@@ -116,7 +116,7 @@ async def test_tabs_restore_independent_nested_paths_and_reading_positions(
         assert len(source_browser.query(".value-crumb")) == 2
         source_table.focus()
         await pilot.press("down", "tab", "backspace")
-        assert source_browser.options.highlighted == 16
+        assert source_browser.options.highlighted == 15
         assert source_browser.options.scroll_y == source_position
 
         await select_tab(tabs, "query-1", pilot)
@@ -125,7 +125,7 @@ async def test_tabs_restore_independent_nested_paths_and_reading_positions(
         assert first_browser.reader.text == "false"
         first_table.focus()
         await pilot.press("tab", "backspace")
-        assert first_browser.options.highlighted == 2
+        assert first_browser.options.highlighted == 1
 
         await select_tab(tabs, "query-2", pilot)
         assert not second_browser.display
@@ -137,7 +137,7 @@ async def test_tabs_restore_independent_nested_paths_and_reading_positions(
         assert second_browser.reader.scroll_y == second_position
         assert len(second_browser.query(".value-crumb")) == 2
         await pilot.press("backspace")
-        assert second_browser.options.highlighted == 1
+        assert second_browser.options.highlighted == 0
 
 
 @pytest.mark.parametrize("hidden", [False, True])
@@ -220,7 +220,7 @@ async def test_failed_execution_preserves_nested_inspection(
             await pilot.pause()
         await pilot.press("backspace")
         assert browser.options.has_focus
-        assert browser.options.highlighted == 3
+        assert browser.options.highlighted == 2
 
 
 @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
         if focus == "container":
             await pilot.press("down", "enter", "down")
             assert browser.options.has_focus
-            assert browser.options.highlighted == 2
+            assert browser.options.highlighted == 1
         else:
             await pilot.press("end", "enter", "pagedown")
             assert browser.reader.scroll_y > 0
@@ -284,7 +284,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
         assert query.current_result is not previous_result
         assert browser.root is None
         assert not browser.query(".value-crumb")
-        assert browser.options.option_count == 0
+        assert browser.options.document is None
         assert browser.reader.scroll_y == 0
         assert browser.display is not hidden
         assert table.cursor_coordinate == Coordinate(0, 0)
@@ -306,7 +306,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
         assert (browser.root is None) is empty
         if not empty:
             assert len(browser.query(".value-crumb")) == 1
-            assert browser.options.highlighted == 1
+            assert browser.options.highlighted == 0
             assert browser.options.scroll_y == 0
 
 
@@ -414,7 +414,7 @@ async def test_background_queries_update_only_their_own_inspection(
         await pilot.press("tab")
         assert first_browser.reader.has_focus
         await pilot.press("backspace")
-        assert first_browser.options.highlighted == 2
+        assert first_browser.options.highlighted == 1
 
 
 @pytest.mark.parametrize(
@@ -455,7 +455,7 @@ async def test_closing_maximized_inspection_releases_values_and_restores_workspa
         assert browser.reader.text == ("false" if query_result else "true")
         if focus == "container":
             await pilot.press("backspace")
-            assert browser.options.highlighted == 2
+            assert browser.options.highlighted == 1
         focused = app.focused
         assert browser.root is not None
         value = weakref.ref(browser.root.value)
@@ -485,10 +485,10 @@ async def test_closing_maximized_inspection_releases_values_and_restores_workspa
         assert survivor_browser.reader.has_focus
         assert survivor_browser.reader.text == ("true" if query_result else "false")
         await pilot.press("backspace")
-        assert survivor_browser.options.highlighted == 2
+        assert survivor_browser.options.highlighted == 1
         assert browser.root is None
         assert not browser.query(".value-crumb")
-        assert browser.options.option_count == 0
+        assert browser.options.document is None
 
         def released() -> bool:
             gc.collect()
@@ -582,13 +582,13 @@ async def test_tab_switch_restores_container_scroll_independently_of_selection(
         await pilot.pause()
         position = browser.options.scroll_y
         assert position > 1
-        assert browser.options.highlighted == 1
+        assert browser.options.highlighted == 0
         tabs = app.query_one(TabbedContent)
         pane_id = tabs.active
         await open_query(app, pilot)
         await select_tab(tabs, pane_id, pilot)
         assert browser.options.scroll_y == position
-        assert browser.options.highlighted == 1
+        assert browser.options.highlighted == 0
         table.focus()
         await pilot.press("tab")
         assert browser.options.has_focus
