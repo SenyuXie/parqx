@@ -81,8 +81,6 @@ class ValueBrowser(Vertical):
         &:focus-within {
             border-left: solid $primary;
             background-tint: $foreground 5%;
-            .value-type { border-bottom: solid $primary; }
-            .value-info { border-top: solid $primary; }
         }
         .value--key { color: #1d4b70; }
         .value--string, .value-reader.string { color: #19512f; }
@@ -107,7 +105,7 @@ class ValueBrowser(Vertical):
         .value-separator { width: 3; height: 1; color: $text-muted; }
         .value-type {
             height: 2; padding: 0 1; margin-bottom: 1;
-            color: $text-muted; border-bottom: solid $primary-muted;
+            color: $text-muted; border-bottom: solid $foreground 20%;
         }
         .value-reader {
             height: 1fr; padding: 0 2; border: none; background: transparent;
@@ -115,7 +113,7 @@ class ValueBrowser(Vertical):
             &.error { color: $error; }
         }
         .value-info {
-            height: 3; border-top: solid $primary-muted;
+            height: 3; border-top: solid $foreground 20%;
             padding: 0 1; color: $text-muted;
         }
         .value-children {
