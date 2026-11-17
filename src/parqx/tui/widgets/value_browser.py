@@ -455,9 +455,7 @@ class ValueBrowser(Vertical):
             f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
         )
 
-    def _frame_for_option(
-        self, event: ValueChildren.ChildMessage
-    ) -> BrowseFrame | None:
+    def _frame_for_child(self, event: ValueChildren.ChildMessage) -> BrowseFrame | None:
         """Accept only children from the current rendered container."""
         if (
             self._frames
@@ -470,7 +468,7 @@ class ValueBrowser(Vertical):
     @on(ValueChildren.Highlighted)
     def _highlighted(self, event: ValueChildren.Highlighted) -> None:
         event.stop()
-        frame = self._frame_for_option(event)
+        frame = self._frame_for_child(event)
         if frame is not None:
             frame.selected = event.index
             self._selection_info(frame)
@@ -478,7 +476,7 @@ class ValueBrowser(Vertical):
     @on(ValueChildren.Selected)
     def _open_child(self, event: ValueChildren.Selected) -> None:
         event.stop()
-        frame = self._frame_for_option(event)
+        frame = self._frame_for_child(event)
         if frame is None:
             return
         frame.selected = event.index
@@ -508,7 +506,7 @@ class ValueBrowser(Vertical):
             self.crumbs.scroll_to(x=0, animate=False)
         had_focus = self.options.has_focus
         self.options.display = False
-        self.options.clear_options()
+        self.options.clear()
         self.reader.display = True
         self.identity.update("No selection")
         self.identity.tooltip = None

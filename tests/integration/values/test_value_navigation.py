@@ -25,24 +25,22 @@ async def test_row_struct_and_scalar_share_one_browser(nested_parquet: Path) -> 
         assert browser.display
         assert table.has_focus
         options = browser.query_one(ValueChildren)
-        assert options.option_count == 18  # Sixteen columns and two delimiters.
-        assert "extra_11" in str(options.get_option_at_index(16).prompt)
         assert "16 fields" in str(browser.query_one(".value-type", Static).content)
 
         await pilot.press("tab", "down", "enter")
         assert options.has_focus
-        assert options.option_count == 4
-        assert '"name"' in str(options.get_option_at_index(1).prompt)
+        assert "2 fields" in str(browser.metadata.content)
+        assert '"name"' in options.render_line(1).text
         await pilot.press("enter")
         reader = browser.query_one(ScalarReader)
         assert reader.has_focus
         assert reader.text == "Ada\n[bold]中文[/bold]"
         await pilot.press("backspace")
         assert options.has_focus
-        assert options.highlighted == 1
+        assert options.highlighted == 0
         await pilot.press("backspace")
         assert options.has_focus
-        assert options.highlighted == 2
+        assert options.highlighted == 1
         await pilot.press("escape")
         assert table.has_focus
         assert browser.display
@@ -65,11 +63,13 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
         table.move_cursor(row=0, column=2)
         await pilot.press("enter", "tab")
         assert options.has_focus
-        assert str(options.get_option_at_index(0).prompt).strip() == "["
-        assert str(options.get_option_at_index(3).prompt).strip() == "]"
-        assert options.get_option_at_index(0).disabled
-        assert options.get_option_at_index(3).disabled
-        assert not options.get_option_at_index(1).disabled
+        assert options.render_line(0).text.strip() == "["
+        assert options.render_line(3).text.strip() == "]"
+        for line in (0, 3):
+            assert await pilot.click(options, offset=(2, line))
+            assert options.has_focus
+            assert options.highlighted == 0
+            assert len(browser.query(".value-crumb")) == 1
         assert await pilot.click(options, offset=(8, 1))
         await pilot.press("enter")
         assert reader.has_focus
@@ -94,10 +94,10 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
         await pilot.pause()
         assert await pilot.click(crumbs[0])
         assert options.has_focus
-        assert options.highlighted == 2
+        assert options.highlighted == 1
         assert "map" in str(browser.query_one(".value-type", Static).content)
         await pilot.press("escape", "v", "v", "tab")
-        assert options.highlighted == 2
+        assert options.highlighted == 1
         assert tabs.tab_count == tab_count
 
         await pilot.press("escape")
@@ -105,8 +105,7 @@ async def test_list_map_mouse_navigation_and_breadcrumb_return(
         await pilot.press("enter", "tab", "enter")
         assert options.has_focus
         assert options.highlighted is None
-        assert options.option_count == 1
-        assert str(options.get_option_at_index(0).prompt).strip() == "[]"
+        assert options.render_line(0).text.strip() == "[]"
         assert "0 items" in str(browser.query_one(".value-type", Static).content)
         await pilot.press("escape")
         table.move_cursor(row=2, column=2)
@@ -132,10 +131,10 @@ async def test_parent_position_survives_hide_and_new_roots_reset_it(
         await pilot.pause()
         reading_position = options.scroll_y
         await pilot.press("v", "v", "tab")
-        assert options.highlighted == 1
+        assert options.highlighted == 0
         assert options.scroll_y == reading_position
         await pilot.press("end")
-        assert options.highlighted == 16
+        assert options.highlighted == 15
         position = options.scroll_y
         assert position > 0
         await pilot.press("enter", "v")
@@ -145,15 +144,15 @@ async def test_parent_position_survives_hide_and_new_roots_reset_it(
         assert browser.reader.text == "11"
         assert len(browser.query(".value-crumb")) == 2
         await pilot.press("backspace")
-        assert options.highlighted == 16
+        assert options.highlighted == 15
         assert options.scroll_y == position
         await pilot.press("home")
-        assert options.highlighted == 1
+        assert options.highlighted == 0
         await pilot.press("backspace")
         assert table.has_focus
         # Enter confirms row 1 and replaces the old row 0 path and reading position.
         await pilot.press("enter", "tab")
-        assert options.highlighted == 1
+        assert options.highlighted == 0
         assert options.scroll_y == 0
         assert len(browser.query(".value-crumb")) == 1
 
@@ -168,12 +167,10 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
         options = browser.query_one(ValueChildren)
         table.focus()
         await pilot.press("enter", "tab", "down")
-        prompt = str(options.get_option_at_index(2).prompt)
-        assert "…" in prompt
-        assert "\n      {" in prompt
-        for y, text in enumerate(prompt.splitlines(), start=2):
+        assert "…" in options.render_line(2).text
+        assert options.render_line(3).text.startswith("      {")
+        for y in (2, 3):
             line = options.render_line(y)
-            assert line.text.rstrip() == text.rstrip()
             assert all(
                 segment.style is not None and segment.style.meta.get("value_child") == 1
                 for segment in line
@@ -183,6 +180,13 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
         info = browser.query_one(".value-info", Static)
         assert "…\nstruct · 2 fields" in str(info.content)
         assert label in str(info.tooltip)
+        for clicked_line in (2, 3):
+            assert await pilot.click(options, offset=(8, clicked_line))
+            crumbs = list(browser.query(".value-crumb").results(Button))
+            assert len(crumbs) == 2
+            assert str(crumbs[-1].tooltip) == label
+            await pilot.press("backspace")
+            assert options.highlighted == 1
         for _ in range(4):
             await pilot.press("enter", "down")
         await pilot.press("enter")
@@ -199,13 +203,13 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
         await pilot.pause()
         assert await pilot.click(ancestor)
         assert options.has_focus
-        assert options.highlighted == 2
+        assert options.highlighted == 1
         assert len(browser.query(".value-crumb")) == 3
         await pilot.resize_terminal(120, 40)
-        assert "\n      {" in str(options.get_option_at_index(2).prompt)
+        assert options.render_line(3).text.startswith("      {")
         assert options.max_scroll_x == 0
         await pilot.press("backspace", "backspace")
-        assert options.highlighted == 2
+        assert options.highlighted == 1
         assert len(browser.query(".value-crumb")) == 1
 
 
@@ -241,8 +245,33 @@ async def test_duplicate_positions_and_empty_structs_at_arrow_delivery(
         assert browser.reader.text == "second"
         await pilot.press("backspace", "down", "enter")
         options = browser.query_one(ValueChildren)
-        assert options.option_count == 1
-        assert str(options.get_option_at_index(0).prompt).strip() == "{}"
-        assert options.get_option_at_index(0).disabled
+        assert options.render_line(0).text.strip() == "{}"
         assert options.highlighted is None
         assert "0 fields" in str(browser.metadata.content)
+
+
+async def test_old_child_messages_cannot_change_the_current_browse_path(
+    nested_parquet: Path,
+) -> None:
+    app = Parqx([nested_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        table.focus()
+        table.cursor_type = "row"
+        await pilot.press("enter", "tab")
+        children = browser.options
+        previous = children.document
+        assert previous is not None
+        await pilot.press("down", "enter")
+        assert children.document is not previous
+        children.post_message(ValueChildren.Highlighted(previous, 1))
+        children.post_message(ValueChildren.Selected(previous, 1))
+        await pilot.pause()
+        assert children.has_focus
+        assert children.highlighted == 0
+        assert len(browser.query(".value-crumb")) == 2
+        assert "name" in str(browser.info.content)
+        await pilot.press("enter")
+        assert browser.reader.text == "Ada\n[bold]中文[/bold]"

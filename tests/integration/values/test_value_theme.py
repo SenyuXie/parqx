@@ -171,6 +171,6 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             _assert_readable(browser.reader.render_line(0))
             assert await pilot.click(browser.query_one(".value-crumb", Button))
             assert options.display
-            assert options.highlighted == 1
+            assert options.highlighted == 0
         for state in zip(*appearances, strict=True):
             assert len(set(state)) == 3

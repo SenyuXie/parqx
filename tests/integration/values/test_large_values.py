@@ -43,13 +43,13 @@ async def test_large_list_last_child_and_long_unicode_are_readable(
         browser = table.parent.query_one(ValueBrowser)
         table.focus()
         await pilot.press("enter", "tab", "end")
-        assert browser.options.highlighted == 100_000
+        assert browser.options.highlighted == 99_999
         position = browser.options.scroll_y
         assert position > 99_000
         await pilot.press("enter")
         assert browser.reader.text == "99999"
         await pilot.press("backspace")
-        assert browser.options.highlighted == 100_000
+        assert browser.options.highlighted == 99_999
         assert browser.options.scroll_y == position
         await pilot.press("escape")
         table.move_cursor(column=1)
@@ -113,15 +113,21 @@ async def test_large_map_and_struct_keep_positional_identity(
         assert query.view is not None
         table, browser = query.table, query.view.browser
         table.focus()
-        await pilot.press("enter", "tab", "end")
-        await wait_for(
-            lambda: (
-                browser.options.document is not None
-                and browser.options.document.complete
-            ),
-            pilot,
-        )
-        assert browser.options.highlighted == count
+        with monkeypatch.context() as patch:
+            started, release = pause_indexing(patch, ContainerDocument)
+            try:
+                await pilot.press("enter", "tab")
+                await wait_for(started.is_set, pilot)
+                await pilot.press("end")
+                document = browser.options.document
+                assert document is not None
+                assert not document.complete
+                assert browser.options.highlighted == count - 1
+                release.set()
+                await wait_for(lambda: document.complete, pilot)
+            finally:
+                release.set()
+        assert browser.options.highlighted == count - 1
         assert browser.options.scroll_y > count - 100
         position = browser.options.scroll_y
         await pilot.press("enter")
@@ -136,16 +142,16 @@ async def test_large_map_and_struct_keep_positional_identity(
                 await wait_for(lambda: browser.options.scroll_y == position, pilot)
             finally:
                 release.set()
-        assert browser.options.highlighted == count
+        assert browser.options.highlighted == count - 1
         await pilot.press("escape")
         table.move_cursor(column=1)
         await pilot.press("enter", "tab", "end", "enter", "down", "enter")
         assert browser.reader.text == "99999"
         assert len(browser.query(".value-crumb")) == 3
         await pilot.press("backspace")
-        assert browser.options.highlighted == 2
+        assert browser.options.highlighted == 1
         await pilot.press("backspace")
-        assert browser.options.highlighted == 100_000
+        assert browser.options.highlighted == 99_999
         assert browser.options.scroll_y > 99_000
 
 
