@@ -13,7 +13,7 @@ from array import array
 from bisect import bisect_right
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 import pyarrow as pa
 from rich.cells import cell_len, split_graphemes
@@ -137,16 +137,13 @@ class ScalarDocument:
             self._buffer = leaf.as_buffer()
             self.role = "string"
             self._string = True
-        elif leaf.is_valid and isinstance(
-            leaf,
-            (
-                pa.BinaryScalar,
-                pa.LargeBinaryScalar,
-                pa.FixedSizeBinaryScalar,
-                pa.BinaryViewScalar,
-            ),
+        elif leaf.is_valid and (
+            pa.types.is_binary(leaf.type)
+            or pa.types.is_large_binary(leaf.type)
+            or pa.types.is_fixed_size_binary(leaf.type)
+            or pa.types.is_binary_view(leaf.type)
         ):
-            self._buffer = leaf.as_buffer()
+            self._buffer = cast(pa.BinaryScalar, leaf).as_buffer()
             size = len(self._buffer)
             self._metadata += f" · {size:,} bytes"
             if size:
