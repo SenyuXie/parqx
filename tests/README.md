@@ -82,9 +82,11 @@ kind and resets navigation and rendering when data changes. Keep paging order,
 type conversions, budgets and resource cleanup tests at
 these boundaries; distribution checks exercise both browsing and SQL.
 
-`TablePane` displays loaded Arrow data or a source awaiting metadata. Source tabs
-own one submitted page read and one latest pending window, using Textual timers
-for trailing debounce; every tab releases cached data on unmount. The app owns
+`TablePane` displays loaded Arrow data or a source awaiting metadata. Each source tab owns a
+`SourceReadSchedule`. Test read priority, debounce ordering and stale delivery
+through the schedule with the current browse root and data identity. Use mounted
+tests for Textual timer and executor wiring, selection delivery and cache release
+on unmount. The app owns
 source metadata loading and the catalog, so closing a tab does not remove a source
 from SQL. `QueryWorkspace` owns its SQL draft and most recent successful result.
 The app owns one Textual thread worker and delivers its result to the submitting

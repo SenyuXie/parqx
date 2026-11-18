@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import weakref
 from concurrent.futures import Executor
 
 import pyarrow as pa
@@ -17,7 +16,8 @@ from textual.widgets import Static, TabPane
 from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import PageCache
+from parqx.data.view import DataPage, PageCache
+from parqx.tui.source_read_schedule import ReadContext, ReadRequest, SourceReadSchedule
 from parqx.tui.widgets.arrow_table import ArrowTable
 from parqx.tui.widgets.table_view import TableView
 from parqx.tui.widgets.value_browser import BrowseRoot
@@ -68,11 +68,7 @@ class TablePane(TabPane):
         self._executor = executor
         self._source: ParquetSource | None = None
         self._page_timer: Timer | None = None
-        self._pending_window: (
-            tuple[int, int, weakref.ReferenceType[PageCache]] | None
-        ) = None
-        self._request_number = 0
-        self._reading = False
+        self._schedule = SourceReadSchedule()
         self._spec: SourceSpec | None = None
         self.table: ArrowTable | None = None
         if isinstance(data, SourceSpec):
@@ -94,7 +90,8 @@ class TablePane(TabPane):
         """Attach loaded metadata and enable background reads for a source tab."""
         if self._spec is None:
             raise ValueError("Only source tabs can load a Parquet source")
-        self._clear_pending()
+        self._stop_timer()
+        self._schedule.invalidate_window()
         self._source = source
         self._error.display = False
         data = PageCache(
@@ -115,157 +112,99 @@ class TablePane(TabPane):
         self._error.tooltip = Content(str(issue))
         self._error.display = True
 
+    def _read_context(self) -> ReadContext | None:
+        """Borrow the currently displayed source data and pending selection."""
+        if (
+            not self.is_mounted
+            or self._source is None
+            or self.view is None
+            or not isinstance(self.view.table.data, PageCache)
+        ):
+            return None
+        return ReadContext(self._source, self.view.table.data, self.view.pending_root)
+
     @on(ArrowTable.WindowRequested)
     def _on_window_requested(self, event: ArrowTable.WindowRequested) -> None:
         if event.control is not self.table or event.data is not event.control.data:
             return
         event.stop()
-        if self.is_mounted and self._source is not None:
-            self._clear_pending()
-            self._pending_window = (
-                event.start_row,
-                event.stop_row,
-                weakref.ref(event.data),
+        context = self._read_context()
+        if context is None:
+            return
+        self._stop_timer()
+        window_id = self._schedule.request_window(
+            event.start_row, event.stop_row, context
+        )
+        if self._config.page_debounce_seconds:
+            self._page_timer = self.set_timer(
+                self._config.page_debounce_seconds, lambda: self._page_ready(window_id)
             )
-            if self._config.page_debounce_seconds:
-                request = self._request_number
-                self._page_timer = self.set_timer(
-                    self._config.page_debounce_seconds,
-                    lambda: self._page_ready(request),
-                )
-            else:
-                self._submit_pending()
+        else:
+            self._page_ready(window_id)
 
-    def _clear_pending(self) -> None:
-        self._request_number += 1
-        self._pending_window = None
+    def _stop_timer(self) -> None:
         if self._page_timer is not None:
             self._page_timer.stop()
             self._page_timer = None
 
-    def _page_ready(self, request: int) -> None:
-        if request == self._request_number:
+    def _page_ready(self, window_id: int) -> None:
+        if self._schedule.window_ready(window_id):
             self._page_timer = None
             self._submit_pending()
 
     @on(TableView.ValueRequested)
     def _on_value_requested(self, event: TableView.ValueRequested) -> None:
         event.stop()
-        if (
-            self.view is not None
-            and self.view is event.view
-            and self.view.pending_root is event.root
-        ):
+        if self.view is event.view and event.view.pending_root is event.root:
             self._submit_pending()
 
     def _submit_pending(self) -> None:
-        if self._reading:
-            return
-        # Serve the current root in the same native slot, retaining the latest
-        # pending viewport independently until its debounce interval has elapsed.
-        root = self.view.pending_root if self.view is not None else None
-        if (
-            root is not None
-            and self.table is not None
-            and isinstance(self.table.data, PageCache)
-        ):
-            start, stop, data = root.row, root.row + 1, weakref.ref(self.table.data)
-        else:
-            if self._page_timer is not None or self._pending_window is None:
-                return
-            root = None
-            start, stop, data = self._pending_window
-            self._pending_window = None
-        source, spec = self._source, self._spec
-        request = self._request_number
-        if (
-            source is None
-            or spec is None
-            or self._current_table(source, request, data) is None
-        ):
-            return
-        # Reserve the slot before Textual schedules the worker, including pool wait.
-        self._reading = True
-        self._read_page(
-            source,
-            spec,
-            start,
-            stop if root is not None else max(stop, start + source.page_rows),
-            request,
-            data,
-            root,
-        )
+        context = self._read_context()
+        if context is not None and self._spec is not None:
+            request = self._schedule.take_next(context)
+            if request is not None:
+                self._read_page(request, self._spec)
 
     @work(group="page", description="Read source page")
-    async def _read_page(
-        self,
-        source: ParquetSource,
-        spec: SourceSpec,
-        start: int,
-        stop: int,
-        request: int,
-        data: weakref.ReferenceType[PageCache],
-        root: BrowseRoot | None = None,
-    ) -> None:
-        # Native work receives no widget or cache. Unmount can cancel the async
-        # wait (and queued work); an already running native read finishes naturally.
+    async def _read_page(self, request: ReadRequest, spec: SourceSpec) -> None:
+        # Cancelling this waiter during unmount does not finish the native read.
+        outcome: DataPage | Exception
         try:
-            page = await asyncio.get_running_loop().run_in_executor(
-                self._executor, source.read_window, start, stop
+            outcome = await asyncio.get_running_loop().run_in_executor(
+                self._executor, request.source.read_window, request.start, request.stop
             )
         except Exception as exc:
-            if root is not None:
-                if (
-                    self._current_table(source, None, data) is not None
-                    and self.view is not None
-                ):
-                    self.view.fail_selection(
-                        root, str(SourceIssue(spec, str(exc) or type(exc).__name__))
-                    )
-            elif (table := self._current_table(source, request, data)) is not None:
-                logger.exception("Failed to read parquet window: %s", source.path)
-                table.fail_window()
-                self.notify(
-                    str(SourceIssue(spec, str(exc) or type(exc).__name__)),
-                    title="Read error",
-                    severity="error",
-                    markup=False,
-                )
-        else:
-            if root is not None:
-                if (
-                    self._current_table(source, None, data) is not None
-                    and self.view is not None
-                ):
-                    self.view.resolve_selection(root, page)
-            elif (table := self._current_table(source, request, data)) is not None:
-                table.accept_page(page)
-        # CancelledError intentionally skips this: cancelling the waiter does not
-        # mean native work finished, and must never free a slot for another read.
-        self._reading = False
-        self._submit_pending()
+            outcome = exc
 
-    def _current_table(
-        self,
-        source: ParquetSource,
-        request: int | None,
-        data: weakref.ReferenceType[PageCache],
-    ) -> ArrowTable | None:
-        """Resolve this source generation, optionally checking its viewport request."""
-        if (
-            self.is_mounted
-            and self._source is source
-            and (request is None or request == self._request_number)
-            and self.table is not None
-            and self.table.data is data()
-        ):
-            return self.table
-        return None
+        delivery = self._schedule.finish(request, self._read_context())
+        view = self.view
+        if delivery != "discard" and view is not None:
+            if isinstance(outcome, Exception):
+                message = str(SourceIssue(spec, str(outcome) or type(outcome).__name__))
+                if isinstance(delivery, BrowseRoot):
+                    view.fail_selection(delivery, message)
+                else:
+                    logger.error(
+                        "Failed to read parquet window: %s",
+                        request.source.path,
+                        exc_info=outcome,
+                    )
+                    view.table.fail_window()
+                    self.notify(
+                        message, title="Read error", severity="error", markup=False
+                    )
+            elif isinstance(delivery, BrowseRoot):
+                view.resolve_selection(delivery, outcome)
+            else:
+                view.table.accept_page(outcome)
+        # Delivery may have cleared the pending root. Sample the view again.
+        self._submit_pending()
 
     def on_unmount(self) -> None:
         """Release Arrow buffers even if Textual briefly retains the closed widget."""
         # Textual cancels this pane's workers when it is removed.
-        self._clear_pending()
+        self._stop_timer()
+        self._schedule.invalidate_window()
         self._source = None
         if self.table is not None:
             self.table.replace_data(pa.table({}))
