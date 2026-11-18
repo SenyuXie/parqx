@@ -15,7 +15,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ReadContext:
-    """Current UI state, borrowed only while making a scheduling decision."""
+    """The pane's source, cache and browse root for one scheduling decision.
+
+    A pending root is an explicit selection that still needs a source read.
+    """
 
     source: ParquetSource
     cache: PageCache
@@ -24,7 +27,10 @@ class ReadContext:
 
 @dataclass(frozen=True, eq=False)
 class ReadRequest:
-    """One native read tied to its original source and cache."""
+    """A read of rows [start, stop) for a viewport window or a browse root.
+
+    The cache reference is weak so the pane can release it during a read.
+    """
 
     source: ParquetSource
     cache: ReferenceType[PageCache]
@@ -39,7 +45,11 @@ class ReadRequest:
 
 
 class SourceReadSchedule:
-    """Reserve one read slot and debounce the latest viewport independently."""
+    """Share one source tab's read slot between its browse root and viewport.
+
+    A pending browse root has priority when the slot becomes available.
+    Replacing the viewport restarts its debounce interval.
+    """
 
     def __init__(self) -> None:
         """Start with no requested window or submitted read."""
@@ -55,7 +65,16 @@ class SourceReadSchedule:
         self._ready = False
 
     def request_window(self, start: int, stop: int, context: ReadContext) -> int:
-        """Replace the pending viewport and return its debounce timer's token."""
+        """Replace the pending viewport and allow for page read-ahead.
+
+        Args:
+            start: First requested row, zero-based.
+            stop: Exclusive end of the requested row range.
+            context: Source and cache currently displayed by the pane.
+
+        Returns:
+            The window ID to pass to `window_ready` when its timer fires.
+        """
         self.invalidate_window()
         self._pending_window = ReadRequest(
             context.source,
@@ -67,14 +86,19 @@ class SourceReadSchedule:
         return self._window_id
 
     def window_ready(self, window_id: int) -> bool:
-        """Allow only the latest pending window's timer to make it eligible."""
+        """Mark the window ready and return whether its timer is still current."""
         if self._pending_window is None or window_id != self._window_id:
             return False
         self._ready = True
         return True
 
     def take_next(self, context: ReadContext) -> ReadRequest | None:
-        """Claim the next eligible read before it can queue in the executor."""
+        """Reserve the slot for a pending browse root or a ready viewport.
+
+        Returns:
+            The request to submit, or None if busy or no read is eligible.
+            The request holds the slot even while queued in the executor.
+        """
         if self._active is not None:
             return None
         request: ReadRequest | None
@@ -97,7 +121,17 @@ class SourceReadSchedule:
     def finish(
         self, request: ReadRequest, context: ReadContext | None
     ) -> BrowseRoot | Literal["table", "discard"]:
-        """Release the completed read and decide where its outcome belongs."""
+        """Release the active read's slot and route its success or failure.
+
+        Args:
+            request: The request returned by `take_next` for the completed read.
+            context: Current pane state, or None if the source view is gone.
+
+        Returns:
+            The browse root to resolve or fail, "table" for the current viewport,
+            or "discard" for an obsolete read. Apply this decision before taking
+            the next read with fresh pane state.
+        """
         if self._active is not request:
             return "discard"
         self._active = None

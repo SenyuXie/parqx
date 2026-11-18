@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 class TablePane(TabPane):
     """Display loaded data or page through a source supplied by the app.
 
-    Each pane owns its table, page workers and cached data. The app owns source
-    metadata loading and the catalog, which outlive individual tabs.
+    Each pane owns its table, page workers and cached data. It runs the reads
+    reserved by its schedule and delivers their outcomes on the UI thread.
+    The app owns source metadata loading and the catalog, which outlive tabs.
     """
 
     DEFAULT_CSS = """
