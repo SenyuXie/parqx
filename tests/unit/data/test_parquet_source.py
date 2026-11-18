@@ -1,12 +1,12 @@
 """DuckDB file metadata, ordered paging, budgets and cancellation."""
 
-from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 import duckdb
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
@@ -223,9 +223,8 @@ def test_metadata_and_pages_share_duckdb_type_semantics(tmp_path: Path) -> None:
     assert page.table.schema.equals(source.schema)
     assert source.schema.names == ["time", "category", "A", "a_1"]
     assert source.schema.field("category").type == pa.string()
-    assert page.table.column("time")[0].as_py() == datetime(
-        1970, 1, 1, 0, 0, 0, 123456, tzinfo=UTC
-    )
+    timestamp = pc.cast(page.table.column("time")[0], pa.timestamp("ns", tz="UTC"))
+    assert timestamp == pa.scalar(123456789, type=pa.timestamp("ns", tz="UTC"))
     assert page.table.column("category")[0].as_py() == "shown"
 
 

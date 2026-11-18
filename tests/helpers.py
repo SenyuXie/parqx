@@ -65,7 +65,7 @@ async def open_sql_query(pilot: Pilot[Any]) -> QueryWorkspace:
         if commands.option_count != 1:
             return False
         option = commands.get_option_at_index(0)
-        return isinstance(option, Command) and option.hit.text == "Query"
+        return isinstance(option, Command) and option.hit.text == "SQL Query"
 
     await wait_for(found, pilot)
     await pilot.press("enter")

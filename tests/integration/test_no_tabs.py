@@ -41,7 +41,7 @@ async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
         query_action = app.query_one("#new-query", Button)
         source_action = app.query_one("#open-sources", Button)
         await wait_for(lambda: query_action.has_focus, pilot)
-        assert str(query_action.label) == "Query"
+        assert str(query_action.label) == "SQL Query"
         assert str(source_action.label) == "Open Sources"
         assert app.screen.region.contains_region(query_action.region)
         assert app.screen.region.contains_region(source_action.region)
