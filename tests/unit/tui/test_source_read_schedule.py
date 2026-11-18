@@ -30,7 +30,7 @@ def test_latest_window_waits_for_debounce_and_completion(
     assert (active.start, active.stop) == (0, 8)
 
     obsolete = schedule.request_window(20, 24, context)
-    latest = schedule.request_window(0, 16, context)
+    latest = schedule.request_window(0, 2, context)
     assert not schedule.window_ready(obsolete)
     if timer_first:
         assert schedule.window_ready(latest)
@@ -42,7 +42,7 @@ def test_latest_window_waits_for_debounce_and_completion(
         assert schedule.window_ready(latest)
     next_read = schedule.take_next(context)
     assert next_read is not None
-    assert (next_read.start, next_read.stop) == (0, 16)
+    assert (next_read.start, next_read.stop) == (0, 8)
     assert schedule.finish(next_read, context) == "table"
     assert schedule.take_next(context) is None
 
@@ -106,3 +106,22 @@ def test_replacement_invalidates_windows_but_preserves_the_submitted_slot(
     assert current is not None
     assert current.start == 12
     assert schedule.finish(current, new) == "table"
+
+
+@pytest.mark.parametrize("changed", ["source", "cache"])
+def test_delivery_checks_current_data_even_if_window_has_not_changed(
+    context: ReadContext, changed: str
+) -> None:
+    schedule = SourceReadSchedule()
+    window = schedule.request_window(0, 4, context)
+    assert schedule.window_ready(window)
+    read = schedule.take_next(context)
+    assert read is not None
+
+    if changed == "source":
+        current = replace(context, source=Mock(spec=ParquetSource))
+    else:
+        current = replace(
+            context, cache=PageCache(pa.schema([]), 600, cache_bytes=1024)
+        )
+    assert schedule.finish(read, current) == "discard"
