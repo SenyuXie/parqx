@@ -51,12 +51,12 @@ class ParquetSource:
                     f"Column {unsupported[0]!r} has decimal precision "
                     f"{unsupported[1]}; DuckDB browsing supports at most 38."
                 )
-            metadata = connection.execute(
+            metadata_rows = connection.execute(
                 "SELECT num_rows FROM parquet_file_metadata(?)", [str(path)]
-            ).fetchone()
-            if metadata is None:
+            ).fetchall()
+            if not metadata_rows:
                 raise ValueError("The Parquet file has no metadata")
-            self.row_count = int(metadata[0])
+            self.row_count = int(metadata_rows[0][0])
             relation = connection.read_parquet(
                 str(self.path), hive_partitioning=False
             ).limit(0)

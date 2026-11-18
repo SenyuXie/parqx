@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.reactive import var
-from textual.widgets import Button, TabPane, TextArea
+from textual.widgets import Button, Link, TabPane, TextArea
 
 from parqx.query.engine import QueryResult
 from parqx.tui.widgets.arrow_table import ArrowTable
@@ -27,6 +27,7 @@ class QueryWorkspace(TabPane):
             padding: 0 1;
             align-horizontal: right;
         }
+        .query-actions Link { margin-right: 1; }
         .run-query { width: 13; min-width: 13; height: 1; }
         & > TextArea {
             height: 10;
@@ -58,6 +59,9 @@ class QueryWorkspace(TabPane):
         """Yield the persistent SQL editor."""
         yield self.editor
         with Horizontal(classes="query-actions"):
+            yield Link(
+                "DuckDB SQL docs", url="https://duckdb.org/docs/stable/sql/introduction"
+            )
             yield self.run_button
 
     def on_mount(self) -> None:

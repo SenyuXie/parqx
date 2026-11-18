@@ -130,7 +130,7 @@ class Parqx(App[Any]):
             with self._empty, Vertical():
                 yield Static("No tabs open", id="no-tabs-title")
                 with Horizontal():
-                    yield Button("Query", variant="primary", id="new-query")
+                    yield Button("SQL Query", variant="primary", id="new-query")
                     yield Button("Open Sources", id="open-sources")
         yield Footer(show_command_palette=True)
 
@@ -183,7 +183,7 @@ class Parqx(App[Any]):
         # Textual's base signature omits Screen's generic result type.
         yield from super().get_system_commands(screen)  # pyright: ignore[reportUnknownMemberType]
         yield SystemCommand(
-            "Query", "Open a blank SQL workspace", self.action_open_query
+            "SQL Query", "Open a blank SQL workspace", self.action_open_query
         )
         yield SystemCommand(
             "Sources",
