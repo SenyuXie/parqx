@@ -114,13 +114,16 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self.refresh()
 
     def capture_position(self) -> ReadingPosition:
-        """Keep a pending parent viewport or End navigation across visibility changes."""
+        """Retain the viewport or a pending request to reveal the highlighted child."""
         scroll = self.scroll_y if self._restore_y is None else self._restore_y
-        return ReadingPosition(scroll=scroll, reveal_selection=self._pending_selection)
+        return ReadingPosition(
+            scroll=scroll,
+            reveal_selection=self._pending_selection or bool(self._pending_page_delta),
+        )
 
     def restore_position(self, position: ReadingPosition) -> None:
         """Restore immediately, or as soon as its indexed children become available."""
-        self._restore_y = position.scroll
+        self._restore_y = None if position.reveal_selection else position.scroll
         self._pending_selection = position.reveal_selection
         self._update_size()
 
