@@ -7,8 +7,9 @@ from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import Button
 
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.arrow_table import ArrowTable
-from parqx.tui.widgets.value_browser import BrowseRoot, ValueBrowser
+from parqx.tui.widgets.value_browser import ValueBrowser
 
 
 def _luminance(color: RichColor) -> float:
@@ -59,7 +60,6 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
         browser = app.query_one(ValueBrowser)
         browser.select(
             BrowseRoot(
-                app,
                 0,
                 0,
                 0,

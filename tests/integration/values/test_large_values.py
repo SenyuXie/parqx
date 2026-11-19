@@ -8,9 +8,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from parqx.tui import value_document
 from parqx.tui.app import Parqx
-from parqx.tui.value_document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values import document
+from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import wait_for, wait_for_source_table
 
@@ -29,7 +29,7 @@ def pause_indexing(
         async for progress in index_document(document):
             yield progress
 
-    patch.setattr(value_document, "index_document", delayed)
+    patch.setattr(document, "index_document", delayed)
     return started, release
 
 
@@ -190,7 +190,7 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
         browser = table.parent.query_one(ValueBrowser)
         table.focus()
         await pilot.press("enter", "tab")
-        monkeypatch.setattr(value_document, "index_document", delayed)
+        monkeypatch.setattr(document, "index_document", delayed)
         try:
             await pilot.press("enter")
             await wait_for(started.is_set, pilot)

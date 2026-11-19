@@ -13,8 +13,9 @@ from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from parqx.tui.value_document import ReadingPosition
-from parqx.tui.value_node import RowValue, ValueNode
+from parqx.tui.values.document import ReadingPosition
+from parqx.tui.values.node import RowValue, ValueNode
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.scalar_reader import ScalarReader
 from parqx.tui.widgets.value_children import ValueChildren
 
@@ -24,26 +25,8 @@ def _label_text(label: str) -> Text:
     return Text(label.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t"))
 
 
-@dataclass(frozen=True)
-class BrowseRoot:
-    """A selected value tied to one owning view and one data generation."""
-
-    owner: object
-    generation: int
-    row: int
-    column: int | None
-    name: str
-    value: pa.Scalar | RowValue | None
-
-    @property
-    def label(self) -> str:
-        """Identify the selected row and optional cell without needing its data."""
-        label = f"Row {self.row}"
-        return label if self.column is None else f"{label} · {self.name}"
-
-
 @dataclass
-class BrowseFrame:
+class _BrowseFrame:
     """A visited value and the reading position to restore on return."""
 
     label: str
@@ -56,7 +39,7 @@ class BrowseFrame:
 class _MaximizedPosition:
     """Compare the settled enlarged viewport with the user's later position."""
 
-    frame: BrowseFrame
+    frame: _BrowseFrame
     position: ReadingPosition
     selected: int
     enlarged_scroll: float | None = None
@@ -145,7 +128,7 @@ class ValueBrowser(Vertical):
         """Start closed, with no selected value."""
         super().__init__(classes="value-browser")
         self.root: BrowseRoot | None = None
-        self._frames: list[BrowseFrame] = []
+        self._frames: list[_BrowseFrame] = []
         self.display = False
         self.identity = Static("", markup=False, classes="value-identity")
         self.crumbs = HorizontalScroll(
@@ -158,7 +141,7 @@ class ValueBrowser(Vertical):
         self._render_width = 0
         self._render_styles: dict[str, Style] = {}
         self._reader_width = 0
-        self._resume_frame: BrowseFrame | None = None
+        self._resume_frame: _BrowseFrame | None = None
         self._maximized_position: _MaximizedPosition | None = None
         self.options.display = False
         self.reader = ScalarReader(classes="value-reader")
@@ -183,7 +166,7 @@ class ValueBrowser(Vertical):
             self.reader.load_text("Loading value…")
             self.info.update("Reading source")
             return
-        self._frames = [BrowseFrame(root.label, ValueNode(root.value))]
+        self._frames = [_BrowseFrame(root.label, ValueNode(root.value))]
         self._show_frame(focus=False)
 
     def resolve(self, root: BrowseRoot, value: pa.Scalar | RowValue) -> None:
@@ -191,7 +174,7 @@ class ValueBrowser(Vertical):
         if self.root is not root:
             return
         self.root = replace(root, value=value)
-        self._frames = [BrowseFrame(root.label, ValueNode(value))]
+        self._frames = [_BrowseFrame(root.label, ValueNode(value))]
         self._show_frame(focus=self.has_focus_within)
 
     def fail(self, root: BrowseRoot, message: str) -> None:
@@ -228,13 +211,13 @@ class ValueBrowser(Vertical):
         else:
             self.call_after_refresh(self._reflow)
 
-    def _resume_viewport(self, frame: BrowseFrame) -> None:
+    def _resume_viewport(self, frame: _BrowseFrame) -> None:
         if self._resume_frame is frame and self._frames and self._frames[-1] is frame:
             self._reflow()
             self._restore_position(frame)
             self._resume_frame = None
 
-    def _restore_position(self, frame: BrowseFrame) -> None:
+    def _restore_position(self, frame: _BrowseFrame) -> None:
         if self.display and self._frames and self._frames[-1] is frame:
             body = self.options if frame.node.is_container else self.reader
             body.restore_position(frame.position)
@@ -426,7 +409,7 @@ class ValueBrowser(Vertical):
             self._reader_width = self._scalar_width()
             self.reader.reflow(self._reader_width)
 
-    def _show_children(self, frame: BrowseFrame) -> None:
+    def _show_children(self, frame: _BrowseFrame) -> None:
         self._render_width = self._body_width()
         self._render_styles = self._preview_styles()
         self.options.show(
@@ -441,7 +424,7 @@ class ValueBrowser(Vertical):
             self.info.update("Empty container\n0 children")
             self.info.tooltip = None
 
-    def _selection_info(self, frame: BrowseFrame) -> None:
+    def _selection_info(self, frame: _BrowseFrame) -> None:
         name, child = frame.node.child(frame.selected)
         width = max(1, self.content_size.width - 2)
         label = _label_text(name)
@@ -453,7 +436,9 @@ class ValueBrowser(Vertical):
             f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
         )
 
-    def _frame_for_child(self, event: ValueChildren.ChildMessage) -> BrowseFrame | None:
+    def _frame_for_child(
+        self, event: ValueChildren.ChildMessage
+    ) -> _BrowseFrame | None:
         """Accept only children from the current rendered container."""
         if (
             self._frames
@@ -480,7 +465,7 @@ class ValueBrowser(Vertical):
         frame.selected = event.index
         frame.position = self.options.capture_position()
         name, child = frame.node.child(frame.selected)
-        self._frames.append(BrowseFrame(name, child))
+        self._frames.append(_BrowseFrame(name, child))
         self._show_frame(focus=True)
 
     def back(self) -> bool:

@@ -13,7 +13,7 @@ def large_values_parquet(tmp_path: Path) -> Path:
     """Large containers, logical lines, unbroken Unicode and binary content."""
     path = tmp_path / "large_values.parquet"
     # Cross multiple index batches and viewports. Million-character values
-    # and allocation limits are exercised directly in test_value_document.
+    # and allocation limits are exercised directly in the document unit tests.
     text = ("中文👩🏽‍💻 e\u0301\t[bold]literal[/bold]\r\n" * 600) + "最后-END"
     pq.write_table(
         pa.table(

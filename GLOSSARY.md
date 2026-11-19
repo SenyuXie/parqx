@@ -4,6 +4,12 @@ Parqx is a terminal application for inspecting Parquet files and exploring data 
 
 ## Language
 
+**Source**:
+A Parquet input with an assigned SQL table name. A ready source remains available to queries after its tab closes.
+
+**Source tab**:
+The tab for inspecting a single source and browsing its rows and cell values.
+
 **Query workspace**:
 A workspace that pairs SQL text with its query result for repeated editing, execution, and inspection. Each query workspace is independent.
 

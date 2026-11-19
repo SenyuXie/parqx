@@ -62,6 +62,13 @@ for value inspection. `helpers.py` holds UI actions shared with the smoke test.
 Run a feature group directly, for example
 `uv run --locked pytest -q tests/integration/values`.
 
+The value snapshot tests render a mounted table and sidebar at fixed terminal
+sizes. Their SVG baselines in `__snapshots__/` use the snapshot plugin's
+`.raw` extension. When a snapshot changes, open `snapshot_report.html` to
+compare the two renderings. After reviewing an intended change, run
+`uv run --locked pytest tests/integration/values/test_value_snapshots.py --snapshot-update`
+and include the updated baselines with the change.
+
 ## What to test at each layer
 
 `parqx.config.ParqxConfig` defines immutable application budgets. The app passes
@@ -82,13 +89,15 @@ kind and resets navigation and rendering when data changes. Keep paging order,
 type conversions, budgets and resource cleanup tests at
 these boundaries; distribution checks exercise both browsing and SQL.
 
-`TablePane` displays loaded Arrow data or a source awaiting metadata. Each source tab owns a
-`SourceReadSchedule`. Test read priority, debounce ordering and stale delivery
-through the schedule with the current browse root and data identity. Use mounted
-tests for Textual timer and executor wiring, selection delivery and cache release
-on unmount. The app owns
-source metadata loading and the catalog, so closing a tab does not remove a source
-from SQL. `QueryWorkspace` owns its SQL draft and most recent successful result.
+`SourcePane` waits for source metadata, then displays the paged table. Each
+source tab owns a `SourceReadSchedule`. Test read priority, debounce ordering
+and stale delivery through the schedule with the current browse root and data
+identity. Use mounted tests for Textual timer and executor wiring, selection
+delivery and cache release on unmount. The app owns source metadata loading and
+the catalog, so SQL can still read a source after its tab closes.
+`QueryWorkspace` owns its SQL draft and current result. A run request captures
+the submitting workspace and its draft so an edit or tab switch during message
+delivery cannot redirect the query or change the submitted SQL.
 The app owns one Textual thread worker and delivers its result to the submitting
 workspace on the UI thread. That draft stays read-only and cannot close until
 delivery; other workspaces and source views remain usable. Completion never
@@ -97,8 +106,8 @@ Native reads finish naturally after UI exit, with no interrupt or shutdown
 deadline. Cover these ownership and lifecycle boundaries in integration
 tests, using events to coordinate native reads.
 
-`value_document` indexes direct-child positions and wrapped UTF-8 text in bounded
-batches bounded by source bytes as well as visual rows. Oversized combining
+`tui.values.document` indexes direct-child positions and wrapped UTF-8 text in
+batches bounded by source bytes and visual rows. Oversized combining
 sequences continue across visual rows without truncating the raw Unicode; terminal
 controls are displayed as visible escapes. Binary rows are addressed directly in
 the retained Arrow buffer. Only

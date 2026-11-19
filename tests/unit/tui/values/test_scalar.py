@@ -8,7 +8,7 @@ import pytest
 
 from parqx.config import ParqxConfig
 from parqx.query.engine import execute_query
-from parqx.tui.scalar_value import read_scalar
+from parqx.tui.values.scalar import read_scalar
 
 
 @pytest.mark.parametrize(

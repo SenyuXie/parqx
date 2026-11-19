@@ -10,7 +10,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.data.view import PageCache
 
 if TYPE_CHECKING:
-    from parqx.tui.widgets.value_browser import BrowseRoot
+    from parqx.tui.values.selection import BrowseRoot
 
 
 @dataclass(frozen=True)

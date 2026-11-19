@@ -27,7 +27,7 @@ from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.screens.confirm_close import ConfirmClose
-from parqx.tui.widgets import ArrowTable, TablePane
+from parqx.tui.widgets import ArrowTable, SourcePane
 from parqx.tui.widgets.query_workspace import QueryWorkspace
 from parqx.tui.widgets.sources_tree import SourcesTree
 from parqx.tui.widgets.table_view import TableView
@@ -148,13 +148,13 @@ class Parqx(App[Any]):
                 self._start_source_load(source_id)
         self._exit_if_all_failed()
 
-    async def _add_source_pane(self, source_id: str) -> TablePane:
+    async def _add_source_pane(self, source_id: str) -> SourcePane:
         entry = self.catalog.get(source_id)
         source = entry.spec
         title = source.display_name
         if self._display_name_counts[title.casefold()] > 1:
             title += f" ({source.quoted_name})"
-        pane = TablePane(
+        pane = SourcePane(
             title, source, id=source_id, executor=self._source_pool, config=self.config
         )
         await self._tabs.add_pane(pane)
@@ -243,16 +243,16 @@ class Parqx(App[Any]):
         if not self._tabs.is_mounted:
             return None
         pane = self._active_pane()
-        return pane.table if isinstance(pane, (TablePane, QueryWorkspace)) else None
+        return pane.table if isinstance(pane, (SourcePane, QueryWorkspace)) else None
 
-    def _source_pane(self, source_id: str) -> TablePane | None:
+    def _source_pane(self, source_id: str) -> SourcePane | None:
         if not self._tabs.is_mounted:
             return None
         try:
             pane = self._tabs.get_pane(source_id)
         except NoMatches:
             return None
-        return pane if isinstance(pane, TablePane) else None
+        return pane if isinstance(pane, SourcePane) else None
 
     def _focus_active_table(self) -> None:
         if not self.screen.is_modal and (table := self._active_table()) is not None:
@@ -349,14 +349,11 @@ class Parqx(App[Any]):
             self._refresh_tab_state()
             pane.editor.focus()
 
-    @on(Button.Pressed, ".run-query")
-    def _on_run_query(self, event: Button.Pressed) -> None:
-        """Submit the draft belonging to the pressed button."""
-        if self.screen.is_modal or self._shutting_down or not event.button.is_attached:
-            return
-        pane = event.button.query_ancestor(QueryWorkspace)
-        sql = pane.editor.text
-        if not sql.strip():
+    @on(QueryWorkspace.RunRequested)
+    def _on_run_requested(self, event: QueryWorkspace.RunRequested) -> None:
+        """Start the submitting workspace's query if the session is available."""
+        pane = event.workspace
+        if self.screen.is_modal or self._shutting_down or not pane.is_attached:
             return
         if self._execution is not None:
             self.notify("A query is already running", title="Query busy", markup=False)
@@ -367,7 +364,7 @@ class Parqx(App[Any]):
             for entry in self.catalog.entries
             if entry.state != "ready"
         )
-        self._execution = (self._run_query(sources, sql, unavailable), pane)
+        self._execution = (self._run_query(sources, event.sql, unavailable), pane)
         pane.running = True
 
     @work(thread=True, exit_on_error=False, group="query")
@@ -438,9 +435,7 @@ class Parqx(App[Any]):
                     markup=False,
                 )
                 return
-            if isinstance(pane, QueryWorkspace) and (
-                pane.editor.text.strip() or pane.current_result is not None
-            ):
+            if isinstance(pane, QueryWorkspace) and pane.needs_close_confirmation:
                 self.push_screen(
                     ConfirmClose(str(self._tabs.get_tab(pane).label)),
                     partial(self._close_confirmed_query, pane),

@@ -1,4 +1,4 @@
-"""Table tabs with optional source paging and shared data ownership."""
+"""A source tab and its background page reads."""
 
 from __future__ import annotations
 
@@ -18,15 +18,15 @@ from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.source_read_schedule import ReadContext, ReadRequest, SourceReadSchedule
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.arrow_table import ArrowTable
 from parqx.tui.widgets.table_view import TableView
-from parqx.tui.widgets.value_browser import BrowseRoot
 
 logger = logging.getLogger(__name__)
 
 
-class TablePane(TabPane):
-    """Display loaded data or page through a source supplied by the app.
+class SourcePane(TabPane):
+    """Page through a Parquet source once the app supplies its metadata.
 
     Each pane owns its table, page workers and cached data. It runs the reads
     reserved by its schedule and delivers their outcomes on the UI thread.
@@ -34,7 +34,7 @@ class TablePane(TabPane):
     """
 
     DEFAULT_CSS = """
-    TablePane {
+    SourcePane {
         height: 1fr;
         & > .source-error {
             width: 1fr;
@@ -49,35 +49,31 @@ class TablePane(TabPane):
     def __init__(
         self,
         title: str,
-        data: pa.Table | SourceSpec,
+        spec: SourceSpec,
         *,
         id: str,
         config: ParqxConfig,
         executor: Executor | None = None,
     ) -> None:
-        """Create a table or wait for the app to supply source metadata.
+        """Create a source tab awaiting metadata.
 
         Args:
             title: Plain-text tab title.
-            data: Loaded table data, or a source identity awaiting set_source.
+            spec: Identity of the source owned by this tab.
             config: Shared application budgets for page caching and scheduling.
             id: The pane's ID in its tabbed container.
             executor: Pool for source page reads; None uses the default executor.
         """
         super().__init__(Content(title), id=id)
+        self._spec = spec
         self._config = config
         self._executor = executor
         self._source: ParquetSource | None = None
         self._page_timer: Timer | None = None
         self._schedule = SourceReadSchedule()
-        self._spec: SourceSpec | None = None
         self.table: ArrowTable | None = None
-        if isinstance(data, SourceSpec):
-            self._spec = data
-            self.loading = True
-        else:
-            self.table = ArrowTable(data)
-        self.view = TableView(self.table) if self.table is not None else None
+        self.view: TableView | None = None
+        self.loading = True
         self._error = Static("", classes="source-error", markup=False)
         self._error.display = False
 
@@ -89,8 +85,6 @@ class TablePane(TabPane):
 
     async def set_source(self, source: ParquetSource) -> None:
         """Attach loaded metadata and enable background reads for a source tab."""
-        if self._spec is None:
-            raise ValueError("Only source tabs can load a Parquet source")
         self._stop_timer()
         self._schedule.invalidate_window()
         self._source = source
@@ -161,13 +155,13 @@ class TablePane(TabPane):
 
     def _submit_pending(self) -> None:
         context = self._read_context()
-        if context is not None and self._spec is not None:
+        if context is not None:
             request = self._schedule.take_next(context)
             if request is not None:
-                self._read_page(request, self._spec)
+                self._read_page(request)
 
     @work(group="page", description="Read source page")
-    async def _read_page(self, request: ReadRequest, spec: SourceSpec) -> None:
+    async def _read_page(self, request: ReadRequest) -> None:
         # Cancelling this waiter during unmount does not finish the native read.
         outcome: DataPage | Exception
         try:
@@ -181,7 +175,9 @@ class TablePane(TabPane):
         view = self.view
         if delivery != "discard" and view is not None:
             if isinstance(outcome, Exception):
-                message = str(SourceIssue(spec, str(outcome) or type(outcome).__name__))
+                message = str(
+                    SourceIssue(self._spec, str(outcome) or type(outcome).__name__)
+                )
                 if isinstance(delivery, BrowseRoot):
                     view.fail_selection(delivery, message)
                 else:

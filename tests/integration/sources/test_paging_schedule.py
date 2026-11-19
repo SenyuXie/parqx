@@ -13,7 +13,7 @@ from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.widgets import ArrowTable, TablePane
+from parqx.tui.widgets import ArrowTable, SourcePane
 from tests.helpers import wait_for
 
 
@@ -35,7 +35,7 @@ async def test_queued_read_reserves_the_slot_before_native_work_starts(
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(pool_release.wait, 10)
-        pane = TablePane(
+        pane = SourcePane(
             "Source",
             spec,
             id="source",
