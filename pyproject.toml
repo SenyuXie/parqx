@@ -43,6 +43,7 @@ dev = [
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
+    "pytest-textual-snapshot>=1.0.0",
     "ruff>=0.15.17",
     "textual-dev>=1.8.0",
 ]
