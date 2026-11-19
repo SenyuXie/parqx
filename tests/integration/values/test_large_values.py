@@ -7,11 +7,14 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from textual.message import Message
 
 from parqx.tui.app import Parqx
 from parqx.tui.values import document
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.value_browser import ValueBrowser
+from parqx.tui.widgets.value_children import ValueChildren
 from tests.helpers import wait_for, wait_for_source_table
 
 
@@ -31,6 +34,116 @@ def pause_indexing(
 
     patch.setattr(document, "index_document", delayed)
     return started, release
+
+
+@pytest.mark.parametrize("go_home", [False, True])
+async def test_page_from_unindexed_field_respects_later_navigation(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, go_home: bool
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        record = pa.scalar({f"f{i}": i for i in range(512)})
+        browser.select(BrowseRoot(0, 0, 0, "record", record))
+        children = browser.options
+        try:
+            await wait_for(started.is_set, pilot)
+            children.focus()
+            await pilot.press("end", "pageup")
+            assert children.highlighted == 511
+            await pilot.resize_terminal(110, 40)
+            if go_home:
+                await pilot.press("home")
+        finally:
+            release.set()
+        document = children.document
+        assert document is not None
+        await wait_for(lambda: document.complete, pilot)
+        page_lines = children.scrollable_content_region.height - 1
+        assert children.highlighted == (0 if go_home else 511 - page_lines)
+
+
+@pytest.mark.parametrize("replace_root", [False, True])
+async def test_tiny_page_waits_for_the_next_wrapped_field(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, replace_root: bool
+) -> None:
+    highlights: set[tuple[ContainerDocument, int]] = set()
+
+    def record_highlight(message: Message) -> None:
+        if isinstance(message, ValueChildren.Highlighted):
+            highlights.add((message.document, message.index))
+
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(100, 30), message_hook=record_highlight) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        children = browser.options
+        children.styles.height = 2
+        record = pa.scalar(
+            {f"wrapped_field_in_a_narrow_sidebar_{i}": i for i in range(512)}
+        )
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        browser.select(BrowseRoot(0, 0, 0, "record", record))
+        try:
+            await wait_for(started.is_set, pilot)
+            children.focus()
+            await pilot.pause()
+            document = children.document
+            assert document is not None
+            last_indexed = document.indexed_children - 1
+            children.action_move(last_indexed)
+            await pilot.pause()
+            highlights.clear()
+            await pilot.press("pagedown")
+            assert children.highlighted == last_indexed
+            assert not highlights
+            if replace_root:
+                browser.select(BrowseRoot(0, 1, 0, "replacement", record))
+        finally:
+            release.set()
+        current = children.document
+        assert current is not None
+        await wait_for(lambda: current.complete, pilot)
+        assert children.highlighted == (0 if replace_root else last_indexed + 1)
+        assert highlights == (set() if replace_root else {(document, last_indexed + 1)})
+
+
+async def test_reflow_reveals_a_pending_page_that_now_fits_in_the_index(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(200, 40)) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        record = pa.scalar({f"medium_field_name_{i}": i for i in range(512)})
+        browser.select(BrowseRoot(0, 0, 0, "record", record))
+        children = browser.options
+        try:
+            await wait_for(started.is_set, pilot)
+            children.focus()
+            await pilot.pause()
+            children.action_move(108)
+            await pilot.press("pagedown")
+            assert children.highlighted == 108
+            await pilot.resize_terminal(100, 40)
+            await pilot.pause()
+            assert children.highlighted == 120
+            document = children.document
+            assert document is not None
+            top = children.scroll_offset.y
+            assert (
+                top
+                <= document.child_line(120)
+                < top + children.scrollable_content_region.height
+            )
+        finally:
+            release.set()
 
 
 async def test_large_list_last_child_and_long_unicode_are_readable(

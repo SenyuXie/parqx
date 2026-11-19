@@ -35,6 +35,12 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert document is not None
         assert children.highlighted == 0
 
+        await pilot.press("up", "up")
+        assert received == []
+        assert await pilot.click(children, offset=(2, 1))
+        assert received == [("selected", document, 0)]
+        received.clear()
+
         await pilot.press("down")
         assert children.highlighted == 1
         assert received == [("highlighted", document, 1)]
@@ -48,6 +54,56 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert await pilot.click(children, offset=(2, 1))
         assert children.highlighted == 0
         assert received == [("highlighted", document, 0), ("selected", document, 0)]
+
+
+async def test_paging_targets_the_field_on_the_destination_line() -> None:
+    children = ValueChildren(classes="value-children")
+
+    class ChildrenApp(App[None]):
+        CSS = "ValueChildren { height: 6; }"
+
+        def compose(self) -> ComposeResult:
+            yield children
+
+    fields = {
+        f"long_field_name_that_wraps_{i}" if i % 2 else f"f{i}": i for i in range(7)
+    }
+    async with ChildrenApp().run_test() as pilot:
+        children.show(ValueNode(pa.scalar(fields)), width=40, selected=0, styles={})
+        children.focus()
+        # Field starts are 1, 2, 4, 5, 7, 8, 10. Each page moves five lines.
+        await pilot.press("pagedown")
+        assert children.highlighted == 3
+        assert children.scroll_offset.y == 5
+        await pilot.press("pageup")
+        assert children.highlighted == 0
+        assert children.scroll_offset.y == 0
+
+        wrapped = pa.scalar({f"long_field_name_that_wraps_{i}": i for i in range(40)})
+        children.show(ValueNode(wrapped), width=40, selected=0, styles={})
+        for top in (5, 10, 15, 20):
+            await pilot.press("pagedown")
+            assert children.scroll_offset.y == top
+        for top in (15, 10, 5):
+            await pilot.press("pageup")
+            assert children.scroll_offset.y == top
+
+
+async def test_home_reveals_the_opening_delimiter_when_already_on_first_child() -> None:
+    app = App[None]()
+    async with app.run_test() as pilot:
+        children = ValueChildren(classes="value-children")
+        children.styles.height = 3
+        await app.mount(children)
+        children.show(
+            ValueNode(pa.scalar(list(range(10)))), width=40, selected=0, styles={}
+        )
+        children.focus()
+        await pilot.pause()
+        children.scroll_to(y=4, animate=False, immediate=True)
+        assert children.scroll_offset.y == 4
+        await pilot.press("home")
+        assert children.scroll_offset.y == 0
 
 
 async def test_hover_repaints_and_tooltip_follows_the_pointer() -> None:
