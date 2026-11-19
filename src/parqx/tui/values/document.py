@@ -106,7 +106,9 @@ class ContainerDocument:
             return self.node.child_count - 1 if self.complete else None
         if lines > 0 and target == index:
             # A wrapped field may fill the entire viewport.
-            return min(index + 1, self.node.child_count - 1)
+            target = min(index + 1, self.node.child_count - 1)
+            if target >= self.indexed_children:
+                return None
         return target
 
 

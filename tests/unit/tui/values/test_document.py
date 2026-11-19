@@ -41,6 +41,18 @@ def test_container_navigation_does_not_build_all_child_previews(kind: str) -> No
     assert "99" in node.child_prompt(count - 1, width=36).plain
 
 
+def test_page_targets_use_wrapped_lines_and_stop_at_container_ends() -> None:
+    value = pa.scalar({"first": 1, "a_long_field_label_that_wraps": 2, "last": 3})
+    document = ContainerDocument(ValueNode(value), width=40)
+    document.advance()
+    # The middle field occupies lines two and three.
+    assert document.page_target(0, 2) == 1
+    assert document.page_target(2, -2) == 1
+    assert document.page_target(1, 1) == 2
+    assert document.page_target(0, -20) == 0
+    assert document.page_target(2, 20) == 2
+
+
 def test_long_unicode_is_indexed_incrementally_and_preserved() -> None:
     text = ("中文👩🏽‍💻 e\u0301\t[bold]literal[/bold]\r\n" * 40_000) + "最后-END"
     value = pa.scalar(text)

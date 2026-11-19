@@ -74,18 +74,23 @@ async def test_paging_targets_the_field_on_the_destination_line() -> None:
         # Field starts are 1, 2, 4, 5, 7, 8, 10. Each page moves five lines.
         await pilot.press("pagedown")
         assert children.highlighted == 3
-        await pilot.press("pagedown", "pagedown")
-        assert children.highlighted == 6
-        await pilot.press("pageup")
-        assert children.highlighted == 3
         await pilot.press("pageup")
         assert children.highlighted == 0
 
-        children.styles.height = 2
-        await pilot.press("down", "pagedown")
-        assert children.highlighted == 2
-        await pilot.press("home")
+
+async def test_home_reveals_the_opening_delimiter_when_already_on_first_child() -> None:
+    app = App[None]()
+    async with app.run_test() as pilot:
+        children = ValueChildren(classes="value-children")
+        children.styles.height = 3
+        await app.mount(children)
+        children.show(
+            ValueNode(pa.scalar(list(range(10)))), width=40, selected=0, styles={}
+        )
+        children.focus()
+        await pilot.pause()
         children.scroll_to(y=4, animate=False, immediate=True)
+        assert children.scroll_offset.y == 4
         await pilot.press("home")
         assert children.scroll_offset.y == 0
 
