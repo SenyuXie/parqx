@@ -39,6 +39,7 @@ def pause_indexing(
 async def test_theme_switch_keeps_partial_field_index_and_pending_end(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
     app = Parqx([small_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
@@ -57,8 +58,18 @@ async def test_theme_switch_keeps_partial_field_index_and_pending_end(
             assert document is not None
             indexed = document.indexed_children
             assert 0 < indexed < 512
+            # End is pending; the first field is still visible below the opening brace.
+            x, y = children.content_region.offset
+            key_color = app.screen.get_style_at(x + 4, y + 1).color
+            assert key_color == browser.get_component_rich_style("value--key").color
             app.theme = "textual-dark"
-            await pilot.pause()
+            await wait_for(
+                lambda: app.screen.get_style_at(x + 4, y + 1).color != key_color, pilot
+            )
+            assert (
+                app.screen.get_style_at(x + 4, y + 1).color
+                == browser.get_component_rich_style("value--key").color
+            )
             assert children.document is document
             assert document.indexed_children == indexed
             assert children.highlighted == 511
