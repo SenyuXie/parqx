@@ -14,8 +14,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
 
-from parqx.tui.value_document import ContainerDocument, ReadingPosition
-from parqx.tui.value_node import ValueNode
+from parqx.tui.values.document import ContainerDocument, ReadingPosition
+from parqx.tui.values.node import ValueNode
 from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 

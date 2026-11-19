@@ -5,6 +5,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
+from textual.message import Message
 from textual.reactive import var
 from textual.widgets import Button, Link, TabPane, TextArea
 
@@ -15,6 +16,15 @@ from parqx.tui.widgets.table_view import TableView
 
 class QueryWorkspace(TabPane):
     """Keep one independent SQL editor mounted across tab changes."""
+
+    class RunRequested(Message):
+        """Request execution of the submitting workspace's SQL draft."""
+
+        def __init__(self, workspace: "QueryWorkspace", sql: str) -> None:
+            """Capture the workspace and its draft at submission."""
+            super().__init__()
+            self.workspace = workspace
+            self.sql = sql
 
     running = var(False, init=False)
     """Whether this workspace is waiting for its submitted query to be delivered."""
@@ -97,6 +107,18 @@ class QueryWorkspace(TabPane):
         """Synchronize the editor and Run button with the workspace's execution state."""
         self.editor.read_only = running
         self._update_run_button()
+
+    @on(Button.Pressed, ".run-query")
+    def _request_run(self, event: Button.Pressed) -> None:
+        event.stop()
+        sql = self.editor.text
+        if sql.strip() and not self.running:
+            self.post_message(self.RunRequested(self, sql))
+
+    @property
+    def needs_close_confirmation(self) -> bool:
+        """Whether closing would discard a nonblank draft or a current result."""
+        return bool(self.editor.text.strip()) or self.current_result is not None
 
     async def show_result(self, result: QueryResult) -> None:
         """Replace data and schema without moving focus or creating another tab."""

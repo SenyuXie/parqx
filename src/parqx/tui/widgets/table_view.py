@@ -12,9 +12,10 @@ from textual.message import Message
 from textual.widget import Widget
 
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.value_node import RowValue
+from parqx.tui.values.node import RowValue
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
-from parqx.tui.widgets.value_browser import BrowseRoot, ValueBrowser
+from parqx.tui.widgets.value_browser import ValueBrowser
 
 
 class TableView(Horizontal):
@@ -50,7 +51,6 @@ class TableView(Horizontal):
         self.table = table
         self.browser = ValueBrowser()
         self.browser.clear(empty=table.row_count == 0)
-        self._identity = object()
         self._pending_root: BrowseRoot | None = None
 
     @property
@@ -146,7 +146,6 @@ class TableView(Horizontal):
         coordinate = event.coordinate
         self._select(
             BrowseRoot(
-                self._identity,
                 event.generation,
                 coordinate.row,
                 coordinate.column,
@@ -177,9 +176,7 @@ class TableView(Horizontal):
             except CellNotLoadedError:
                 value = None
             self._select(
-                BrowseRoot(
-                    self._identity, event.generation, event.cursor_row, None, "", value
-                )
+                BrowseRoot(event.generation, event.cursor_row, None, "", value)
             )
 
     def on_unmount(self) -> None:

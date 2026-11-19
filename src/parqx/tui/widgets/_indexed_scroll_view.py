@@ -4,8 +4,8 @@ from textual import work
 from textual.scroll_view import ScrollView
 from textual.worker import Worker
 
-from parqx.tui import value_document
-from parqx.tui.value_document import ContainerDocument, ScalarDocument
+from parqx.tui.values import document
+from parqx.tui.values.document import ContainerDocument, ScalarDocument
 
 
 class IndexedScrollView[Document: ContainerDocument | ScalarDocument](ScrollView):
@@ -23,9 +23,9 @@ class IndexedScrollView[Document: ContainerDocument | ScalarDocument](ScrollView
             self._index_worker = self._index(document)
 
     @work(group="value-index", exclusive=True)
-    async def _index(self, document: Document) -> None:
-        async for _ in value_document.index_document(document):
-            if self.document is not document or not self.is_on_screen:
+    async def _index(self, current: Document) -> None:
+        async for _ in document.index_document(current):
+            if self.document is not current or not self.is_on_screen:
                 return
             self._update_size()
 

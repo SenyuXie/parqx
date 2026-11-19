@@ -12,7 +12,7 @@ from rich.style import Style, StyleType
 from rich.text import Text
 
 from parqx.tui.cell_formatter import CellFormatter, quote_json_string
-from parqx.tui.scalar_value import scalar_leaf
+from parqx.tui.values.scalar import scalar_leaf
 
 _COLORS: Mapping[str, StyleType] = {
     "key": "#91b8de",

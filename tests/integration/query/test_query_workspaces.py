@@ -92,10 +92,19 @@ async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) 
 async def test_run_button_executes_its_own_draft_after_tab_switch(
     small_parquet: Path,
 ) -> None:
+    from textual.message import Message
+
+    from parqx.tui.widgets.query_workspace import QueryWorkspace
     from tests.helpers import open_query
 
+    def edit_after_submission(message: Message) -> None:
+        if isinstance(message, QueryWorkspace.RunRequested):
+            editor = message.workspace.editor
+            if editor.text == "SELECT 11":
+                editor.load_text("SELECT 33")
+
     app = Parqx([small_parquet])
-    async with app.run_test() as pilot:
+    async with app.run_test(message_hook=edit_after_submission) as pilot:
         tabs = app.query_one(TabbedContent)
         first = await open_query(app, pilot)
         first.editor.load_text("SELECT 11")
@@ -107,6 +116,7 @@ async def test_run_button_executes_its_own_draft_after_tab_switch(
         first.run_button.press()
         tabs.active = "query-2"
         await wait_for(lambda: first.current_result is not None, pilot)
+        assert first.editor.text == "SELECT 33"
         assert first.current_result is not None
         assert first.current_result.table.column(0)[0].as_py() == 11
         assert second.current_result is None

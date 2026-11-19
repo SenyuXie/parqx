@@ -5,7 +5,7 @@ import pytest
 
 from parqx.config import ParqxConfig
 from parqx.query.engine import execute_query
-from parqx.tui.value_node import RowValue, ValueNode
+from parqx.tui.values.node import RowValue, ValueNode
 
 
 @pytest.mark.parametrize(

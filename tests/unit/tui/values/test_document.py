@@ -6,8 +6,8 @@ import pyarrow as pa
 import pytest
 from rich.cells import cell_len
 
-from parqx.tui.value_document import ContainerDocument, ScalarDocument
-from parqx.tui.value_node import RowValue, ValueNode
+from parqx.tui.values.document import ContainerDocument, ScalarDocument
+from parqx.tui.values.node import RowValue, ValueNode
 
 
 @pytest.mark.parametrize("kind", ["list", "map", "struct", "row"])

@@ -18,8 +18,8 @@ from typing import Literal, cast
 import pyarrow as pa
 from rich.cells import cell_len, split_graphemes
 
-from parqx.tui.scalar_value import read_scalar, scalar_leaf
-from parqx.tui.value_node import ValueNode
+from parqx.tui.values.node import ValueNode
+from parqx.tui.values.scalar import read_scalar, scalar_leaf
 
 _INDEX_ROWS = 128
 _DECODE_BYTES = 4096

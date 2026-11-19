@@ -11,7 +11,7 @@ from textual.geometry import Size
 from textual.message import Message
 from textual.strip import Strip
 
-from parqx.tui.value_document import ReadingPosition, ScalarDocument
+from parqx.tui.values.document import ReadingPosition, ScalarDocument
 from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 

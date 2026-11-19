@@ -45,14 +45,18 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.query.engine",
     "parqx.tui.app",
     "parqx.tui.cell_formatter",
-    "parqx.tui.value_document",
+    "parqx.tui.values",
+    "parqx.tui.values.document",
+    "parqx.tui.values.node",
+    "parqx.tui.values.scalar",
+    "parqx.tui.values.selection",
     "parqx.tui.widgets.scalar_reader",
     "parqx.tui.widgets.value_children",
     "parqx.tui.screens",
     "parqx.tui.widgets.query_workspace",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
-    "parqx.tui.widgets.table_pane",
+    "parqx.tui.widgets.source_pane",
 )
 
 

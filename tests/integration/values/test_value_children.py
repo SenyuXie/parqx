@@ -5,8 +5,8 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from parqx.tui.value_document import ContainerDocument
-from parqx.tui.value_node import ValueNode
+from parqx.tui.values.document import ContainerDocument
+from parqx.tui.values.node import ValueNode
 from parqx.tui.widgets.value_children import ValueChildren
 
 

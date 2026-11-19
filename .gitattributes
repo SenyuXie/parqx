@@ -4,3 +4,4 @@
 *.toml    text
 *.yml     text
 *.parquet binary
+tests/integration/values/__snapshots__/**/*.raw text linguist-generated whitespace=-blank-at-eol

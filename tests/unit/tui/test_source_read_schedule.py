@@ -9,7 +9,7 @@ import pytest
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import PageCache
 from parqx.tui.source_read_schedule import ReadContext, SourceReadSchedule
-from parqx.tui.widgets.value_browser import BrowseRoot
+from parqx.tui.values.selection import BrowseRoot
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def test_selection_precedes_the_viewport_and_uses_current_root_on_delivery(
     context: ReadContext, selection: str
 ) -> None:
     schedule = SourceReadSchedule()
-    root = BrowseRoot(object(), 1, 300, 0, "id", None)
+    root = BrowseRoot(1, 300, 0, "id", None)
     selected = replace(context, pending_root=root)
     window = schedule.request_window(500, 504, selected)
     assert schedule.window_ready(window)
