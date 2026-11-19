@@ -78,10 +78,21 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
         options = browser.options
         appearances: list[tuple[RichColor | None, ...]] = []
         for theme in ("textual-light", "textual-dark", "dracula"):
+            await pilot.pause()
+            document = options.document
+            assert document is not None
+            assert document.complete
+            options.action_last()
+            await pilot.pause()
+            position = options.scroll_offset
+            assert position.y > 0
             app.theme = theme
             table.focus()
             await pilot.hover(table)
             await pilot.pause()
+            assert options.document is document
+            assert options.highlighted == document.node.child_count - 1
+            assert options.scroll_offset == position
             variables = app.get_css_variables()
             surface = Color.parse(variables["surface"])
             for widget in (browser, options, browser.reader):
@@ -134,6 +145,19 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
             # Unselected rows use a different foreground for each value type.
             await pilot.hover(table)
             options.action_move(4)
+            count_styles = {
+                segment.text: segment.style.color
+                for segment in options.render_line(2)
+                if segment.style is not None
+            }
+            assert (
+                count_styles['"count"']
+                == browser.get_component_rich_style("value--key").color
+            )
+            assert (
+                count_styles["42"]
+                == browser.get_component_rich_style("value--number").color
+            )
             colors: set[RichColor | None] = set()
             for row in range(1, 5):
                 for segment in options.render_line(row):

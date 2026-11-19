@@ -36,6 +36,39 @@ def pause_indexing(
     return started, release
 
 
+async def test_theme_switch_keeps_partial_field_index_and_pending_end(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        app.theme = "textual-light"
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        record = pa.scalar({f"f{i}": i for i in range(512)})
+        browser.select(BrowseRoot(0, 0, 0, "record", record))
+        children = browser.options
+        try:
+            await wait_for(started.is_set, pilot)
+            children.focus()
+            await pilot.press("end")
+            document = children.document
+            assert document is not None
+            indexed = document.indexed_children
+            assert 0 < indexed < 512
+            app.theme = "textual-dark"
+            await pilot.pause()
+            assert children.document is document
+            assert document.indexed_children == indexed
+            assert children.highlighted == 511
+        finally:
+            release.set()
+        await wait_for(lambda: document.complete, pilot)
+        assert children.scroll_y == children.max_scroll_y > 0
+        assert children.highlighted == 511
+
+
 @pytest.mark.parametrize("go_home", [False, True])
 async def test_page_from_unindexed_field_respects_later_navigation(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch, go_home: bool
