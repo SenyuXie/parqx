@@ -40,6 +40,8 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
 
     highlighted: reactive[int | None] = reactive(None, init=False)
     """Zero-based child position, or None when no child is available."""
+    preview_styles: reactive[dict[str, Style]] = reactive(dict)
+    """Foreground styles for visible field names and value previews."""
     _hovered: reactive[int | None] = reactive(None)
 
     class ChildMessage(Message):
@@ -59,7 +61,6 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     def __init__(self, *, classes: str) -> None:
         """Start with no retained node or child widgets."""
         super().__init__(classes=classes)
-        self._palette: dict[str, Style] = {}
         self._pending_page_delta = 0
         self._pending_selection = False
         self._restore_y: float | None = None
@@ -80,7 +81,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self.set_reactive(
             ValueChildren.highlighted, selected if node.child_count else None
         )
-        self._palette = styles
+        self.preview_styles = styles
         self._pending_selection = False
         self._restore_y = None
         self._hovered = None
@@ -250,7 +251,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             prompt = Text("  " + delimiter)
         else:
             prompt = node.child_prompt(
-                index, width=document.width, styles=self._palette
+                index, width=document.width, styles=self.preview_styles
             )
             prompt = prompt.split("\n")[line - document.child_line(index)]
             style += Style(meta={"value_child": index})
