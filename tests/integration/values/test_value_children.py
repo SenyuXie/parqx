@@ -79,6 +79,15 @@ async def test_paging_targets_the_field_on_the_destination_line() -> None:
         assert children.highlighted == 0
         assert children.scroll_offset.y == 0
 
+        wrapped = pa.scalar({f"long_field_name_that_wraps_{i}": i for i in range(40)})
+        children.show(ValueNode(wrapped), width=40, selected=0, styles={})
+        for top in (5, 10, 15, 20):
+            await pilot.press("pagedown")
+            assert children.scroll_offset.y == top
+        for top in (15, 10, 5):
+            await pilot.press("pageup")
+            assert children.scroll_offset.y == top
+
 
 async def test_home_reveals_the_opening_delimiter_when_already_on_first_child() -> None:
     app = App[None]()

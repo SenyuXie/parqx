@@ -127,7 +127,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._pending_selection = position.reveal_selection
         self._update_size()
 
-    def _reveal_selection(self) -> None:
+    def _reveal_selection(self, *, allow_partial: bool = False) -> None:
         document = self.document
         if document is None or self.highlighted is None:
             return
@@ -138,20 +138,24 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._pending_selection = False
         y = document.child_line(index)
         height = document.node.child_height(index, document.width)
+        if allow_partial and Region(0, y, 1, height).overlaps(
+            self.scrollable_content_region.at_offset(self.scroll_offset)
+        ):
+            return
         if index == document.node.child_count - 1:
             height += 1  # Keep the closing delimiter visible beside the last child.
         self.scroll_to_region(
             Region(0, y, 1, height), animate=False, force=True, immediate=True
         )
 
-    def _highlight(self, index: int) -> None:
+    def _highlight(self, index: int, *, allow_partial: bool = False) -> None:
         self._pending_page_delta = 0
         document = self.document
         if document is None or not document.node.child_count:
             return
         self.highlighted = max(0, min(index, document.node.child_count - 1))
         self._restore_y = None
-        self._reveal_selection()
+        self._reveal_selection(allow_partial=allow_partial)
 
     def watch_highlighted(self, index: int | None) -> None:
         """Notify the browser when a different child becomes highlighted."""
@@ -186,7 +190,9 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             and self.highlighted is not None
         ):
             target = self.document.page_target(
-                self.highlighted, self._pending_page_delta
+                self.highlighted,
+                self._pending_page_delta,
+                viewport_top=self.scroll_offset.y,
             )
             if target is not None:
                 self.scroll_relative(
@@ -195,7 +201,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
                     force=True,
                     immediate=True,
                 )
-                self._highlight(target)
+                self._highlight(target, allow_partial=True)
 
     def action_select(self) -> None:
         """Open a child without requiring preceding values to be formatted."""
