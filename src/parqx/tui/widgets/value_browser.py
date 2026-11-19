@@ -163,7 +163,7 @@ class ValueBrowser(Vertical):
         self.display = True
         if root.value is None:
             self.identity.update(root.label)
-            self.reader.load_text("Loading value…")
+            self._show_status("Loading value…")
             self.info.update("Reading source")
             return
         self._frames = [_BrowseFrame(root.label, ValueNode(root.value))]
@@ -183,7 +183,7 @@ class ValueBrowser(Vertical):
             return
         self.reader.remove_class("muted")
         self.reader.add_class("error")
-        self.reader.load_text(f"Read error\n{message}")
+        self._show_status(f"Read error\n{message}")
         self.info.update("Read error")
 
     def toggle_visibility(self) -> None:
@@ -283,7 +283,7 @@ class ValueBrowser(Vertical):
         self.options.display = frame.node.is_container
         self.reader.display = not frame.node.is_container
         if frame.node.is_container:
-            self.reader.load_text("")
+            self._show_status("")
             self._show_children(frame)
         else:
             self._show_scalar(frame.node.scalar)
@@ -326,6 +326,9 @@ class ValueBrowser(Vertical):
         if depth is not None and depth < len(self._frames) - 1:
             self._frames = self._frames[: depth + 1]
             self._show_frame(focus=True)
+
+    def _show_status(self, text: str) -> None:
+        self.reader.show(pa.scalar(text), width=self._scalar_width())
 
     def _show_scalar(self, value: pa.Scalar) -> None:
         self._reader_width = self._scalar_width()
@@ -498,7 +501,7 @@ class ValueBrowser(Vertical):
         self._reader_width = 0
         self.reader.remove_class("string", "number", "boolean", "error")
         self.reader.add_class("muted")
-        self.reader.load_text(
+        self._show_status(
             "No rows to inspect."
             if empty
             else "Press Enter in the table to select a cell or row."

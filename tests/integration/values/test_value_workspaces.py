@@ -9,6 +9,31 @@ from parqx.tui.widgets.table_view import TableView
 from tests.helpers import press_run_button, run_query, wait_for, wait_for_source_table
 
 
+async def test_query_selection_prompt_keeps_its_wrapping_on_focus(
+    small_parquet: Path,
+) -> None:
+    from parqx.tui.widgets.query_workspace import QueryWorkspace
+
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(132, 38)) as pilot:
+        table = await run_query(app, pilot, "SELECT 1, 2")
+        query = app.query_one(QueryWorkspace)
+        assert query.view is not None
+        reader = query.view.browser.reader
+        await pilot.press("v")
+        query.editor.focus()
+        query.editor.load_text("SELECT 4")
+        await press_run_button(query, pilot)
+        await wait_for(lambda: table.column_count == 1 and not query.running, pilot)
+        assert query.editor.has_focus
+        assert reader.text == "Press Enter in the table to select a cell or row."
+        lines = [reader.render_line(y).text for y in range(2)]
+        assert lines[1].strip()
+        assert await pilot.click(reader)
+        assert reader.has_focus
+        assert [reader.render_line(y).text for y in range(2)] == lines
+
+
 @pytest.mark.parametrize(
     ("query_result", "focus"),
     [(False, "table"), (True, "container"), (False, "reader")],
