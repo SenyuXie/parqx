@@ -96,6 +96,19 @@ class ContainerDocument:
             else self.node.child_count
         )
 
+    def page_target(self, index: int, lines: int) -> int | None:
+        """Find the child a signed page of lines away, or wait for more indexing."""
+        if index >= self.indexed_children:
+            return None
+        line = max(1, self.child_line(index) + lines)
+        target = self.child_at_line(line)
+        if target is None:
+            return self.node.child_count - 1 if self.complete else None
+        if lines > 0 and target == index:
+            # A wrapped field may fill the entire viewport.
+            return min(index + 1, self.node.child_count - 1)
+        return target
+
 
 @dataclass(frozen=True)
 class _TextRow:

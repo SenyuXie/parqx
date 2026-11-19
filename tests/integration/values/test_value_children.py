@@ -35,6 +35,12 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert document is not None
         assert children.highlighted == 0
 
+        await pilot.press("up", "up")
+        assert received == []
+        assert await pilot.click(children, offset=(2, 1))
+        assert received == [("selected", document, 0)]
+        received.clear()
+
         await pilot.press("down")
         assert children.highlighted == 1
         assert received == [("highlighted", document, 1)]
@@ -48,6 +54,40 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert await pilot.click(children, offset=(2, 1))
         assert children.highlighted == 0
         assert received == [("highlighted", document, 0), ("selected", document, 0)]
+
+
+async def test_paging_targets_the_field_on_the_destination_line() -> None:
+    children = ValueChildren(classes="value-children")
+
+    class ChildrenApp(App[None]):
+        CSS = "ValueChildren { height: 6; }"
+
+        def compose(self) -> ComposeResult:
+            yield children
+
+    fields = {
+        f"long_field_name_that_wraps_{i}" if i % 2 else f"f{i}": i for i in range(7)
+    }
+    async with ChildrenApp().run_test() as pilot:
+        children.show(ValueNode(pa.scalar(fields)), width=40, selected=0, styles={})
+        children.focus()
+        # Field starts are 1, 2, 4, 5, 7, 8, 10. Each page moves five lines.
+        await pilot.press("pagedown")
+        assert children.highlighted == 3
+        await pilot.press("pagedown", "pagedown")
+        assert children.highlighted == 6
+        await pilot.press("pageup")
+        assert children.highlighted == 3
+        await pilot.press("pageup")
+        assert children.highlighted == 0
+
+        children.styles.height = 2
+        await pilot.press("down", "pagedown")
+        assert children.highlighted == 2
+        await pilot.press("home")
+        children.scroll_to(y=4, animate=False, immediate=True)
+        await pilot.press("home")
+        assert children.scroll_offset.y == 0
 
 
 async def test_hover_repaints_and_tooltip_follows_the_pointer() -> None:

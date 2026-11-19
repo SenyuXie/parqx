@@ -38,6 +38,8 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     ]
     DEFAULT_CSS = "ValueChildren { overflow-x: hidden; }"
 
+    highlighted: reactive[int | None] = reactive(None, init=False)
+    """Zero-based child position, or None when no child is available."""
     _hovered: reactive[int | None] = reactive(None)
 
     class ChildMessage(Message):
@@ -57,9 +59,8 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     def __init__(self, *, classes: str) -> None:
         """Start with no retained node or child widgets."""
         super().__init__(classes=classes)
-        self.highlighted: int | None = None
-        """Zero-based child position, or None when no child is available."""
         self._palette: dict[str, Style] = {}
+        self._page_lines = 0
         self._pending_selection = False
         self._restore_y: float | None = None
 
@@ -70,8 +71,11 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._cancel_index()
         self.document = ContainerDocument(node, width=width)
         self.document.advance()
-        self.highlighted = selected if node.child_count else None
+        self.set_reactive(
+            ValueChildren.highlighted, selected if node.child_count else None
+        )
         self._palette = styles
+        self._page_lines = 0
         self._pending_selection = False
         self._restore_y = None
         self._hovered = None
@@ -83,6 +87,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         """Release this view's document and cancel its index builder."""
         self._cancel_index()
         self.document = None
+        self._page_lines = 0
         self.highlighted = None
         self._restore_y = None
         self.virtual_size = Size(0, 0)
@@ -98,6 +103,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
                 )
                 if document.complete or self.max_scroll_y >= self._restore_y:
                     self._restore_y = None
+            self._apply_pending_page()
             if self._pending_selection:
                 self._reveal_selection()
         self.refresh()
@@ -131,14 +137,18 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         )
 
     def _highlight(self, index: int) -> None:
+        self._page_lines = 0
         document = self.document
         if document is None or not document.node.child_count:
             return
         self.highlighted = max(0, min(index, document.node.child_count - 1))
         self._restore_y = None
         self._reveal_selection()
-        self.refresh()
-        self.post_message(self.Highlighted(document, self.highlighted))
+
+    def watch_highlighted(self, index: int | None) -> None:
+        """Notify the browser when a different child becomes highlighted."""
+        if self.document is not None and index is not None:
+            self.post_message(self.Highlighted(self.document, index))
 
     def action_move(self, delta: int) -> None:
         """Move by one child, independent of its visual height."""
@@ -155,11 +165,23 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             self._highlight(self.document.node.child_count - 1)
 
     def action_page(self, direction: int) -> None:
-        """Move by one viewport of children."""
-        self.action_move(direction * max(1, self.scrollable_content_region.height - 1))
+        """Move by one viewport of rendered lines with one line of overlap."""
+        self._page_lines = direction * max(1, self.scrollable_content_region.height - 1)
+        self._apply_pending_page()
+
+    def _apply_pending_page(self) -> None:
+        if (
+            self._page_lines
+            and self.document is not None
+            and self.highlighted is not None
+        ):
+            target = self.document.page_target(self.highlighted, self._page_lines)
+            if target is not None:
+                self._highlight(target)
 
     def action_select(self) -> None:
         """Open a child without requiring preceding values to be formatted."""
+        self._page_lines = 0
         if self.document is not None and self.highlighted is not None:
             self.post_message(self.Selected(self.document, self.highlighted))
 

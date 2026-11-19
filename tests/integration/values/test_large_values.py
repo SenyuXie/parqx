@@ -11,6 +11,7 @@ import pytest
 from parqx.tui.app import Parqx
 from parqx.tui.values import document
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values.selection import BrowseRoot
 from parqx.tui.widgets.value_browser import ValueBrowser
 from tests.helpers import wait_for, wait_for_source_table
 
@@ -31,6 +32,35 @@ def pause_indexing(
 
     patch.setattr(document, "index_document", delayed)
     return started, release
+
+
+@pytest.mark.parametrize("go_home", [False, True])
+async def test_page_from_unindexed_field_respects_later_navigation(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, go_home: bool
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await wait_for_source_table(app, pilot)
+        assert table.parent is not None
+        browser = table.parent.query_one(ValueBrowser)
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        record = pa.scalar({f"f{i}": i for i in range(512)})
+        browser.select(BrowseRoot(0, 0, 0, "record", record))
+        children = browser.options
+        try:
+            await wait_for(started.is_set, pilot)
+            children.focus()
+            await pilot.press("end", "pageup")
+            assert children.highlighted == 511
+            if go_home:
+                await pilot.press("home")
+        finally:
+            release.set()
+        document = children.document
+        assert document is not None
+        await wait_for(lambda: document.complete, pilot)
+        page_lines = children.scrollable_content_region.height - 1
+        assert children.highlighted == (0 if go_home else 511 - page_lines)
 
 
 async def test_large_list_last_child_and_long_unicode_are_readable(
