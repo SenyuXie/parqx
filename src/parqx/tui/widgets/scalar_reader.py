@@ -68,10 +68,6 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
             return "\n".join(document.line(i) for i in range(document.line_count))
         return "".join(document.raw_line(i) for i in range(document.line_count))
 
-    def load_text(self, text: str) -> None:
-        """Display a finite status message through the same read-only surface."""
-        self.show(pa.scalar(text), width=max(1, self.scrollable_content_region.width))
-
     def show(self, value: pa.Scalar, *, width: int) -> None:
         """Replace the document, prepare its first batch and restart indexing."""
         self._cancel_index()
