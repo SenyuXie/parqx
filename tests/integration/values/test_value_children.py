@@ -74,8 +74,10 @@ async def test_paging_targets_the_field_on_the_destination_line() -> None:
         # Field starts are 1, 2, 4, 5, 7, 8, 10. Each page moves five lines.
         await pilot.press("pagedown")
         assert children.highlighted == 3
+        assert children.scroll_offset.y == 5
         await pilot.press("pageup")
         assert children.highlighted == 0
+        assert children.scroll_offset.y == 0
 
 
 async def test_home_reveals_the_opening_delimiter_when_already_on_first_child() -> None:

@@ -189,6 +189,12 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
                 self.highlighted, self._pending_page_delta
             )
             if target is not None:
+                self.scroll_relative(
+                    y=self._pending_page_delta,
+                    animate=False,
+                    force=True,
+                    immediate=True,
+                )
                 self._highlight(target)
 
     def action_select(self) -> None:
