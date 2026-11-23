@@ -94,7 +94,9 @@ source tab owns a `SourceReadSchedule`. Test read priority, debounce ordering
 and stale delivery through the schedule with the current browse root and data
 identity. Use mounted tests for Textual timer and executor wiring, selection
 delivery and cache release on unmount. The app owns source metadata loading and
-the catalog, so SQL can still read a source after its tab closes.
+the catalog. Test metadata read sharing, failure replay, and startup failure in
+the catalog. Its SQL snapshot still includes a ready source while a reopened
+tab waits for metadata.
 `QueryWorkspace` owns its SQL draft and current result. A run request captures
 the submitting workspace and its draft so an edit or tab switch during message
 delivery cannot redirect the query or change the submitted SQL.
