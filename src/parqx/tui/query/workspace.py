@@ -1,0 +1,140 @@
+"""Persistent SQL authoring and its latest successful result."""
+
+import pyarrow as pa
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.content import Content
+from textual.message import Message
+from textual.reactive import var
+from textual.widgets import Button, Link, TabPane, TextArea
+
+from parqx.query.engine import QueryResult
+from parqx.tui.table.arrow_table import ArrowTable
+from parqx.tui.table.view import TableView
+
+
+class QueryWorkspace(TabPane):
+    """Keep one independent SQL editor mounted across tab changes."""
+
+    class RunRequested(Message):
+        """Request execution of the submitting workspace's SQL draft."""
+
+        def __init__(self, workspace: "QueryWorkspace", sql: str) -> None:
+            """Capture the workspace and its draft at submission."""
+            super().__init__()
+            self.workspace = workspace
+            self.sql = sql
+
+    running = var(False, init=False)
+    """Whether this workspace is waiting for its submitted query to be delivered."""
+
+    DEFAULT_CSS = """
+    QueryWorkspace {
+        height: 1fr;
+        .query-actions {
+            height: 1;
+            padding: 0 1;
+            align-horizontal: right;
+        }
+        .query-actions Link { margin-right: 1; }
+        .run-query { width: 13; min-width: 13; height: 1; }
+        & > TextArea {
+            height: 10;
+            min-height: 4;
+            &:blur { border: tall $primary-muted; }
+        }
+    }
+    """
+
+    def __init__(self, title: str, *, id: str) -> None:
+        """Create a blank SQL draft without starting an execution."""
+        super().__init__(Content(title), id=id)
+        self.editor = TextArea.code_editor(
+            "", language="sql", theme="css", classes="sql-draft"
+        )
+        self.editor.border_title = "SQL Editor"
+        self.run_button = Button(
+            "Run Query",
+            classes="run-query",
+            variant="primary",
+            compact=True,
+            disabled=True,
+        )
+        self.current_result: QueryResult | None = None
+        self.table: ArrowTable | None = None
+        self.view: TableView | None = None
+
+    def compose(self) -> ComposeResult:
+        """Yield the persistent SQL editor."""
+        yield self.editor
+        with Horizontal(classes="query-actions"):
+            yield Link(
+                "DuckDB SQL docs", url="https://duckdb.org/docs/stable/sql/introduction"
+            )
+            yield self.run_button
+
+    def on_mount(self) -> None:
+        """Let native maximization temporarily fill the screen with the editor."""
+        self.watch(self.screen, "maximized", self._apply_editor_layout, init=False)
+
+    def on_resize(self) -> None:
+        """Adapt the editor allocation while leaving room for the button and results."""
+        self._apply_editor_layout()
+        self.editor.call_after_refresh(self._scroll_focused_editor_cursor)
+
+    def _scroll_focused_editor_cursor(self) -> None:
+        """Check focus when a deferred cursor-following request actually runs."""
+        if self.editor.has_focus:
+            self.editor.scroll_cursor_visible()
+
+    def _apply_editor_layout(self) -> None:
+        if not self.size.height:
+            return
+        # Reserve one button row and four result rows.
+        height = min(10, max(4, self.size.height - 5))
+        self.editor.styles.height = (
+            "1fr" if self.screen.maximized is self.editor else height
+        )
+
+    @on(TextArea.Changed, ".sql-draft")
+    def _on_draft_changed(self) -> None:
+        """Scroll after the editor has recalculated its multiline extent."""
+        self.editor.call_after_refresh(self._scroll_focused_editor_cursor)
+        self._update_run_button()
+
+    def watch_running(self, running: bool) -> None:
+        """Synchronize the editor and Run button with the workspace's execution state."""
+        self.editor.read_only = running
+        self._update_run_button()
+
+    @on(Button.Pressed, ".run-query")
+    def _request_run(self, event: Button.Pressed) -> None:
+        event.stop()
+        sql = self.editor.text
+        if sql.strip() and not self.running:
+            self.post_message(self.RunRequested(self, sql))
+
+    @property
+    def needs_close_confirmation(self) -> bool:
+        """Whether closing would discard a nonblank draft or a current result."""
+        return bool(self.editor.text.strip()) or self.current_result is not None
+
+    async def show_result(self, result: QueryResult) -> None:
+        """Replace data and schema without moving focus or creating another tab."""
+        if self.view is None:
+            self.table = ArrowTable(result.table)
+            self.view = TableView(self.table)
+            await self.mount(self.view)
+        else:
+            self.view.replace_data(result.table)
+        self.current_result = result
+
+    def _update_run_button(self) -> None:
+        self.run_button.disabled = self.running or not self.editor.text.strip()
+
+    def on_unmount(self) -> None:
+        """Release result buffers even if a detached widget is still referenced."""
+        self.current_result = None
+        if self.table is not None:
+            self.table.replace_data(pa.table({}))

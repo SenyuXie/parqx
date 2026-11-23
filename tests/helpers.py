@@ -11,8 +11,8 @@ from textual.widgets import Button, Input, TabbedContent, Tabs
 
 from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
-from parqx.tui.widgets.query_workspace import QueryWorkspace
+from parqx.tui.query.workspace import QueryWorkspace
+from parqx.tui.table.arrow_table import ArrowTable
 
 
 async def wait_for(predicate: Callable[[], bool], pilot: Pilot[Any]) -> None:

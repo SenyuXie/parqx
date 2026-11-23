@@ -1,6 +1,6 @@
 """Textual widgets for Parqx."""
 
-from parqx.tui.widgets.arrow_table import ArrowTable
-from parqx.tui.widgets.source_pane import SourcePane
+from parqx.tui.sources.pane import SourcePane
+from parqx.tui.table.arrow_table import ArrowTable
 
 __all__ = ["ArrowTable", "SourcePane"]

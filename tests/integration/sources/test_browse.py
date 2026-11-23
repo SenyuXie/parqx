@@ -19,7 +19,8 @@ from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable, SourcePane
+from parqx.tui.sources.pane import SourcePane
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import open_query, wait_for
 
 
@@ -370,7 +371,7 @@ async def test_window_error_waits_for_navigation_before_retry(
             record = next(
                 record
                 for record in caplog.records
-                if record.name == "parqx.tui.widgets.source_pane"
+                if record.name == "parqx.tui.sources.pane"
             )
             assert record.exc_info is not None
             assert record.exc_info[0] is error_type

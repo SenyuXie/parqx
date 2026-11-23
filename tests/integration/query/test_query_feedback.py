@@ -6,7 +6,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import TabbedContent
 
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import open_query, press_run_button, wait_for, wait_for_query_error
 
 

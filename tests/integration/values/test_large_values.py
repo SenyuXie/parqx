@@ -11,10 +11,10 @@ from textual.message import Message
 
 from parqx.tui.app import Parqx
 from parqx.tui.values import document
+from parqx.tui.values.browser import ValueBrowser
+from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.value_browser import ValueBrowser
-from parqx.tui.widgets.value_children import ValueChildren
 from tests.helpers import wait_for, wait_for_source_table
 
 

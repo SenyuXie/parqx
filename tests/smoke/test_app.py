@@ -7,7 +7,7 @@ from textual.widgets import Button, TabbedContent, TextArea
 
 from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import confirm_query_close, open_query, wait_for
 
 

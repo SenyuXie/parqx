@@ -7,9 +7,9 @@ from textual.color import Color
 from textual.strip import Strip
 from textual.widgets import Button
 
+from parqx.tui.table.arrow_table import ArrowTable
+from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.arrow_table import ArrowTable
-from parqx.tui.widgets.value_browser import ValueBrowser
 
 
 def _luminance(color: RichColor) -> float:

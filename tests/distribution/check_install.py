@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import tomllib
-from importlib import metadata, resources
+from importlib import import_module, metadata, resources
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -33,30 +33,51 @@ from parqx.query.engine import execute_query
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
-    "parqx.cli",
     "parqx.catalog",
+    "parqx.cli",
     "parqx.config",
-    "parqx.logger",
     "parqx.data",
     "parqx.data.duckdb",
     "parqx.data.parquet",
     "parqx.data.view",
+    "parqx.logger",
     "parqx.query",
     "parqx.query.engine",
     "parqx.tui.app",
     "parqx.tui.cell_formatter",
+    "parqx.tui.column_layout",
+    "parqx.tui.query",
+    "parqx.tui.query.confirm_close",
+    "parqx.tui.query.workspace",
+    "parqx.tui.screens",
+    "parqx.tui.screens.confirm_close",
+    "parqx.tui.source_read_schedule",
+    "parqx.tui.sources",
+    "parqx.tui.sources.pane",
+    "parqx.tui.sources.read_schedule",
+    "parqx.tui.sources.tree",
+    "parqx.tui.table",
+    "parqx.tui.table.arrow_table",
+    "parqx.tui.table.column_layout",
+    "parqx.tui.table.view",
     "parqx.tui.values",
+    "parqx.tui.values.browser",
+    "parqx.tui.values.child_navigation",
+    "parqx.tui.values.children",
     "parqx.tui.values.document",
     "parqx.tui.values.node",
+    "parqx.tui.values.reader",
     "parqx.tui.values.scalar",
     "parqx.tui.values.selection",
-    "parqx.tui.widgets.scalar_reader",
-    "parqx.tui.widgets.value_children",
-    "parqx.tui.screens",
-    "parqx.tui.widgets.query_workspace",
     "parqx.tui.widgets",
     "parqx.tui.widgets.arrow_table",
+    "parqx.tui.widgets.query_workspace",
+    "parqx.tui.widgets.scalar_reader",
     "parqx.tui.widgets.source_pane",
+    "parqx.tui.widgets.sources_tree",
+    "parqx.tui.widgets.table_view",
+    "parqx.tui.widgets.value_browser",
+    "parqx.tui.widgets.value_children",
 )
 
 
@@ -65,6 +86,74 @@ def check_imports() -> None:
     for name in EXPECTED_MODULES:
         __import__(name)
     print(f"OK: imported {len(EXPECTED_MODULES)} modules")
+
+
+def check_compatibility_imports() -> None:
+    """Check that every previous import path exports the original class or alias."""
+    for previous_path, current_path, names in (
+        (
+            "parqx.tui.widgets.query_workspace",
+            "parqx.tui.query.workspace",
+            ("QueryWorkspace",),
+        ),
+        (
+            "parqx.tui.screens.confirm_close",
+            "parqx.tui.query.confirm_close",
+            ("ConfirmClose",),
+        ),
+        ("parqx.tui.widgets.source_pane", "parqx.tui.sources.pane", ("SourcePane",)),
+        ("parqx.tui.widgets.sources_tree", "parqx.tui.sources.tree", ("SourcesTree",)),
+        (
+            "parqx.tui.source_read_schedule",
+            "parqx.tui.sources.read_schedule",
+            ("ReadContext", "ReadRequest", "SourceReadSchedule"),
+        ),
+        (
+            "parqx.tui.widgets.arrow_table",
+            "parqx.tui.table.arrow_table",
+            (
+                "ArrowTable",
+                "CellCacheKey",
+                "CellNotExistError",
+                "CellNotLoadedError",
+                "Column",
+                "ColumnNotExistError",
+                "CursorType",
+                "LineCacheKey",
+                "RowCacheKey",
+                "RowNotExistError",
+            ),
+        ),
+        ("parqx.tui.widgets.table_view", "parqx.tui.table.view", ("TableView",)),
+        (
+            "parqx.tui.column_layout",
+            "parqx.tui.table.column_layout",
+            ("Column", "ColumnCrop", "ColumnLayout"),
+        ),
+        (
+            "parqx.tui.widgets.value_browser",
+            "parqx.tui.values.browser",
+            ("ValueBrowser",),
+        ),
+        (
+            "parqx.tui.widgets.value_children",
+            "parqx.tui.values.children",
+            ("ValueChildren",),
+        ),
+        (
+            "parqx.tui.widgets.scalar_reader",
+            "parqx.tui.values.reader",
+            ("ScalarReader",),
+        ),
+        ("parqx.tui.widgets", "parqx.tui.table.arrow_table", ("ArrowTable",)),
+        ("parqx.tui.widgets", "parqx.tui.sources.pane", ("SourcePane",)),
+    ):
+        previous = import_module(previous_path)
+        current = import_module(current_path)
+        for name in names:
+            assert getattr(previous, name) is getattr(current, name), (
+                f"{previous_path}.{name} differs from {current_path}.{name}"
+            )
 
 
 def check_version_metadata() -> None:
@@ -160,6 +249,7 @@ def check_multi_source_query() -> None:
 
 def main() -> None:
     check_imports()
+    check_compatibility_imports()
     check_version_metadata()
     check_py_typed_marker()
     check_cli_entry_point()

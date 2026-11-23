@@ -46,6 +46,14 @@ Place unit tests beside tests of the same application package. The `data/`,
 top-level modules such as the catalog, CLI, and configuration live directly
 under `unit/`.
 
+In the TUI, `table/` owns column geometry, rendering and the table with its
+value sidebar. `values/` owns the selected row or cell, navigation and the
+readers. `sources/` owns source tabs, the source tree and page scheduling.
+`query/` owns the SQL workspace and its close confirmation. `tui/app.py`
+coordinates tabs and background work. New code imports from these feature
+packages. The previous widget import paths continue to resolve to the same
+classes.
+
 Find mounted tests by the feature under test:
 
 | Integration path | What belongs here |
