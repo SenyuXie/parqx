@@ -167,3 +167,52 @@ def test_resolution_failure_does_not_abort_other_inputs(
     assert pending.state == "loading"
     catalog.mark_ready(pending.spec.source_id)
     assert catalog.snapshot() == (pending.spec,)
+
+
+def test_metadata_reads_are_shared_while_a_ready_source_stays_queryable(
+    tmp_path: Path,
+) -> None:
+    catalog = SourceCatalog([tmp_path / "orders.parquet"])
+    source = catalog.entries[0].spec
+
+    assert catalog.request_metadata(source.source_id) is source
+    assert catalog.request_metadata(source.source_id) is None
+    assert catalog.snapshot() == ()
+
+    catalog.mark_ready(source.source_id)
+    assert catalog.request_metadata(source.source_id) is source
+    assert catalog.request_metadata(source.source_id) is None
+    assert catalog.snapshot() == (source,)
+
+    catalog.mark_failed(source.source_id, "File disappeared")
+    issue = catalog.get(source.source_id).issue
+    assert issue is not None
+    assert catalog.request_metadata(source.source_id) is issue
+    assert catalog.snapshot() == ()
+    assert not catalog.startup_failed
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_cancelled_metadata_read_can_be_requested_again(
+    tmp_path: Path, ready: bool
+) -> None:
+    catalog = SourceCatalog([tmp_path / "orders.parquet"])
+    source = catalog.entries[0].spec
+    if ready:
+        catalog.mark_ready(source.source_id)
+
+    assert catalog.request_metadata(source.source_id) is source
+    catalog.cancel_metadata_read(source.source_id)
+    assert catalog.snapshot() == ((source,) if ready else ())
+    assert catalog.request_metadata(source.source_id) is source
+
+
+def test_startup_fails_only_after_every_source_has_failed(tmp_path: Path) -> None:
+    catalog = SourceCatalog([tmp_path / "one.parquet", tmp_path / "two.parquet"])
+    first, second = (entry.spec.source_id for entry in catalog.entries)
+
+    assert not catalog.startup_failed
+    catalog.mark_failed(first, "Invalid metadata")
+    assert not catalog.startup_failed
+    catalog.mark_failed(second, "Permission denied")
+    assert catalog.startup_failed

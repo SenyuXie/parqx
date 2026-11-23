@@ -2,6 +2,7 @@
 # pyright: reportPrivateUsage=false
 
 import weakref
+from copy import deepcopy
 from datetime import datetime
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -15,18 +16,16 @@ from textual.geometry import Size
 
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
+from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError, Column
 
 
 def _column_width_peak_memory(table: pa.Table) -> int:
     """Measure Arrow allocations during the first column-width calculation."""
-    widget = ArrowTable(table)
-    assert widget._columns is None
     original_pool = pa.default_memory_pool()
     pool = pa.proxy_memory_pool(original_pool)
     try:
         pa.set_memory_pool(pool)
-        _ = widget.columns
+        _ = ArrowTable(table).columns
     finally:
         pa.set_memory_pool(original_pool)
 
@@ -177,6 +176,13 @@ def test_horizontal_crop_preserves_fixed_index_styles_and_coordinates() -> None:
         assert rendered_columns == columns
 
 
+def test_row_index_width_does_not_measure_data_columns() -> None:
+    with patch.object(CellFormatter, "__call__", return_value=Text("42")) as fmt:
+        widget = ArrowTable(pa.table({"a": range(1234)}))
+        assert widget.index_column.content_width == 4
+        fmt.assert_not_called()
+
+
 def test_numeric_width_measurement_is_bounded() -> None:
     with (
         patch("pyarrow.compute.min_max", side_effect=AssertionError("full scan")),
@@ -230,11 +236,11 @@ def test_replace_data_invalidates_content_schema_and_layout() -> None:
     widget = ArrowTable(pa.table({"before": ["old", "other"]}))
     assert widget._get_cell_renderable(0, 0).plain == "old"
     assert widget._get_cell_renderable(-1, 0).plain == "before"
-    old_offsets = widget._get_column_offsets()
+    old_width = widget._get_row_region(0).width
     widget.replace_data(pa.table({"after": ["a much longer value"], "new": [42]}))
     assert widget._get_cell_renderable(0, 0).plain == "a much longer value"
     assert widget._get_cell_renderable(-1, 0).plain == "after"
-    assert widget._get_column_offsets() != old_offsets
+    assert widget._get_row_region(0).width != old_width
     assert (widget.row_count, widget.column_count) == (1, 2)
     assert widget.cursor_coordinate == Coordinate(0, 0)
     widget.replace_data(pa.table({"empty": pa.array([], type=pa.int64())}))
@@ -291,12 +297,12 @@ def test_page_widths_match_loaded_data_and_refresh_cached_layout() -> None:
     widget = ArrowTable(
         PageCache(table.schema, table.num_rows, cache_bytes=32 * 1024 * 1024)
     )
-    old_offsets = widget._get_column_offsets()
+    old_width = widget._get_row_region(0).width
     widget.accept_page(DataPage(0, table))
 
     assert widget.columns == ArrowTable(table).columns
     assert widget.columns[0].content_width == 9
-    assert widget._get_column_offsets() != old_offsets
+    assert widget._get_row_region(0).width != old_width
 
 
 def test_page_width_measurement_is_bounded_and_does_not_retain_arrow_samples() -> None:
@@ -359,3 +365,40 @@ def test_loaded_arrow_data_keeps_native_identity_and_scalar_types() -> None:
     assert widget.data is data
     assert widget.get_cell_at(Coordinate(2, 0)) == data.column(0)[2]
     assert not widget.get_cell_at(Coordinate(1, 0)).is_valid
+
+
+def test_padding_change_reveals_the_cursor_at_its_new_position() -> None:
+    widget = ArrowTable(pa.table({"a": [1], "b": [2], "c": [3]}))
+    widget.move_cursor(column=2)
+    assert widget._get_cell_region(widget.cursor_coordinate).x == 9
+
+    with patch.object(widget, "scroll_to_region") as reveal:
+        widget.cell_padding = 2
+        widget.show_row_index = False
+
+    assert [call.args[0].x for call in reveal.call_args_list] == [15, 10]
+
+
+def test_changing_column_width_updates_cached_lines_and_column_positions() -> None:
+    widget = ArrowTable(pa.table({"a": [1], "b": [2]}), show_cursor=False)
+    with (
+        patch.object(
+            ArrowTable, "size", new_callable=PropertyMock, return_value=Size(18, 4)
+        ),
+        patch.object(
+            widget, "get_component_styles", return_value=Mock(rich_style=Style())
+        ),
+    ):
+        widget._update_dimensions()
+        assert widget._render_line(1, 0, 18, Style()).text.rstrip() == " 0  1  2"
+        column = widget.columns[0]
+        assert deepcopy(column) == Column("a", content_width=1)
+        column.auto_width = False
+        column.width = 10
+
+        assert widget._get_cell_region(Coordinate(0, 0)).width == 12
+        assert widget._get_column_region(1).x == 15
+        assert widget._get_row_region(0).width == 18
+        assert (
+            widget._render_line(1, 0, 18, Style()).text.rstrip() == " 0  1           2"
+        )

@@ -1,12 +1,15 @@
 """Query input ownership, worker delivery and natural native cleanup."""
 
 import asyncio
+import gc
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, get_ident
 from unittest.mock import patch
+from weakref import ReferenceType, ref
 
 import duckdb
+import pyarrow as pa
 import pytest
 from textual.coordinate import Coordinate
 from textual.message import Message
@@ -18,6 +21,7 @@ from parqx.data.parquet import ParquetSource
 from parqx.tui.app import Parqx
 from parqx.tui.widgets import ArrowTable
 from tests.helpers import (
+    confirm_query_close,
     open_query,
     press_run_button,
     run_query,
@@ -176,6 +180,39 @@ async def test_native_failure_unlocks_editor_and_allows_another_query(
             assert query.editor.has_focus
         result = await run_query(app, pilot, "SELECT 42 AS answer")
         assert result.get_cell_at(Coordinate(0, 0)).as_py() == 42
+
+
+async def test_failed_query_releases_partial_preview_before_next_run(
+    small_parquet: Path,
+) -> None:
+    observed: list[ReferenceType[pa.RecordBatch]] = []
+
+    def fail_read(
+        reader: pa.RecordBatchReader, *, row_limit: int, byte_limit: int
+    ) -> None:
+        batch = reader.read_next_batch()
+        observed.append(ref(batch))
+        raise OSError("interrupted preview")
+
+    app = Parqx([small_parquet])
+    async with app.run_test() as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        query.editor.load_text("SELECT * FROM range(128)")
+        with (
+            patch("parqx.query.engine.read_preview", fail_read),
+            patch.object(app, "notify") as notify,
+        ):
+            await press_run_button(query, pilot)
+            assert "interrupted preview" in await wait_for_query_error(
+                notify, query, pilot
+            )
+        await pilot.press("ctrl+w")
+        await confirm_query_close(app, pilot)
+        await wait_for(lambda: not query.is_attached, pilot)
+        (partial_batch,) = observed
+        gc.collect()
+        assert partial_batch() is None
 
 
 @pytest.mark.parametrize("fail", [False, True])
