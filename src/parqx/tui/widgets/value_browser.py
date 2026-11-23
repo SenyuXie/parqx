@@ -138,7 +138,6 @@ class ValueBrowser(Vertical):
         self.metadata = Static("", markup=False, classes="value-type")
         self.info = Static("", markup=False, classes="value-info")
         self.options = ValueChildren(classes="value-children")
-        self._render_width = 0
         self._reader_width = 0
         self._resume_frame: _BrowseFrame | None = None
         self._maximized_position: _MaximizedPosition | None = None
@@ -399,22 +398,22 @@ class ValueBrowser(Vertical):
             return
         frame = self._frames[-1]
         if frame.node.is_container:
-            if self._body_width() != self._render_width:
-                if self._resume_frame is not frame:
-                    frame.position = self.options.capture_position()
-                self._show_children(frame)
-                self._restore_position(frame)
-            else:
-                self.options.preview_styles = self._preview_styles()
+            rewrapped = self.options.reflow(
+                self._body_width(),
+                styles=self._preview_styles(),
+                position=frame.position if self._resume_frame is frame else None,
+            )
+            if rewrapped and self.options.highlighted is not None:
+                frame.selected = self.options.highlighted
+                self._selection_info(frame)
         elif self._scalar_width() != self._reader_width:
             self._reader_width = self._scalar_width()
             self.reader.reflow(self._reader_width)
 
     def _show_children(self, frame: _BrowseFrame) -> None:
-        self._render_width = self._body_width()
         self.options.show(
             frame.node,
-            width=self._render_width,
+            width=self._body_width(),
             selected=frame.selected,
             styles=self._preview_styles(),
         )

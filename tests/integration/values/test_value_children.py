@@ -55,6 +55,11 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert children.highlighted == 0
         assert received == [("highlighted", document, 0), ("selected", document, 0)]
 
+        received.clear()
+        children.highlighted = 1
+        await pilot.press("enter")
+        assert received == [("highlighted", document, 1), ("selected", document, 1)]
+
 
 async def test_paging_targets_the_field_on_the_destination_line() -> None:
     children = ValueChildren(classes="value-children")
