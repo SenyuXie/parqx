@@ -67,9 +67,14 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     def show(
         self, node: ValueNode, *, width: int, selected: int, styles: dict[str, Style]
     ) -> None:
-        """Start browsing the direct children of a new container."""
-        self._navigation = ChildNavigation(node.child_count, selected)
-        self.set_reactive(ValueChildren.highlighted, self._navigation.highlighted)
+        """Show direct children, retaining navigation when rewrapping the same selection."""
+        if (
+            self.document is None
+            or self.document.node is not node
+            or self.highlighted != selected
+        ):
+            self._navigation = ChildNavigation(node.child_count, selected)
+            self.set_reactive(ValueChildren.highlighted, self._navigation.highlighted)
         self.preview_styles = styles
         self._index_at_width(node, width)
 

@@ -8,6 +8,7 @@ from textual.widgets import Static
 from parqx.tui.values.document import ContainerDocument
 from parqx.tui.values.node import ValueNode
 from parqx.tui.widgets.value_children import ValueChildren
+from tests.helpers import wait_for
 
 
 async def test_highlighting_and_selection_dispatch_independently() -> None:
@@ -92,6 +93,27 @@ async def test_paging_targets_the_field_on_the_destination_line() -> None:
         for top in (15, 10, 5):
             await pilot.press("pageup")
             assert children.scroll_offset.y == top
+
+
+async def test_show_keeps_a_pending_page_when_the_same_container_rewraps() -> None:
+    app = App[None]()
+    async with app.run_test() as pilot:
+        children = ValueChildren(classes="value-children")
+        children.styles.height = 6
+        await app.mount(children)
+        await pilot.pause()
+        node = ValueNode(pa.scalar({f"f{i}": i for i in range(256)}))
+        children.show(node, width=40, selected=0, styles={})
+        previous = children.document
+        assert previous is not None
+        last_indexed = previous.indexed_children - 1
+        children.action_move(last_indexed)
+        children.action_page(1)
+        children.show(node, width=60, selected=last_indexed, styles={})
+        document = children.document
+        assert document is not None
+        await wait_for(lambda: document.complete, pilot)
+        assert children.highlighted == last_indexed + 5
 
 
 async def test_home_reveals_the_opening_delimiter_when_already_on_first_child() -> None:
