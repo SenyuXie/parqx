@@ -2,6 +2,7 @@
 # pyright: reportPrivateUsage=false
 
 import weakref
+from copy import deepcopy
 from datetime import datetime
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -15,7 +16,7 @@ from textual.geometry import Size
 
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
+from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError, Column
 
 
 def _column_width_peak_memory(table: pa.Table) -> int:
@@ -173,6 +174,13 @@ def test_horizontal_crop_preserves_fixed_index_styles_and_coordinates() -> None:
             expected_style = header_style if row == -1 or column == -1 else base_style
             assert segment.style.color == expected_style.color
         assert rendered_columns == columns
+
+
+def test_row_index_width_does_not_measure_data_columns() -> None:
+    with patch.object(CellFormatter, "__call__", return_value=Text("42")) as fmt:
+        widget = ArrowTable(pa.table({"a": range(1234)}))
+        assert widget.index_column.content_width == 4
+        fmt.assert_not_called()
 
 
 def test_numeric_width_measurement_is_bounded() -> None:
@@ -369,3 +377,28 @@ def test_padding_change_reveals_the_cursor_at_its_new_position() -> None:
         widget.show_row_index = False
 
     assert [call.args[0].x for call in reveal.call_args_list] == [15, 10]
+
+
+def test_changing_column_width_updates_cached_lines_and_column_positions() -> None:
+    widget = ArrowTable(pa.table({"a": [1], "b": [2]}), show_cursor=False)
+    with (
+        patch.object(
+            ArrowTable, "size", new_callable=PropertyMock, return_value=Size(18, 4)
+        ),
+        patch.object(
+            widget, "get_component_styles", return_value=Mock(rich_style=Style())
+        ),
+    ):
+        widget._update_dimensions()
+        assert widget._render_line(1, 0, 18, Style()).text.rstrip() == " 0  1  2"
+        column = widget.columns[0]
+        assert deepcopy(column) == Column("a", content_width=1)
+        column.auto_width = False
+        column.width = 10
+
+        assert widget._get_cell_region(Coordinate(0, 0)).width == 12
+        assert widget._get_column_region(1).x == 15
+        assert widget._get_row_region(0).width == 18
+        assert (
+            widget._render_line(1, 0, 18, Style()).text.rstrip() == " 0  1           2"
+        )

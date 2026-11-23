@@ -1,10 +1,14 @@
 """Measure Arrow columns and locate their visible cells in a table."""
 
+from __future__ import annotations
+
 from bisect import bisect_left, bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import accumulate
 from math import ceil
-from typing import NamedTuple
+from typing import NamedTuple, Self
+from weakref import ReferenceType, WeakMethod, ref
 
 import pyarrow as pa
 from rich.cells import cell_len
@@ -27,6 +31,29 @@ class Column:
     """Estimated terminal-cell width over formatted cell values."""
     auto_width: bool = True
     """Whether render width is based on measured content_width."""
+
+    @classmethod
+    def for_layout(
+        cls, layout: ColumnLayout, name: str, content_width: int = 0
+    ) -> Self:
+        """Create a column that reports metadata edits to its layout."""
+        column = cls(name, content_width=content_width)
+        column._layout = ref(layout)
+        return column
+
+    def __getstate__(self) -> dict[str, object]:
+        """Copy column metadata independently of the table that displays it."""
+        state = vars(self).copy()
+        state.pop("_layout", None)
+        return state
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Invalidate cached positions after a public column attribute changes."""
+        super().__setattr__(name, value)
+        if name in {"name", "width", "content_width", "auto_width"}:
+            owner: ReferenceType[ColumnLayout] | None = getattr(self, "_layout", None)
+            if owner is not None and (layout := owner()) is not None:
+                layout.column_changed(self)
 
 
 class ColumnCrop(NamedTuple):
@@ -55,31 +82,55 @@ class ColumnLayout:
 
     def __init__(
         self,
-        data: pa.Table | PageCache,
+        row_count: int,
         formatter: CellFormatter,
         *,
+        on_change: WeakMethod[Callable[[], None]],
         padding: int,
         show_row_index: bool,
     ) -> None:
-        """Measure loaded data or use schema widths until the first source page arrives."""
+        """Set up row-index geometry without inspecting data columns."""
+        self._on_change = on_change
         self._formatter = formatter
         self._padding = padding
         self.show_row_index = show_row_index
         self._offsets: tuple[int, ...] | None = None
-        self._measured = isinstance(data, pa.Table)
+        self._initialized = False
+        self._measured = False
+        self.columns: tuple[Column, ...] = ()
+        self.index_column = Column.for_layout(
+            self, "#", len(str(max(0, row_count - 1)))
+        )
+
+    def prepare_columns(self, data: pa.Table | PageCache) -> None:
+        """Measure loaded data or use schema widths until a source page arrives."""
+        if self._initialized:
+            return
         if isinstance(data, pa.Table):
             self.columns = self._measure_columns(data)
-            row_count = data.num_rows
+            self._measured = True
         else:
-            self.columns = tuple(Column(field.name) for field in data.schema)
-            row_count = data.row_count
-        self.index_column = Column("#", content_width=len(str(max(0, row_count - 1))))
+            self.columns = tuple(
+                Column.for_layout(self, field.name) for field in data.schema
+            )
+        self._initialized = True
+
+    def column_changed(self, column: Column) -> None:
+        """Discard cached geometry and request a redraw after a column edit."""
+        # A caller may still hold schema metadata from before the first page arrived.
+        if column is not self.index_column and not any(
+            item is column for item in self.columns
+        ):
+            return
+        self._offsets = None
+        if (on_change := self._on_change()) is not None:
+            on_change()
 
     def _measure_columns(self, table: pa.Table) -> tuple[Column, ...]:
         """Keep only width estimates from a bounded set of formatted scalars."""
         sample = _sample_row_indices(table.num_rows)
         return tuple(
-            Column(name, content_width=self._measure_content_width(column, sample))
+            Column.for_layout(self, name, self._measure_content_width(column, sample))
             for name, column in zip(table.column_names, table.columns, strict=True)
         )
 

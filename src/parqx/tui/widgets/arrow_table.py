@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from typing import ClassVar, Literal, NamedTuple, Self
+from weakref import WeakMethod
 
 import pyarrow as pa
 import rich.repr
@@ -723,27 +724,36 @@ class ArrowTable(ScrollView, can_focus=True):
         """The total number of columns currently present in the ArrowTable."""
         return len(self.data.schema)
 
-    @property
-    def _column_layout(self) -> ColumnLayout:
-        """Measure columns on the first layout request for this data."""
+    def _get_column_layout(self, *, measure: bool = True) -> ColumnLayout:
+        """Get the layout, optionally preparing its data columns when needed."""
         if self._cached_column_layout is None:
             self._cached_column_layout = ColumnLayout(
-                self.data,
+                self.row_count,
                 self._cell_formatter,
+                on_change=WeakMethod(self._on_column_changed),
                 padding=self.cell_padding,
                 show_row_index=self.show_row_index,
             )
+        if measure:
+            self._cached_column_layout.prepare_columns(self.data)
         return self._cached_column_layout
+
+    def _on_column_changed(self) -> None:
+        """Refresh dimensions, headers and rendered lines after a column edit."""
+        self._cell_renderable_cache.clear()
+        self._clear_render_caches()
+        self._require_update_dimensions = True
+        self.refresh(layout=True)
 
     @property
     def columns(self) -> tuple[Column, ...]:
         """Column metadata in schema order."""
-        return self._column_layout.columns
+        return self._get_column_layout().columns
 
     @property
     def index_column(self) -> Column:
         """Metadata for the fixed row-index column."""
-        return self._column_layout.index_column
+        return self._get_column_layout(measure=False).index_column
 
     def get_cell_at(self, coordinate: Coordinate) -> pa.Scalar:
         """Get the value from the cell occupying the given coordinate.
@@ -808,7 +818,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self.data.add_page(page)
         self._requested_window = None
         self._window_failed = False
-        widths_changed = self._column_layout.measure_page(page.table)
+        widths_changed = self._get_column_layout().measure_page(page.table)
         if widths_changed:
             self._require_update_dimensions = True
         self._update_count += 1
@@ -908,7 +918,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def watch_show_row_index(self, show: bool) -> None:
         """Update table dimensions and rendering when row-index visibility changes."""
-        self._column_layout.show_row_index = show
+        self._get_column_layout().show_row_index = show
         self._update_dimensions()
         self._scroll_cursor_into_view()
         self._clear_render_caches()
@@ -923,7 +933,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def watch_cell_padding(self, padding: int) -> None:
         """Update column positions before scrolling the cursor into view."""
-        self._column_layout.set_padding(padding)
+        self._get_column_layout().set_padding(padding)
         self._update_dimensions()
         self._scroll_cursor_into_view()
         self._clear_render_caches()
@@ -1089,7 +1099,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
-        total_width = self._column_layout.width
+        total_width = self._get_column_layout().width
         header_lines = 1 if self.show_header else 0
         self.virtual_size = Size(total_width, self.row_count + header_lines)
 
@@ -1100,7 +1110,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
         row_index, column_index = coordinate
 
-        x, width = self._column_layout.get_column_bounds(column_index)
+        x, width = self._get_column_layout().get_column_bounds(column_index)
         height = 1  # The height of the row.
         y = row_index + (1 if self.show_header else 0)
         return Region(x, y, width, height)
@@ -1110,7 +1120,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_row_index(row_index):
             return Region(0, 0, 0, 0)
 
-        row_width = self._column_layout.width
+        row_width = self._get_column_layout().width
         y = row_index + (1 if self.show_header else 0)
         return Region(0, y, row_width, 1)  # The height of the row is 1.
 
@@ -1119,7 +1129,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if not self.is_valid_column_index(column_index):
             return Region(0, 0, 0, 0)
 
-        x, width = self._column_layout.get_column_bounds(column_index)
+        x, width = self._get_column_layout().get_column_bounds(column_index)
         header_height = 1 if self.show_header else 0
         height = self._total_row_height + header_height
         return Region(x, 0, width, height)
@@ -1478,17 +1488,16 @@ class ArrowTable(ScrollView, can_focus=True):
 
         header_style = self.get_component_styles("arrowtable--header").rich_style
 
-        # If the row has a index, add it to fixed_row here with correct style.
+        layout = self._get_column_layout()
         fixed_row: list[Segment] = []
 
         if self.show_row_index:
-            # The width of the row index is updated again on idle
             cell_location = Coordinate(row_index, self._index_column_index)
             index_cell_segments = self._render_cell(
                 row_index,
                 self._index_column_index,
                 header_style,
-                width=self._column_layout.index_width,
+                width=layout.index_width,
                 cursor=self._should_highlight(
                     cursor_location, cell_location, cursor_type
                 ),
@@ -1503,7 +1512,7 @@ class ArrowTable(ScrollView, can_focus=True):
         scrollable_row: list[Segment] = []
 
         for column_index in range(column1, column2):
-            _, width = self._column_layout.get_column_bounds(column_index)
+            _, width = layout.get_column_bounds(column_index)
             cell_location = Coordinate(row_index, column_index)
             cell_segments = self._render_cell(
                 row_index,
@@ -1573,7 +1582,7 @@ class ArrowTable(ScrollView, can_focus=True):
         if (strip := self._line_cache.get(cache_key)) is not None:
             return strip
 
-        crop = self._column_layout.crop(x1, width)
+        crop = self._get_column_layout().crop(x1, width)
         fixed, scrollable = self._render_line_in_row(
             row_index,
             base_style,
@@ -1700,7 +1709,7 @@ class ArrowTable(ScrollView, can_focus=True):
         not participate in scrolling.
         """
         top = 1 if self.show_header else 0
-        left = self._column_layout.index_width
+        left = self._get_column_layout(measure=False).index_width
         return Spacing(top, 0, 0, left)
 
     def _scroll_cursor_into_view(self, animate: bool = False) -> None:
