@@ -7,7 +7,7 @@ import pyarrow as pa
 import pytest
 
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import PageCache
+from parqx.data.view import DataPage, PageCache
 from parqx.tui.sources.read_schedule import ReadContext, SourceReadSchedule
 from parqx.tui.values.selection import BrowseRoot
 
@@ -45,6 +45,34 @@ def test_latest_window_waits_for_debounce_and_completion(
     assert (next_read.start, next_read.stop) == (0, 8)
     assert schedule.finish(next_read, context) == "table"
     assert schedule.take_next(context) is None
+
+
+@pytest.mark.parametrize(
+    ("start", "length", "reusable"),
+    [(4, 2, False), (4, 4, True), (8, 2, True), (9, 4, False)],
+    ids=["before", "prefix", "suffix", "after"],
+)
+def test_only_returned_rows_can_satisfy_a_new_viewport(
+    context: ReadContext, start: int, length: int, reusable: bool
+) -> None:
+    schedule = SourceReadSchedule()
+    window = schedule.request_window(start, start + 1, context)
+    assert schedule.window_ready(window)
+    read = schedule.take_next(context)
+    assert read is not None
+
+    latest = schedule.request_window(6, 9, context)
+    page = DataPage(start, pa.table({"id": range(start, start + length)}))
+    if reusable:
+        assert schedule.finish(read, context, page) == "table"
+        # Delivery prompts a fresh paint to request any remaining missing rows.
+        assert not schedule.window_ready(latest)
+    else:
+        assert schedule.finish(read, context, page) == "discard"
+        assert schedule.window_ready(latest)
+        retry = schedule.take_next(context)
+        assert retry is not None
+        assert retry.start == 6
 
 
 @pytest.mark.parametrize("selection", ["original", "cached", "reselected"])
