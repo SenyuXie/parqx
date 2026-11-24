@@ -690,9 +690,10 @@ async def test_restore_retains_clamped_position_unless_user_changes_inspection(
             expected = 0
         app.screen.action_minimize()
         if interaction == "navigate-during-minimize":
+            before_move = body.scroll_y
             body.action_move(1 if kind == "list" else -1)
             expected = body.scroll_y
-            assert expected != position
+            assert expected != before_move
         elif interaction == "hide-during-restore":
             view.action_toggle_browser()
             await pilot.pause()

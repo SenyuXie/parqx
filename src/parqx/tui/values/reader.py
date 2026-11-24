@@ -72,7 +72,7 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         self._cancel_index()
         self.document = ScalarDocument(value, width=width)
         self.document.advance()
-        self._restore_y, self._anchor, self._to_end = None, None, False
+        self._cancel_pending_navigation()
         self._place_position(0, x=0)
         self._update_size()
         self._start_indexing()
@@ -85,6 +85,9 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         position = self.capture_position()
         self.show(document.value, width=width)
         self.restore_position(position)
+
+    def _cancel_pending_navigation(self) -> None:
+        self._anchor, self._restore_y, self._to_end = None, None, False
 
     def capture_position(self) -> ReadingPosition:
         """Save the intended source position instead of a temporarily clamped row."""
@@ -132,7 +135,7 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
     def action_move(self, delta: int) -> None:
         """Scroll read-only content without moving an editing cursor."""
         self.navigation_revision += 1
-        self._anchor, self._restore_y, self._to_end = None, None, False
+        self._cancel_pending_navigation()
         self._place_position(self.scroll_y + delta)
 
     def action_page(self, direction: int) -> None:

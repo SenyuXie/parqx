@@ -127,6 +127,9 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
                 self._place_position(scroll)
         self.refresh()
 
+    def _cancel_pending_navigation(self) -> None:
+        self._navigation.cancel_pending()
+
     def capture_position(self) -> ReadingPosition:
         """Capture the intended viewport, including pending navigation."""
         return self._navigation.capture(self.scroll_y)

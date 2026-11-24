@@ -32,6 +32,11 @@ class IndexedScrollView[Document: ContainerDocument | ScalarDocument](ScrollView
             old_value
         ):
             self.navigation_revision += 1
+            self._cancel_pending_navigation()
+
+    def _cancel_pending_navigation(self) -> None:
+        """Discard any destination the index has yet to reach."""
+        raise NotImplementedError
 
     def _place_position(self, y: float, *, x: float | None = None) -> None:
         """Apply the reader's own layout or navigation without counting it twice."""

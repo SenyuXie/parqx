@@ -47,6 +47,12 @@ class ChildNavigation:
         self._page_lines = 0
         return self.highlighted
 
+    def cancel_pending(self) -> None:
+        """Keep the highlighted child and let the user scroll away from it."""
+        self._page_lines = 0
+        self._reveal = False
+        self._restore_y = None
+
     def capture(self, scroll: float) -> ReadingPosition:
         """Save the intended position, even if indexing has yet to reach it."""
         return ReadingPosition(
