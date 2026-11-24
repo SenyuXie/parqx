@@ -9,13 +9,37 @@ from parqx.tui.values.document import ContainerDocument, ScalarDocument
 
 
 class IndexedScrollView[Document: ContainerDocument | ScalarDocument](ScrollView):
-    """Advance the visible reader's current document in bounded batches."""
+    """Advance the visible document and distinguish navigation from layout.
+
+    Reader actions advance the navigation revision when input arrives, even
+    when its destination is still being indexed. Layout places the viewport
+    without invalidating its saved reading position.
+    """
 
     def __init__(self, *, classes: str) -> None:
         """Start with no document or index worker."""
         super().__init__(classes=classes)
+        self.navigation_revision: int = 0
+        self._placing_position = False
         self.document: Document | None = None
         self._index_worker: Worker[None] | None = None
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Count external scrolling, including wheel and scrollbar input."""
+        super().watch_scroll_y(old_value, new_value)
+        # Textual clamps the existing offset when the viewport changes size.
+        if not self._placing_position and new_value != self.validate_scroll_y(
+            old_value
+        ):
+            self.navigation_revision += 1
+
+    def _place_position(self, y: float, *, x: float | None = None) -> None:
+        """Apply the reader's own layout or navigation without counting it twice."""
+        self._placing_position = True
+        try:
+            self.scroll_to(x=x, y=y, animate=False, force=True, immediate=True)
+        finally:
+            self._placing_position = False
 
     def _start_indexing(self) -> None:
         document = self.document

@@ -124,7 +124,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             )
             self.highlighted = self._navigation.highlighted
             if scroll != self.scroll_y:
-                self.scroll_to(y=scroll, animate=False, force=True, immediate=True)
+                self._place_position(scroll)
         self.refresh()
 
     def capture_position(self) -> ReadingPosition:
@@ -137,11 +137,14 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         self._update_size()
 
     def _highlight(self, index: int) -> None:
+        self.navigation_revision += 1
         self._navigation.highlight(index)
         self._update_size()
 
     def watch_highlighted(self, index: int | None) -> None:
         """Keep programmatic highlights in sync and notify the browser."""
+        if self._navigation.highlighted != index:
+            self.navigation_revision += 1
         self._navigation.highlighted = index
         if self.document is not None and index is not None:
             self.post_message(self.Highlighted(self.document, index))
@@ -152,6 +155,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
 
     def action_first(self) -> None:
         """Select the first child and expose the opening delimiter."""
+        self.navigation_revision += 1
         self._navigation.first()
         self._update_size()
 
@@ -162,6 +166,7 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
 
     def action_page(self, direction: int) -> None:
         """Move by one viewport of rendered lines with one line of overlap."""
+        self.navigation_revision += 1
         self._navigation.page(direction, height=self.scrollable_content_region.height)
         self._update_size()
 

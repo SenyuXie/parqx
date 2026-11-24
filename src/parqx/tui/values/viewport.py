@@ -21,13 +21,12 @@ class BrowseFrame:
     position: ReadingPosition = field(default_factory=ReadingPosition)
 
 
-@dataclass
-class _MaximizedPosition:
-    """A bookmark and the scroll offset where the enlarged viewport settled."""
+@dataclass(frozen=True)
+class _Bookmark:
+    """A destination valid until the reader receives newer navigation."""
 
     position: ReadingPosition
-    selected: int
-    enlarged_scroll: float | None = None
+    navigation_revision: int
 
 
 class BrowseViewport:
@@ -59,8 +58,8 @@ class BrowseViewport:
         self._scalar = scalar
         self._reflow = reflow
         self._frame: BrowseFrame | None = None
-        self._restore: ReadingPosition | None = None
-        self._maximized: _MaximizedPosition | None = None
+        self._restore: _Bookmark | None = None
+        self._maximized: _Bookmark | None = None
         self._revision = 0
 
     @property
@@ -72,6 +71,15 @@ class BrowseViewport:
             else self._scalar
         )
 
+    def _destination(self) -> ReadingPosition | None:
+        bookmark = self._restore
+        if (
+            bookmark is not None
+            and bookmark.navigation_revision == self.body.navigation_revision
+        ):
+            return bookmark.position
+        return None
+
     def show(self, frame: BrowseFrame | None) -> None:
         """Activate a browse frame, or clear the selection and its pending work."""
         self._revision += 1
@@ -80,19 +88,22 @@ class BrowseViewport:
         self._restore = None
         if frame is not None:
             self.body.restore_position(frame.position)
+            self._restore = _Bookmark(frame.position, self.body.navigation_revision)
             self.body.call_after_refresh(self._restore_frame, self._revision)
 
     def save(self) -> None:
         """Remember the intended position before leaving or hiding a frame."""
         self._revision += 1
         if self._frame is not None:
-            self._frame.position = self._restore or self.body.capture_position()
+            self._frame.position = self._destination() or self.body.capture_position()
         self._restore = None
 
     def resume(self) -> None:
         """Reapply the saved position after Textual lays out the visible reader."""
         if self._frame is not None:
-            self._restore = self._frame.position
+            self._restore = _Bookmark(
+                self._frame.position, self.body.navigation_revision
+            )
         self._owner.call_after_refresh(self._settle, self._revision)
 
     def set_maximized(self, maximized: bool) -> None:
@@ -104,28 +115,18 @@ class BrowseViewport:
         frame = self._frame
         if frame is None:
             return
-        body = self.body
-        saved = self._maximized
         if maximized:
-            self._maximized = _MaximizedPosition(
-                self._restore or body.capture_position(), frame.selected
+            self._maximized = _Bookmark(
+                self._destination() or self.body.capture_position(),
+                self.body.navigation_revision,
             )
-        else:
+        elif self._maximized is not None:
+            self._restore = self._maximized
             self._maximized = None
-            if (
-                saved is not None
-                and frame.selected == saved.selected
-                and body.scroll_y == saved.enlarged_scroll
-            ):
-                self._restore = saved.position
-                frame.position = saved.position
+            if (position := self._destination()) is not None:
+                frame.position = position
         self._revision += 1
         self._owner.call_after_refresh(self._settle, self._revision)
-
-    def scalar_restored(self, scroll: float) -> None:
-        """Record where a pending byte anchor settled in the enlarged reader."""
-        if self._maximized is not None and self._maximized.enlarged_scroll is not None:
-            self._maximized.enlarged_scroll = min(scroll, self._scalar.max_scroll_y)
 
     def layout_changed(self) -> None:
         """Reflow after layout, ignoring callbacks superseded by a frame change."""
@@ -133,22 +134,16 @@ class BrowseViewport:
 
     def _reflow_current(self, revision: int) -> None:
         if revision == self._revision and self._owner.is_on_screen:
-            self._reflow(self._restore)
+            self._reflow(self._destination())
 
     def _restore_frame(self, revision: int) -> None:
-        if (
-            revision == self._revision
-            and self._frame is not None
-            and self._owner.display
-        ):
-            self.body.restore_position(self._frame.position)
+        if revision == self._revision and self._owner.display:
+            position = self._destination()
+            if position is not None:
+                self.body.restore_position(position)
+            self._restore = None
 
     def _settle(self, revision: int) -> None:
-        if revision != self._revision or not self._owner.is_on_screen:
-            return
-        self._reflow(self._restore)
-        if self._restore is not None:
-            self.body.restore_position(self._restore)
-            self._restore = None
-        if self._maximized is not None and self._maximized.enlarged_scroll is None:
-            self._maximized.enlarged_scroll = self.body.scroll_y
+        if revision == self._revision and self._owner.is_on_screen:
+            self._reflow(self._destination())
+            self._restore_frame(revision)

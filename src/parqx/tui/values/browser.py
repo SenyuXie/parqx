@@ -165,8 +165,6 @@ class ValueBrowser(Vertical):
 
     def toggle_visibility(self) -> None:
         """Resume the saved viewport after native controls handle being shown."""
-        if self.display:
-            self.viewport.save()
         self.display = not self.display
 
     def on_hide(self) -> None:
@@ -247,8 +245,6 @@ class ValueBrowser(Vertical):
             and not self._frames[-1].node.is_container
         ):
             self._update_scalar_metadata()
-            if event.restored_scroll is not None:
-                self.viewport.scalar_restored(event.restored_scroll)
 
     def _update_scalar_metadata(self) -> None:
         content = self.reader.document

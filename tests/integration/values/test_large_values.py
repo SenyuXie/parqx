@@ -15,7 +15,7 @@ from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.values.selection import BrowseRoot
-from tests.helpers import wait_for, wait_for_source_table
+from tests.helpers import run_query, wait_for, wait_for_source_table
 
 
 def pause_indexing(
@@ -393,6 +393,41 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
                 assert not browser.is_attached
         finally:
             release.set()
+
+
+async def test_maximize_restores_position_after_incremental_field_reflow(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await run_query(app, pilot, "SELECT 1")
+        assert table.parent is not None
+        app.action_toggle_sources()
+        browser = table.parent.query_one(ValueBrowser)
+        record = pa.scalar({f"f{i}": i for i in range(1000)})
+        browser.select(BrowseRoot(table.generation, 0, 0, "record", record))
+        children = browser.options
+        await wait_for(
+            lambda: children.document is not None and children.document.complete, pilot
+        )
+        children.focus()
+        children.scroll_to(y=children.max_scroll_y - 2, animate=False, immediate=True)
+        position = children.scroll_y
+        started, release = pause_indexing(monkeypatch, ContainerDocument)
+        try:
+            app.screen.action_maximize()
+            await wait_for(started.is_set, pilot)
+            partial = children.scroll_y
+            assert partial < position
+        finally:
+            release.set()
+        await wait_for(
+            lambda: children.document is not None and children.document.complete, pilot
+        )
+        assert partial < children.scroll_y < position
+        app.screen.action_minimize()
+        await wait_for(lambda: children.scroll_y == position, pilot)
+        assert children.has_focus
 
 
 async def test_long_wrapped_text_restores_after_native_maximize(
