@@ -7,7 +7,7 @@ from textual.widget import Widget
 from textual.widgets import Button, TabbedContent
 
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import open_query, open_sql_query, press_run_button, wait_for
 
 
@@ -143,7 +143,7 @@ async def test_long_sql_and_wide_results_stay_usable_after_resize(
 ) -> None:
     from textual.widgets import Tabs
 
-    from parqx.tui.widgets.sources_tree import SourcesTree
+    from parqx.tui.sources.tree import SourcesTree
 
     app = Parqx([small_parquet])
     async with app.run_test(size=(120, 40)) as pilot:

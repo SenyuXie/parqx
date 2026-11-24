@@ -6,9 +6,9 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from textual.coordinate import Coordinate
 
-from parqx.query.engine import QueryResult
+from parqx.query import QueryResult
 from parqx.tui.app import Parqx
-from parqx.tui.widgets.value_browser import ValueBrowser
+from parqx.tui.values.browser import ValueBrowser
 from tests.helpers import open_query, wait_for, wait_for_source_table
 
 

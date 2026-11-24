@@ -37,8 +37,7 @@ from textual.widget import PseudoClasses
 
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter, ContainerPreview
-from parqx.tui.column_layout import Column as Column
-from parqx.tui.column_layout import ColumnLayout
+from parqx.tui.table.column_layout import Column, ColumnLayout
 
 logger = logging.getLogger(__name__)
 

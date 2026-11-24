@@ -16,8 +16,8 @@ from textual.widgets import Static, TabbedContent
 
 from parqx.data.view import PageCache
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
-from parqx.tui.widgets.sources_tree import SourcesTree
+from parqx.tui.sources.tree import SourcesTree
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import open_query, press_run_button, run_query, select_tab, wait_for
 
 

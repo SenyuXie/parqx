@@ -49,7 +49,7 @@ async def test_query_palette_opens_independent_blank_workspaces(
 async def test_execution_replaces_result_in_same_workspace(small_parquet: Path) -> None:
     from textual.coordinate import Coordinate
 
-    from parqx.tui.widgets import ArrowTable
+    from parqx.tui.table.arrow_table import ArrowTable
     from tests.helpers import open_query
 
     app = Parqx([small_parquet])
@@ -94,7 +94,7 @@ async def test_run_button_executes_its_own_draft_after_tab_switch(
 ) -> None:
     from textual.message import Message
 
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
     from tests.helpers import open_query
 
     def edit_after_submission(message: Message) -> None:
@@ -133,7 +133,7 @@ async def test_completion_never_moves_focus_from_another_workspace(
     import duckdb
     from textual.coordinate import Coordinate
 
-    from parqx.tui.widgets import ArrowTable
+    from parqx.tui.table.arrow_table import ArrowTable
     from tests.helpers import open_query
 
     started, release = Event(), Event()

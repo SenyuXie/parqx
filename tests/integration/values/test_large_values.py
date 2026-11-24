@@ -11,10 +11,10 @@ from textual.message import Message
 
 from parqx.tui.app import Parqx
 from parqx.tui.values import document
+from parqx.tui.values.browser import ValueBrowser
+from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.value_browser import ValueBrowser
-from parqx.tui.widgets.value_children import ValueChildren
 from tests.helpers import wait_for, wait_for_source_table
 
 
@@ -247,7 +247,7 @@ async def test_large_list_last_child_and_long_unicode_are_readable(
 async def test_large_map_and_struct_keep_positional_identity(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from parqx.query.engine import QueryResult
+    from parqx.query import QueryResult
     from tests.helpers import open_query
 
     count = 10_000

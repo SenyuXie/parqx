@@ -16,7 +16,8 @@ from textual.geometry import Size
 
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter
-from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError, Column
+from parqx.tui.table.arrow_table import ArrowTable, CellNotLoadedError
+from parqx.tui.table.column_layout import Column
 
 
 def _column_width_peak_memory(table: pa.Table) -> int:

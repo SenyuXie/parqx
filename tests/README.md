@@ -41,10 +41,16 @@ Each behavior belongs at the lowest layer that can verify it:
 | `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
-Place unit tests beside tests of the same application package. The `data/`,
-`query/`, and `tui/` directories under `unit/` mirror `src/parqx/`. Tests for
-top-level modules such as the catalog, CLI, and configuration live directly
+Place unit tests beside tests of the same application package. The `data/` and
+`tui/` directories under `unit/` mirror `src/parqx/`. Tests for top-level
+modules such as the catalog, CLI, configuration and SQL queries live directly
 under `unit/`.
+
+In the TUI, `table/` owns column geometry, rendering and the table with its
+value sidebar. `values/` owns the selected row or cell, navigation and the
+readers. `sources/` owns source tabs, the source tree and page scheduling.
+`query/` owns the SQL workspace and its close confirmation. `tui/app.py`
+coordinates tabs and background work.
 
 Find mounted tests by the feature under test:
 
@@ -81,7 +87,7 @@ previews, including private batch budgeting and compaction helpers.
 `data.parquet` reads file metadata and browsing windows through DuckDB;
 each request owns a short-lived connection. Paths are passed directly to DuckDB;
 callers supply paths that DuckDB can read without escaping or aliases.
-`query.engine.execute_query` owns SQL execution, timing, source issues and errors
+`parqx.query.execute_query` owns SQL execution, timing, source issues and errors
 on the same shared primitives. Loaded results remain native `pa.Table` objects.
 `PageCache` only holds source
 metadata and bounded `DataPage` windows. `ArrowTable.replace_data` accepts either

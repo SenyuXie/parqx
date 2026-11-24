@@ -13,11 +13,11 @@ from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ReadingPosition
 from parqx.tui.values.node import RowValue, ValueNode
+from parqx.tui.values.reader import ScalarReader
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.scalar_reader import ScalarReader
-from parqx.tui.widgets.value_children import ValueChildren
 
 
 def _label_text(label: str) -> Text:

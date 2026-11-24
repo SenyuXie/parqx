@@ -13,7 +13,7 @@ import pytest
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data import duckdb as engine
-from parqx.query.engine import QueryExecutionError, execute_query
+from parqx.query import QueryExecutionError, execute_query
 
 
 def sources(*paths: Path) -> tuple[SourceSpec, ...]:
@@ -52,9 +52,7 @@ def test_native_failure_is_wrapped_and_unexpected_error_logged_once(
         execute_query((), "SELECT 42", config=ParqxConfig())
     assert str(raised.value) == (str(failure) or type(failure).__name__)
     assert raised.value.__cause__ is failure
-    records = [
-        record for record in caplog.records if record.name == "parqx.query.engine"
-    ]
+    records = [record for record in caplog.records if record.name == "parqx.query"]
     assert len(records) == (1 if isinstance(failure, RuntimeError) else 0)
     if records:
         assert records[0].exc_info is not None

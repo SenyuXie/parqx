@@ -14,9 +14,9 @@ from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.app import Parqx
-from parqx.tui.widgets.arrow_table import CursorType
-from parqx.tui.widgets.table_view import TableView
-from parqx.tui.widgets.value_browser import ValueBrowser
+from parqx.tui.table.arrow_table import CursorType
+from parqx.tui.table.view import TableView
+from parqx.tui.values.browser import ValueBrowser
 from tests.helpers import open_query, select_tab, wait_for, wait_for_source_table
 
 

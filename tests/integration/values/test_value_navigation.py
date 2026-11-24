@@ -5,11 +5,11 @@ from pathlib import Path
 import pyarrow as pa
 from textual.widgets import Button, Static, TabbedContent
 
-from parqx.query.engine import QueryResult
+from parqx.query import QueryResult
 from parqx.tui.app import Parqx
-from parqx.tui.widgets.scalar_reader import ScalarReader
-from parqx.tui.widgets.value_browser import ValueBrowser
-from parqx.tui.widgets.value_children import ValueChildren
+from parqx.tui.values.browser import ValueBrowser
+from parqx.tui.values.children import ValueChildren
+from parqx.tui.values.reader import ScalarReader
 from tests.helpers import open_query, run_query, wait_for_source_table
 
 

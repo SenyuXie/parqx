@@ -14,10 +14,10 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
 
+from parqx.tui.values._indexed_scroll_view import IndexedScrollView
 from parqx.tui.values.child_navigation import ChildNavigation
 from parqx.tui.values.document import ContainerDocument, ReadingPosition
 from parqx.tui.values.node import ValueNode
-from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
 
 
 class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):

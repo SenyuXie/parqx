@@ -17,10 +17,10 @@ from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.source_read_schedule import ReadContext, ReadRequest, SourceReadSchedule
+from parqx.tui.sources.read_schedule import ReadContext, ReadRequest, SourceReadSchedule
+from parqx.tui.table.arrow_table import ArrowTable
+from parqx.tui.table.view import TableView
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.arrow_table import ArrowTable
-from parqx.tui.widgets.table_view import TableView
 
 logger = logging.getLogger(__name__)
 

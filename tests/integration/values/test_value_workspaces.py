@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 
 from parqx.tui.app import Parqx
-from parqx.tui.widgets.table_view import TableView
+from parqx.tui.table.view import TableView
 from tests.helpers import press_run_button, run_query, wait_for, wait_for_source_table
 
 
 async def test_query_selection_prompt_keeps_its_wrapping_on_focus(
     small_parquet: Path,
 ) -> None:
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
 
     app = Parqx([small_parquet])
     async with app.run_test(size=(132, 38)) as pilot:
@@ -174,7 +174,7 @@ async def test_failed_execution_preserves_nested_inspection(
 
     import duckdb
 
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
     from tests.helpers import wait_for_query_error
 
     app = Parqx([paged_values_parquet])
@@ -270,7 +270,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
 ) -> None:
     from textual.coordinate import Coordinate
 
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
 
     app = Parqx([paged_values_parquet])
     async with app.run_test(size=(140, 40)) as pilot:
@@ -344,7 +344,7 @@ async def test_background_queries_update_only_their_own_inspection(
     import duckdb
     from textual.widgets import TabbedContent
 
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
     from tests.helpers import select_tab
 
     app = Parqx([nested_parquet])
@@ -534,7 +534,7 @@ async def test_shutdown_releases_inspection_before_pending_query_finishes(
 
     import duckdb
 
-    from parqx.tui.widgets.query_workspace import QueryWorkspace
+    from parqx.tui.query.workspace import QueryWorkspace
 
     started, release = Event(), Event()
     original_sql = duckdb.DuckDBPyConnection.sql

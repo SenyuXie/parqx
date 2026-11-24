@@ -12,8 +12,8 @@ from textual.widgets import Footer, TabbedContent
 
 from parqx.config import ParqxConfig
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
-from parqx.tui.widgets.query_workspace import QueryWorkspace
+from parqx.tui.query.workspace import QueryWorkspace
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import (
     confirm_query_close,
     open_query,

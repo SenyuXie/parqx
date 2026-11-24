@@ -12,10 +12,10 @@ from textual.message import Message
 from textual.widget import Widget
 
 from parqx.data.view import DataPage, PageCache
+from parqx.tui.table.arrow_table import ArrowTable, CellNotLoadedError
+from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.node import RowValue
 from parqx.tui.values.selection import BrowseRoot
-from parqx.tui.widgets.arrow_table import ArrowTable, CellNotLoadedError
-from parqx.tui.widgets.value_browser import ValueBrowser
 
 
 class TableView(Horizontal):

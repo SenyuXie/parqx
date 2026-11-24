@@ -13,7 +13,8 @@ from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
-from parqx.tui.widgets import ArrowTable, SourcePane
+from parqx.tui.sources.pane import SourcePane
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import wait_for
 
 

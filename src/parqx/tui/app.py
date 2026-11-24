@@ -25,12 +25,13 @@ from textual.worker import Worker, WorkerState
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
-from parqx.tui.screens.confirm_close import ConfirmClose
-from parqx.tui.widgets import ArrowTable, SourcePane
-from parqx.tui.widgets.query_workspace import QueryWorkspace
-from parqx.tui.widgets.sources_tree import SourcesTree
-from parqx.tui.widgets.table_view import TableView
+from parqx.query import QueryExecutionError, QueryResult, execute_query
+from parqx.tui.query.confirm_close import ConfirmClose
+from parqx.tui.query.workspace import QueryWorkspace
+from parqx.tui.sources.pane import SourcePane
+from parqx.tui.sources.tree import SourcesTree
+from parqx.tui.table.arrow_table import ArrowTable
+from parqx.tui.table.view import TableView
 
 logger = logging.getLogger(__name__)
 

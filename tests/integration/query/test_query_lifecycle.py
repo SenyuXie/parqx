@@ -19,7 +19,7 @@ from textual.worker import Worker, WorkerState
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
+from parqx.tui.table.arrow_table import ArrowTable
 from tests.helpers import (
     confirm_query_close,
     open_query,
@@ -200,7 +200,7 @@ async def test_failed_query_releases_partial_preview_before_next_run(
         query = await open_query(app, pilot)
         query.editor.load_text("SELECT * FROM range(128)")
         with (
-            patch("parqx.query.engine.read_preview", fail_read),
+            patch("parqx.query.read_preview", fail_read),
             patch.object(app, "notify") as notify,
         ):
             await press_run_button(query, pilot)

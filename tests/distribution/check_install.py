@@ -29,34 +29,41 @@ import pyarrow.parquet as pq
 from parqx.catalog import SourceCatalog
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import execute_query
+from parqx.query import execute_query
 
 EXPECTED_MODULES: tuple[str, ...] = (
     "parqx",
-    "parqx.cli",
     "parqx.catalog",
+    "parqx.cli",
     "parqx.config",
-    "parqx.logger",
     "parqx.data",
     "parqx.data.duckdb",
     "parqx.data.parquet",
     "parqx.data.view",
+    "parqx.logger",
     "parqx.query",
-    "parqx.query.engine",
     "parqx.tui.app",
     "parqx.tui.cell_formatter",
+    "parqx.tui.query",
+    "parqx.tui.query.confirm_close",
+    "parqx.tui.query.workspace",
+    "parqx.tui.sources",
+    "parqx.tui.sources.pane",
+    "parqx.tui.sources.read_schedule",
+    "parqx.tui.sources.tree",
+    "parqx.tui.table",
+    "parqx.tui.table.arrow_table",
+    "parqx.tui.table.column_layout",
+    "parqx.tui.table.view",
     "parqx.tui.values",
+    "parqx.tui.values.browser",
+    "parqx.tui.values.child_navigation",
+    "parqx.tui.values.children",
     "parqx.tui.values.document",
     "parqx.tui.values.node",
+    "parqx.tui.values.reader",
     "parqx.tui.values.scalar",
     "parqx.tui.values.selection",
-    "parqx.tui.widgets.scalar_reader",
-    "parqx.tui.widgets.value_children",
-    "parqx.tui.screens",
-    "parqx.tui.widgets.query_workspace",
-    "parqx.tui.widgets",
-    "parqx.tui.widgets.arrow_table",
-    "parqx.tui.widgets.source_pane",
 )
 
 

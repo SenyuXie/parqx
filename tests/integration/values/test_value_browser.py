@@ -11,10 +11,9 @@ from textual.widget import Widget
 from textual.widgets import Static, TabbedContent, TextArea
 
 from parqx.tui.app import Parqx
-from parqx.tui.widgets import ArrowTable
-from parqx.tui.widgets.arrow_table import CursorType
-from parqx.tui.widgets.scalar_reader import ScalarReader
-from parqx.tui.widgets.value_browser import ValueBrowser
+from parqx.tui.table.arrow_table import ArrowTable, CursorType
+from parqx.tui.values.browser import ValueBrowser
+from parqx.tui.values.reader import ScalarReader
 from tests.helpers import (
     confirm_query_close,
     open_query,
