@@ -107,7 +107,9 @@ class Parqx(App[Any]):
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts and removals."""
         self._query_number = 0
-        self._execution: tuple[Worker[list[QueryResult]], QueryWorkspace] | None = None
+        self._execution: (
+            tuple[Worker[list[QueryResult | str]], QueryWorkspace] | None
+        ) = None
         self._source_pool = ThreadPoolExecutor(
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
@@ -370,13 +372,22 @@ class Parqx(App[Any]):
         sources: tuple[SourceSpec, ...],
         sql: str,
         unavailable: tuple[SourceIssue, ...],
-    ) -> list[QueryResult]:
-        # Textual retains the last worker in executor-thread context. Consume this
-        # one-shot result on delivery so that context cannot retain Arrow buffers.
-        result = execute_query(
-            sources, sql, config=self.config, unavailable=unavailable
-        )
-        return [] if self._shutting_down else [result]
+    ) -> list[QueryResult | str]:
+        """Hand off a query result or its displayable error to the UI thread."""
+        try:
+            outcome: QueryResult | str = execute_query(
+                sources, sql, config=self.config, unavailable=unavailable
+            )
+        except QueryExecutionError as error:
+            # Textual retains the last worker on its executor thread. Returning the
+            # message releases the exception's frames and their partial Arrow batches.
+            outcome = str(error) or type(error).__name__
+            if error.issues:
+                outcome += "\nUnavailable sources:\n" + "\n".join(
+                    map(str, error.issues)
+                )
+        # The UI consumes the result so the worker also releases successful previews.
+        return [] if self._shutting_down else [outcome]
 
     @on(Worker.StateChanged)
     async def _on_query_state_changed(self, event: Worker.StateChanged) -> None:
@@ -389,24 +400,19 @@ class Parqx(App[Any]):
         if event.state not in {WorkerState.SUCCESS, WorkerState.ERROR}:
             return
         try:
-            results = worker.result
-            if self._shutting_down or not pane.is_attached:
-                if results is not None:
-                    results.clear()
-                return
-            if event.state == WorkerState.SUCCESS:
-                if results:
-                    result = results.pop()
-                    await pane.show_result(result)
+            if worker.result:
+                outcome = worker.result.pop()
+            elif (error := worker.error) is not None:
+                outcome = str(error) or type(error).__name__
             else:
-                error = worker.error
-                message = str(error) or type(error).__name__
-                if isinstance(error, QueryExecutionError) and error.issues:
-                    message += "\nUnavailable sources:\n" + "\n".join(
-                        map(str, error.issues)
-                    )
+                return
+            if self._shutting_down or not pane.is_attached:
+                return
+            if isinstance(outcome, QueryResult):
+                await pane.show_result(outcome)
+            else:
                 self.notify(
-                    message,
+                    outcome,
                     title="SQL error",
                     severity="error",
                     timeout=4,
