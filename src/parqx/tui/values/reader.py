@@ -37,10 +37,18 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
     class Updated(Message):
         """The current document's index or metadata has advanced."""
 
-        def __init__(self, document: ScalarDocument, *, restoring: bool) -> None:
-            """Identify the document so replacements can reject stale updates."""
+        def __init__(
+            self, document: ScalarDocument, *, restored_scroll: float | None
+        ) -> None:
+            """Describe the indexed document at the time of this update.
+
+            Args:
+                document: Document whose index or metadata advanced.
+                restored_scroll: Scroll offset applied for a pending reading
+                    position, or None when indexing left the viewport alone.
+            """
             self.document = document
-            self.restoring = restoring
+            self.restored_scroll = restored_scroll
             super().__init__()
 
     def __init__(self, *, classes: str) -> None:
@@ -129,7 +137,9 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
             if document.complete or self.max_scroll_y >= target:
                 self._restore_y = None
         self.refresh()
-        self.post_message(self.Updated(document, restoring=restoring))
+        self.post_message(
+            self.Updated(document, restored_scroll=self.scroll_y if restoring else None)
+        )
 
     def action_move(self, delta: int) -> None:
         """Scroll read-only content without moving an editing cursor."""

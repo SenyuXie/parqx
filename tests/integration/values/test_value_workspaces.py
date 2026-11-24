@@ -626,6 +626,8 @@ async def test_tab_switch_restores_container_scroll_independently_of_selection(
         ("string", "unchanged"),
         ("list", "unchanged"),
         ("string", "scroll"),
+        ("string", "scroll-during-restore"),
+        ("list", "maximize-again"),
         ("list", "new-root"),
     ],
 )
@@ -654,11 +656,23 @@ async def test_restore_retains_clamped_position_unless_user_changes_inspection(
         assert app.screen.maximized is view
         assert body.scroll_y < position
         expected = position
-        if interaction == "scroll":
-            body.scroll_to(y=body.scroll_y - 10, animate=False, force=True)
+        if interaction in {"scroll", "scroll-during-restore"}:
+            if interaction == "scroll-during-restore":
+                # The reader posts its restored position before the next input.
+                reader = browser.reader
+                reader.restore_position(reader.capture_position())
+            body.scroll_to(
+                y=body.scroll_y - 10, animate=False, force=True, immediate=True
+            )
             await pilot.pause()
             expected = body.scroll_y
             assert expected < body.max_scroll_y
+        elif interaction == "maximize-again":
+            # Maximize again before the pending restoration can reach the reader.
+            app.screen.action_minimize()
+            app.screen.action_maximize()
+            await pilot.pause()
+            assert app.screen.maximized is view
         elif interaction == "new-root":
             await pilot.press("escape")
             assert app.screen.maximized is view
