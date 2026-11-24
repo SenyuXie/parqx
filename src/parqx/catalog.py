@@ -74,11 +74,13 @@ class SourceEntry:
 
 
 class SourceCatalog:
-    """Keep ordered, lightweight sources; update only on the UI thread."""
+    """Track source availability and metadata reads on the UI thread."""
 
     def __init__(self, paths: Sequence[Path]) -> None:
         """Assign stable names before any asynchronous file loading starts."""
         self._entries: dict[str, SourceEntry] = {}
+        self._metadata_reads: set[str] = set()
+        self._has_opened_source = False
         seen_paths: set[Path] = set()
         seen_files: set[tuple[int, int]] = set()
         used_names: set[str] = set()
@@ -121,11 +123,46 @@ class SourceCatalog:
         """Look up a source, raising KeyError for an unknown identity."""
         return self._entries[source_id]
 
+    @property
+    def startup_failed(self) -> bool:
+        """Whether all initial sources failed before any source became ready."""
+        return not self._has_opened_source and all(
+            entry.state == "failed" for entry in self._entries.values()
+        )
+
+    def request_metadata(self, source_id: str) -> SourceSpec | SourceIssue | None:
+        """Request metadata for a new source tab.
+
+        Args:
+            source_id: The source to open or reopen.
+
+        Returns:
+            The source to read, its stored failure, or None when a read is
+            already in progress. A ready source stays queryable during a read.
+        """
+        entry = self.get(source_id)
+        if entry.issue is not None:
+            return entry.issue
+        if source_id in self._metadata_reads:
+            return None
+        self._metadata_reads.add(source_id)
+        return entry.spec
+
+    def cancel_metadata_read(self, source_id: str) -> None:
+        """Release a cancelled read without changing the source's availability."""
+        self._metadata_reads.discard(source_id)
+
+    def cancel_all_metadata_reads(self) -> None:
+        """Release all queued and running reads when the session shuts down."""
+        self._metadata_reads.clear()
+
     def mark_ready(self, source_id: str, schema: pa.Schema | None = None) -> None:
         """Make a loaded source queryable and retain its lightweight schema."""
         self._entries[source_id] = replace(
             self.get(source_id), state="ready", issue=None, schema=schema
         )
+        self._metadata_reads.discard(source_id)
+        self._has_opened_source = True
 
     def mark_failed(self, source_id: str, message: str) -> None:
         """Record a loading failure without changing the source's identity."""
@@ -133,6 +170,7 @@ class SourceCatalog:
         self._entries[source_id] = replace(
             entry, state="failed", issue=SourceIssue(entry.spec, message), schema=None
         )
+        self._metadata_reads.discard(source_id)
 
     def snapshot(self) -> tuple[SourceSpec, ...]:
         """Freeze the sources available to one query in input order."""

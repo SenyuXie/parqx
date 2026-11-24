@@ -111,8 +111,6 @@ class Parqx(App[Any]):
         self._source_pool = ThreadPoolExecutor(
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
-        self._loading_sources: set[str] = set()
-        self._startup_succeeded = False
         self._shutting_down = False
 
     @property
@@ -143,9 +141,7 @@ class Parqx(App[Any]):
             self._tabs.active = self.catalog.entries[0].spec.source_id
             self._refresh_tab_state()
         for entry in self.catalog.entries:
-            source_id = entry.spec.source_id
-            if entry.issue is None:
-                self._start_source_load(source_id)
+            self._request_source_metadata(entry.spec.source_id)
         self._exit_if_all_failed()
 
     async def _add_source_pane(self, source_id: str) -> SourcePane:
@@ -159,9 +155,6 @@ class Parqx(App[Any]):
         )
         await self._tabs.add_pane(pane)
         self._tabs.get_tab(source_id).tooltip = Content(str(source.path))
-        # A pending read can fail while the new pane is mounting.
-        if (issue := self.catalog.get(source_id).issue) is not None:
-            pane.show_error(issue)
         return pane
 
     @on(Tree.NodeSelected, "#sources")
@@ -173,8 +166,7 @@ class Parqx(App[Any]):
         async with self._tab_lock:
             if self._source_pane(source_id) is None:
                 await self._add_source_pane(source_id)
-                if self.catalog.get(source_id).state == "ready":
-                    self._start_source_load(source_id)
+                self._request_source_metadata(source_id)
             self._tabs.active = source_id
             self._refresh_tab_state()
 
@@ -262,40 +254,46 @@ class Parqx(App[Any]):
     def _on_tab_activated(self) -> None:
         self._refresh_tab_state()
 
-    def _start_source_load(self, source_id: str) -> None:
-        if self._shutting_down or source_id in self._loading_sources:
+    def _request_source_metadata(self, source_id: str) -> None:
+        """Start the requested read or show a stored failure in the source tab."""
+        if self._shutting_down:
             return
-        # A view can close and reopen while its app-owned metadata read runs.
-        self._loading_sources.add(source_id)
-        _worker: Worker[None] = self.run_worker(
-            partial(self._load_table, source_id),
-            description="Load source metadata",
-            group=f"load:{source_id}",
-        )
+        request = self.catalog.request_metadata(source_id)
+        if isinstance(request, SourceIssue):
+            pane = self._source_pane(source_id)
+            if pane is not None:
+                pane.show_error(request)
+        elif request is not None:
+            _worker: Worker[None] = self.run_worker(
+                partial(self._load_source_metadata, request),
+                description="Load source metadata",
+                group=f"load:{source_id}",
+            )
 
-    async def _load_table(self, source_id: str) -> None:
-        path = self.catalog.get(source_id).spec.path
+    async def _load_source_metadata(self, spec: SourceSpec) -> None:
+        """Read metadata off the UI thread for the session's catalog."""
         try:
             if self._shutting_down:
                 return
             try:
                 source = await asyncio.get_running_loop().run_in_executor(
-                    self._source_pool, _open_source, path, self.config
+                    self._source_pool, _open_source, spec.path, self.config
                 )
             except Exception as exc:
-                logger.exception("Failed to read parquet file: %s", path)
-                self._on_load_error(source_id, str(exc) or type(exc).__name__)
-                return
-            await self._on_load_ok(source_id, source)
-        finally:
-            self._loading_sources.discard(source_id)
+                logger.exception("Failed to read parquet file: %s", spec.path)
+                self._on_load_error(spec.source_id, str(exc) or type(exc).__name__)
+            else:
+                await self._on_load_ok(spec.source_id, source)
+        except asyncio.CancelledError:
+            if not self._shutting_down:
+                self.catalog.cancel_metadata_read(spec.source_id)
+            raise
 
     async def _on_load_ok(self, source_id: str, source: ParquetSource) -> None:
         async with self._tab_lock:
             if self._shutting_down:
                 return
             self.catalog.mark_ready(source_id, source.schema)
-            self._startup_succeeded = True
             self._sources.update_source(self.catalog.get(source_id))
             pane = self._source_pane(source_id)
             if pane is None:
@@ -318,14 +316,13 @@ class Parqx(App[Any]):
         self._exit_if_all_failed()
 
     def _exit_if_all_failed(self) -> None:
-        if not self._startup_succeeded and all(
-            entry.state == "failed" for entry in self.catalog.entries
-        ):
+        if self.catalog.startup_failed:
             self.exit(return_code=1)
 
     def on_unmount(self) -> None:
         """Stop source work and prevent all late UI updates during shutdown."""
         self._shutting_down = True
+        self.catalog.cancel_all_metadata_reads()
         if self._execution is not None:
             results = self._execution[0].result
             if results is not None:
