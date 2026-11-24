@@ -626,6 +626,12 @@ async def test_tab_switch_restores_container_scroll_independently_of_selection(
         ("string", "unchanged"),
         ("list", "unchanged"),
         ("string", "scroll"),
+        ("string", "scroll-during-restore"),
+        ("list", "maximize-again"),
+        ("list", "hide-during-restore"),
+        ("list", "navigate-during-minimize"),
+        ("string", "navigate-during-minimize"),
+        ("string", "page-then-reflow"),
         ("list", "new-root"),
     ],
 )
@@ -654,11 +660,28 @@ async def test_restore_retains_clamped_position_unless_user_changes_inspection(
         assert app.screen.maximized is view
         assert body.scroll_y < position
         expected = position
-        if interaction == "scroll":
-            body.scroll_to(y=body.scroll_y - 10, animate=False, force=True)
+        if interaction in {"scroll", "scroll-during-restore"}:
+            if interaction == "scroll-during-restore":
+                # The reader's update is still queued when the user scrolls.
+                reader = browser.reader
+                reader.restore_position(reader.capture_position())
+            body.scroll_to(
+                y=body.scroll_y - 10, animate=False, force=True, immediate=True
+            )
             await pilot.pause()
             expected = body.scroll_y
             assert expected < body.max_scroll_y
+        elif interaction == "page-then-reflow":
+            await pilot.press("pageup")
+            expected = body.scroll_y
+            await pilot.resize_terminal(125, 40)
+            assert body.scroll_y == expected
+        elif interaction == "maximize-again":
+            # Maximize again before the pending restoration can reach the reader.
+            app.screen.action_minimize()
+            app.screen.action_maximize()
+            await pilot.pause()
+            assert app.screen.maximized is view
         elif interaction == "new-root":
             await pilot.press("escape")
             assert app.screen.maximized is view
@@ -666,6 +689,15 @@ async def test_restore_retains_clamped_position_unless_user_changes_inspection(
             await pilot.press("enter", "tab")
             expected = 0
         app.screen.action_minimize()
+        if interaction == "navigate-during-minimize":
+            before_move = body.scroll_y
+            body.action_move(1 if kind == "list" else -1)
+            expected = body.scroll_y
+            assert expected != before_move
+        elif interaction == "hide-during-restore":
+            view.action_toggle_browser()
+            await pilot.pause()
+            await pilot.press("v", "tab")
         await pilot.pause()
         assert app.screen.maximized is None
         assert body.has_focus

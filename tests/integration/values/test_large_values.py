@@ -7,6 +7,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from textual.events import MouseScrollUp
 from textual.message import Message
 
 from parqx.tui.app import Parqx
@@ -14,8 +15,9 @@ from parqx.tui.values import document
 from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values.reader import ScalarReader
 from parqx.tui.values.selection import BrowseRoot
-from tests.helpers import wait_for, wait_for_source_table
+from tests.helpers import run_query, wait_for, wait_for_source_table
 
 
 def pause_indexing(
@@ -393,6 +395,68 @@ async def test_delayed_formatting_cannot_overwrite_navigation(
                 assert not browser.is_attached
         finally:
             release.set()
+
+
+@pytest.mark.parametrize(
+    ("kind", "wheel"),
+    [("fields", False), ("fields", True), ("text", True)],
+    ids=["restore-fields", "scroll-fields", "scroll-text"],
+)
+async def test_maximize_respects_reading_position_while_reflow_is_indexed(
+    small_parquet: Path, monkeypatch: pytest.MonkeyPatch, kind: str, wheel: bool
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test(size=(140, 40)) as pilot:
+        table = await run_query(app, pilot, "SELECT 1")
+        assert table.parent is not None
+        app.action_toggle_sources()
+        browser = table.parent.query_one(ValueBrowser)
+        body: ValueChildren | ScalarReader
+        document_type: type[ContainerDocument | ScalarDocument]
+        if kind == "fields":
+            value = pa.scalar({f"f{i}": i for i in range(1000)})
+            body = browser.options
+            document_type = ContainerDocument
+        else:
+            value = pa.scalar("line\n" * 1000)
+            body = browser.reader
+            document_type = ScalarDocument
+        browser.select(BrowseRoot(table.generation, 0, 0, kind, value))
+        body.focus()
+        await pilot.pause()
+        await wait_for(
+            lambda: body.document is not None and body.document.complete, pilot
+        )
+        body.scroll_to(y=body.max_scroll_y - 2, animate=False, immediate=True)
+        await pilot.pause()
+        original = body.scroll_y
+        assert original > 0
+        expected = original
+        started, release = pause_indexing(monkeypatch, document_type)
+        try:
+            app.screen.action_maximize()
+            await wait_for(started.is_set, pilot)
+            partial = body.scroll_y
+            assert 0 < partial < original
+            if wheel:
+                body.post_message(
+                    MouseScrollUp(body, 3, 3, 0, -1, 0, False, False, False)
+                )
+                await pilot.pause()
+                expected = body.scroll_y
+                assert expected < partial
+        finally:
+            release.set()
+        await wait_for(
+            lambda: body.document is not None and body.document.complete, pilot
+        )
+        if wheel:
+            assert body.scroll_y == expected
+        else:
+            assert partial < body.scroll_y < original
+        app.screen.action_minimize()
+        await wait_for(lambda: body.scroll_y == expected, pilot)
+        assert body.has_focus
 
 
 async def test_long_wrapped_text_restores_after_native_maximize(

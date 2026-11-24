@@ -112,10 +112,8 @@ class TableView(Horizontal):
     def _maximized_changed(
         self, previous: Widget | None, current: Widget | None
     ) -> None:
-        if current is self:
-            self.browser.begin_maximize()
-        elif previous is self:
-            self.browser.restore_after_maximize()
+        if current is self or previous is self:
+            self.browser.viewport.set_maximized(current is self)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Apply reader keys only within this table's own focus region."""

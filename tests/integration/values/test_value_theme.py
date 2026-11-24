@@ -10,6 +10,7 @@ from textual.widgets import Button
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.selection import BrowseRoot
+from tests.helpers import wait_for
 
 
 def _luminance(color: RichColor) -> float:
@@ -78,7 +79,17 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
         options = browser.options
         appearances: list[tuple[RichColor | None, ...]] = []
         for theme in ("textual-light", "textual-dark", "dracula"):
-            await pilot.pause()
+            # The first document may have been built before the sidebar had a width.
+            await wait_for(
+                lambda: (
+                    options.document is not None
+                    and options.document.complete
+                    and options.show_vertical_scrollbar
+                    and options.document.width
+                    == options.scrollable_content_region.width
+                ),
+                pilot,
+            )
             document = options.document
             assert document is not None
             assert document.complete
@@ -191,7 +202,7 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                     options.action_move(1)
             await pilot.press("home", "enter")
             assert browser.reader.text == "Ada\n" * 60
-            assert browser.reader.show_vertical_scrollbar
+            await wait_for(lambda: browser.reader.show_vertical_scrollbar, pilot)
             scalar_style = next(iter(browser.reader.render_line(0))).style
             assert scalar_style is not None
             assert scalar_style.bgcolor == browser.rich_style.bgcolor

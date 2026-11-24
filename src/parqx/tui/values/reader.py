@@ -37,10 +37,9 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
     class Updated(Message):
         """The current document's index or metadata has advanced."""
 
-        def __init__(self, document: ScalarDocument, *, restoring: bool) -> None:
+        def __init__(self, document: ScalarDocument) -> None:
             """Identify the document so replacements can reject stale updates."""
             self.document = document
-            self.restoring = restoring
             super().__init__()
 
     def __init__(self, *, classes: str) -> None:
@@ -73,8 +72,8 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         self._cancel_index()
         self.document = ScalarDocument(value, width=width)
         self.document.advance()
-        self._restore_y, self._anchor, self._to_end = None, None, False
-        self.scroll_to(x=0, y=0, animate=False, force=True, immediate=True)
+        self._cancel_pending_navigation()
+        self._place_position(0, x=0)
         self._update_size()
         self._start_indexing()
 
@@ -86,6 +85,9 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         position = self.capture_position()
         self.show(document.value, width=width)
         self.restore_position(position)
+
+    def _cancel_pending_navigation(self) -> None:
+        self._anchor, self._restore_y, self._to_end = None, None, False
 
     def capture_position(self) -> ReadingPosition:
         """Save the intended source position instead of a temporarily clamped row."""
@@ -110,7 +112,6 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         document = self.document
         if document is None:
             return
-        restoring = self._anchor is not None or self._restore_y is not None
         self.virtual_size = Size(document.width, document.line_count)
         target = self._restore_y
         if self._anchor is not None:
@@ -125,16 +126,17 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
             if document.complete:
                 self._to_end = False
         if target is not None:
-            self.scroll_to(y=target, animate=False, force=True, immediate=True)
+            self._place_position(target)
             if document.complete or self.max_scroll_y >= target:
                 self._restore_y = None
         self.refresh()
-        self.post_message(self.Updated(document, restoring=restoring))
+        self.post_message(self.Updated(document))
 
     def action_move(self, delta: int) -> None:
         """Scroll read-only content without moving an editing cursor."""
-        self._anchor, self._restore_y, self._to_end = None, None, False
-        self.scroll_to(y=self.scroll_y + delta, animate=False, immediate=True)
+        self.navigation_revision += 1
+        self._cancel_pending_navigation()
+        self._place_position(self.scroll_y + delta)
 
     def action_page(self, direction: int) -> None:
         """Move by one visible page."""
@@ -146,6 +148,7 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
 
     def action_last(self) -> None:
         """Follow the final line as incremental indexing completes."""
+        self.navigation_revision += 1
         self._anchor, self._restore_y, self._to_end = None, None, True
         self._update_size()
 
