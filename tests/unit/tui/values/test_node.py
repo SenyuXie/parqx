@@ -5,7 +5,7 @@ import pytest
 
 from parqx.config import ParqxConfig
 from parqx.query import execute_query
-from parqx.tui.values.node import RowValue, ValueNode
+from parqx.tui.values.node import ValueNode
 
 
 @pytest.mark.parametrize(
@@ -26,17 +26,15 @@ def test_list_families_preserve_indices_and_nulls(data_type: pa.DataType) -> Non
         node.child(2)
 
 
-def test_duplicate_struct_and_row_names_use_positions() -> None:
+def test_duplicate_struct_names_use_positions() -> None:
     scalar = pa.array(
         [("first", 7)], type=pa.struct([("x", pa.string()), ("x", pa.int64())])
     )[0]
-    row = RowValue((("x", pa.scalar("first")), ("x", pa.scalar(7))))
-    for value in (scalar, row):
-        node = ValueNode(value)
-        assert node.child_count == 2
-        assert node.child(0)[0] == node.child(1)[0] == "x"
-        assert node.child(0)[1].scalar.as_py() == "first"
-        assert node.child(1)[1].scalar.as_py() == 7
+    node = ValueNode(scalar)
+    assert node.child_count == 2
+    assert node.child(0)[0] == node.child(1)[0] == "x"
+    assert node.child(0)[1].scalar.as_py() == "first"
+    assert node.child(1)[1].scalar.as_py() == 7
 
 
 def test_map_entries_preserve_duplicate_nested_keys_and_values() -> None:

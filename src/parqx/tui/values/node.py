@@ -1,10 +1,9 @@
-"""Positional access to available Arrow values and synthetic row values."""
+"""Positional access to Arrow values and their direct children."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 import pyarrow as pa
 from rich.cells import cell_len
@@ -35,19 +34,12 @@ def _quoted(value: str, width: int, *, shortened: bool = False) -> str:
         shortened = True
 
 
-@dataclass(frozen=True)
-class RowValue:
-    """Retain a selected row's ordered fields without changing its schema."""
-
-    fields: tuple[tuple[str, pa.Scalar], ...]
-
-
 class ValueNode:
     """Expose direct children and type information without dictionary conversion."""
 
-    def __init__(self, value: pa.Scalar | RowValue, *, map_entry: bool = False) -> None:
+    def __init__(self, value: pa.Scalar, *, map_entry: bool = False) -> None:
         """Wrap one available value, preserving its original Arrow type."""
-        self.value = value
+        self.scalar = value
         self._entry = map_entry
         actual = value
         while (
@@ -60,9 +52,7 @@ class ValueNode:
             actual = member
         self._actual = actual
         self.kind: Literal["struct", "list", "map"] | None = None
-        if isinstance(actual, RowValue):
-            self.kind = "struct"
-        elif actual.is_valid:
+        if actual.is_valid:
             if isinstance(actual, pa.StructScalar):
                 self.kind = "struct"
             elif isinstance(actual, pa.MapScalar):
@@ -71,13 +61,6 @@ class ValueNode:
                 actual, (pa.ListScalar, pa.LargeListScalar, pa.FixedSizeListScalar)
             ):
                 self.kind = "list"
-
-    @property
-    def scalar(self) -> pa.Scalar:
-        """Original Arrow scalar for dispatch through the shared leaf reader."""
-        if isinstance(self.value, RowValue):
-            raise TypeError("A row is an ordered collection of Arrow scalars")
-        return self.value
 
     @property
     def is_container(self) -> bool:
@@ -93,8 +76,6 @@ class ValueNode:
     def child_count(self) -> int:
         """Number of direct children; nulls are terminal values."""
         actual = self._actual
-        if isinstance(actual, RowValue):
-            return len(actual.fields)
         if actual.is_valid and isinstance(
             actual,
             (
@@ -111,9 +92,7 @@ class ValueNode:
     @property
     def type_description(self) -> str:
         """Original type description, available even when a compact label is used."""
-        return (
-            "row · struct" if isinstance(self.value, RowValue) else str(self.value.type)
-        )
+        return str(self.scalar.type)
 
     @property
     def metadata(self) -> str:
@@ -131,9 +110,7 @@ class ValueNode:
             ):
                 metadata += f" · {len(value.as_buffer()):,} bytes"
             return metadata
-        if isinstance(self.value, RowValue):
-            name = "row · struct"
-        elif self._entry:
+        if self._entry:
             name = "entry · struct"
         else:
             name = self.kind or "struct"
@@ -141,10 +118,10 @@ class ValueNode:
                 name = "large_list"
             elif isinstance(self._actual, pa.FixedSizeListScalar):
                 name = "fixed_size_list"
-            if isinstance(self.value, (pa.DictionaryScalar, pa.UnionScalar)):
+            if isinstance(self.scalar, (pa.DictionaryScalar, pa.UnionScalar)):
                 name = (
                     "dictionary"
-                    if isinstance(self.value, pa.DictionaryScalar)
+                    if isinstance(self.scalar, pa.DictionaryScalar)
                     else "union"
                 ) + f" → {self.kind}"
         unit = {"struct": "fields", "list": "items", "map": "entries"}[
@@ -157,8 +134,6 @@ class ValueNode:
         actual = self._actual
         if not 0 <= index < self.child_count:
             raise IndexError(index)
-        if isinstance(actual, RowValue):
-            return actual.fields[index][0]
         if isinstance(actual, pa.StructScalar):
             return (
                 ("key", "value")[index]
@@ -185,9 +160,6 @@ class ValueNode:
         if not 0 <= index < self.child_count:
             raise IndexError(index)
         actual = self._actual
-        if isinstance(actual, RowValue):
-            name, value = actual.fields[index]
-            return name, ValueNode(value)
         if isinstance(actual, pa.StructScalar):
             name = (
                 ("key", "value")[index]
@@ -248,7 +220,7 @@ class ValueNode:
                 result.append((", " if shown else "") + "…", styles["muted"])
             result.append(" " + right, styles["muted"])
             return result
-        value = cast(pa.Scalar, self._actual)
+        value = self._actual
         if isinstance(value, pa.JsonScalar) and value.value is not None:
             value = value.value
         if not value.is_valid:

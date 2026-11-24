@@ -129,22 +129,6 @@ class CellNotLoadedError(CellNotExistError):
     """The coordinate exists but its data window has not arrived yet."""
 
 
-class RowNotExistError(Exception):
-    """The row index was invalid.
-
-    Raised when the row index provided does not exist
-    in the ArrowTable (e.g. out of bounds index)
-    """
-
-
-class ColumnNotExistError(Exception):
-    """The column index was invalid.
-
-    Raised when the column index provided does not exist
-    in the ArrowTable (e.g. out of bounds index)
-    """
-
-
 class ArrowTable(ScrollView, can_focus=True):
     """Arrow-backed data table widget."""
 
@@ -327,44 +311,6 @@ class ArrowTable(ScrollView, can_focus=True):
     )
     """The coordinate of the `ArrowTable` that is being hovered."""
 
-    class CellHighlighted(Message):
-        """Posted when the cursor moves to highlight a new cell.
-
-        This is only relevant when the `cursor_type` is `"cell"`.
-        It's also posted when the cell cursor is
-        re-enabled (by setting `show_cursor=True`), and when the cursor type is
-        changed to `"cell"`. Can be handled using `on_arrow_table_cell_highlighted` in
-        a subclass of `ArrowTable` or in a parent widget in the DOM.
-        """
-
-        def __init__(
-            self, arrow_table: ArrowTable, value: pa.Scalar, coordinate: Coordinate
-        ) -> None:
-            """Initialize a cell highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                value: The value in the highlighted cell.
-                coordinate: The coordinate of the highlighted cell.
-            """
-            self.arrow_table = arrow_table
-            """The arrow table."""
-            self.value = value
-            """The value in the highlighted cell."""
-            self.coordinate: Coordinate = coordinate
-            """The coordinate of the highlighted cell."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "value", self.value
-            yield "coordinate", self.coordinate
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
     class CellSelected(Message):
         """Posted by the `ArrowTable` widget when a cell is selected.
 
@@ -406,37 +352,6 @@ class ArrowTable(ScrollView, can_focus=True):
             """Alias for the data table."""
             return self.arrow_table
 
-    class RowHighlighted(Message):
-        """Posted when a row is highlighted.
-
-        This message is only posted when the
-        `cursor_type` is set to `"row"`. Can be handled using
-        `on_arrow_table_row_highlighted` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
-
-        def __init__(self, arrow_table: ArrowTable, cursor_row: int) -> None:
-            """Initialize a row highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_row: The row index highlighted by the cursor.
-            """
-            self.arrow_table = arrow_table
-            """The data table."""
-            self.cursor_row: int = cursor_row
-            """The y-coordinate of the cursor that highlighted the row."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "cursor_row", self.cursor_row
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
     class RowSelected(Message):
         """Posted when a row is selected.
 
@@ -464,124 +379,6 @@ class ArrowTable(ScrollView, can_focus=True):
         def __rich_repr__(self) -> rich.repr.Result:
             """Yield fields for Rich's object representation."""
             yield "cursor_row", self.cursor_row
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
-    class ColumnHighlighted(Message):
-        """Posted when a column is highlighted.
-
-        This message is only posted when the
-        `cursor_type` is set to `"column"`. Can be handled using
-        `on_arrow_table_column_highlighted` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
-
-        def __init__(self, arrow_table: ArrowTable, cursor_column: int) -> None:
-            """Initialize a column highlighted message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_column: The column index highlighted by the cursor.
-            """
-            self.arrow_table = arrow_table
-            """The data table."""
-            self.cursor_column: int = cursor_column
-            """The x-coordinate of the column that was highlighted."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "cursor_column", self.cursor_column
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
-    class ColumnSelected(Message):
-        """Posted when a column is selected.
-
-        This message is only posted when the
-        `cursor_type` is set to `"column"`. Can be handled using
-        `on_arrow_table_column_selected` in a subclass of `ArrowTable` or in a parent
-        widget in the DOM.
-        """
-
-        def __init__(self, arrow_table: ArrowTable, cursor_column: int) -> None:
-            """Initialize a column selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                cursor_column: The selected column index.
-            """
-            self.arrow_table = arrow_table
-            """The data table."""
-            self.cursor_column: int = cursor_column
-            """The x-coordinate of the column that was selected."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "cursor_column", self.cursor_column
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
-    class HeaderSelected(Message):
-        """Posted when a column header/label is clicked."""
-
-        def __init__(
-            self, arrow_table: ArrowTable, column_index: int, label: Text
-        ) -> None:
-            """Initialize a header selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                column_index: The index of the selected column header.
-                label: The rendered column header label.
-            """
-            self.arrow_table = arrow_table
-            """The data table."""
-            self.column_index = column_index
-            """The index for the column."""
-            self.label = label
-            """The text of the label."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "column_index", self.column_index
-            yield "label", self.label.plain
-
-        @property
-        def control(self) -> ArrowTable:
-            """Alias for the data table."""
-            return self.arrow_table
-
-    class RowIndexSelected(Message):
-        """Posted when a row index cell is clicked."""
-
-        def __init__(self, arrow_table: ArrowTable, row_index: int) -> None:
-            """Initialize a row-index selected message.
-
-            Args:
-                arrow_table: The table that posted the message.
-                row_index: The selected row index.
-            """
-            self.arrow_table = arrow_table
-            """The data table."""
-            self.row_index = row_index
-            """The index for the row."""
-            super().__init__()
-
-        def __rich_repr__(self) -> rich.repr.Result:
-            """Yield fields for Rich's object representation."""
-            yield "row_index", self.row_index
 
         @property
         def control(self) -> ArrowTable:
@@ -916,15 +713,8 @@ class ArrowTable(ScrollView, can_focus=True):
         """Handle cursor visibility changes."""
         self._clear_render_caches()
         if show_cursor and self.cursor_type != "none":
-            # When we re-enable the cursor, apply highlighting and
-            # post the appropriate [Row|Column|Cell]Highlighted event.
             self._scroll_cursor_into_view(animate=False)
-            if self.cursor_type == "cell":
-                self._highlight_coordinate(self.cursor_coordinate)
-            elif self.cursor_type == "row":
-                self._highlight_row(self.cursor_row)
-            elif self.cursor_type == "column":
-                self._highlight_column(self.cursor_column)
+            self._highlight_cursor()
 
     def watch_show_header(self, show: bool) -> None:
         """Update table dimensions and rendering when header visibility changes."""
@@ -968,27 +758,17 @@ class ArrowTable(ScrollView, can_focus=True):
         """Refresh cursor highlighting when the cursor coordinate changes."""
         if old_coordinate != new_coordinate:
             self._retry_window()
-            # Refresh the old and the new cell, and post the appropriate
-            # message to tell users of the newly highlighted row/cell/column.
             if self.cursor_type == "cell":
                 self.refresh_coordinate(old_coordinate)
-                self._highlight_coordinate(new_coordinate)
+                self.refresh_coordinate(new_coordinate)
             elif self.cursor_type == "row":
-                # Row highlighting only depends on the row index. Horizontal cursor
-                # movement within the same row doesn't change any rendered highlight,
-                # so refreshing and reposting the highlighted row would only create
-                # unnecessary repaint work.
                 if old_coordinate.row != new_coordinate.row:
                     self.refresh_row(old_coordinate.row)
-                    self._highlight_row(new_coordinate.row)
+                    self.refresh_row(new_coordinate.row)
             elif self.cursor_type == "column":
-                # Column highlighting only depends on the column index. Vertical cursor
-                # movement within the same column doesn't change the visible highlight;
-                # skipping it avoids an expensive full-column refresh path on large
-                # tables.
                 if old_coordinate.column != new_coordinate.column:
                     self.refresh_column(old_coordinate.column)
-                    self._highlight_column(new_coordinate.column)
+                    self.refresh_column(new_coordinate.column)
 
             if self._require_update_dimensions:
                 self.call_after_refresh(self._scroll_cursor_into_view)
@@ -1041,32 +821,6 @@ class ArrowTable(ScrollView, can_focus=True):
 
         self.cursor_coordinate = destination
 
-    def _highlight_coordinate(self, coordinate: Coordinate) -> None:
-        """Apply highlighting to the cell at the coordinate, and post event."""
-        self.refresh_coordinate(coordinate)
-        try:
-            cell_value = self.get_cell_at(coordinate)
-        except CellNotExistError:
-            # The cell may not exist e.g. when the table is cleared.
-            # In that case, there's nothing for us to do here.
-            return
-        else:
-            self.post_message(
-                ArrowTable.CellHighlighted(self, cell_value, coordinate=coordinate)
-            )
-
-    def _highlight_row(self, row_index: int) -> None:
-        """Apply highlighting to the row at the given index, and post event."""
-        self.refresh_row(row_index)
-        if self.is_valid_row_index(row_index):
-            self.post_message(ArrowTable.RowHighlighted(self, row_index))
-
-    def _highlight_column(self, column_index: int) -> None:
-        """Apply highlighting to the column at the given index, and post event."""
-        self.refresh_column(column_index)
-        if self.is_valid_column_index(column_index):
-            self.post_message(ArrowTable.ColumnHighlighted(self, column_index))
-
     def validate_cursor_coordinate(self, value: Coordinate) -> Coordinate:
         """Clamp cursor coordinates to the current table bounds."""
         return self._clamp_cursor_coordinate(value)
@@ -1074,7 +828,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def _clamp_cursor_coordinate(self, coordinate: Coordinate) -> Coordinate:
         """Clamp a coordinate such that it falls within the boundaries of the table."""
         # Empty table: no valid cell exists. Return Coordinate(0, 0) as a sentinel —
-        # downstream paths (get_cell_at / _highlight_coordinate / _post_selected_message)
+        # downstream paths (get_cell_at / _post_selected_message)
         # already guard with is_valid_coordinate / row_count == 0, so an out-of-bounds
         # cursor here is harmless. Avoids clamp(value, 0, -1) which has no contract.
         if self.row_count == 0 or self.column_count == 0:
@@ -1105,16 +859,16 @@ class ArrowTable(ScrollView, can_focus=True):
         self._scroll_cursor_into_view()
 
     def _highlight_cursor(self) -> None:
-        """Apply highlighting and post the message for the active cursor target."""
+        """Refresh the active cursor target."""
         row_index, column_index = self.cursor_coordinate
         cursor_type = self.cursor_type
         # Apply the highlighting to the newly relevant cells
         if cursor_type == "cell":
-            self._highlight_coordinate(self.cursor_coordinate)
+            self.refresh_coordinate(self.cursor_coordinate)
         elif cursor_type == "row":
-            self._highlight_row(row_index)
+            self.refresh_row(row_index)
         elif cursor_type == "column":
-            self._highlight_column(column_index)
+            self.refresh_column(column_index)
 
     def _update_dimensions(self) -> None:
         """Called to recalculate the virtual (scrollable) size."""
@@ -1793,15 +1547,9 @@ class ArrowTable(ScrollView, can_focus=True):
         column_index = meta["column"]
         is_header_click = self.show_header and row_index == -1
         is_row_index_click = self.show_row_index and column_index == -1
-        if is_header_click:
-            # Header clicks work even if cursor is off, and doesn't move the cursor.
-            column = self.columns[column_index]
-            self.post_message(
-                ArrowTable.HeaderSelected(self, column_index, label=Text(column.name))
-            )
-        elif is_row_index_click:
-            self.post_message(ArrowTable.RowIndexSelected(self, row_index))
-        elif self.show_cursor and self.cursor_type != "none":
+        if is_header_click or is_row_index_click:
+            return
+        if self.show_cursor and self.cursor_type != "none":
             # Mouse input positions the cursor; only Enter confirms a selection.
             new_coordinate = Coordinate(row_index, column_index)
             self.cursor_coordinate = new_coordinate
@@ -1929,9 +1677,9 @@ class ArrowTable(ScrollView, can_focus=True):
             super().action_scroll_left()
 
     def action_select_cursor(self) -> None:
-        """Select the row, column, or cell currently under the cursor."""
+        """Confirm the cell or row currently under the cursor."""
         self._set_hover_cursor(False)
-        if self.show_cursor and self.cursor_type != "none":
+        if self.show_cursor and self.cursor_type in {"cell", "row"}:
             self._post_selected_message()
 
     def _post_selected_message(self) -> None:
@@ -1951,6 +1699,3 @@ class ArrowTable(ScrollView, can_focus=True):
         elif cursor_type == "row":
             row_index, _ = cursor_coordinate
             self.post_message(ArrowTable.RowSelected(self, row_index))
-        elif cursor_type == "column":
-            _, column_index = cursor_coordinate
-            self.post_message(ArrowTable.ColumnSelected(self, column_index))

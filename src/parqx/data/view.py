@@ -4,8 +4,19 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import cast
 
 import pyarrow as pa
+
+
+def row_value(table: pa.Table, row: int) -> pa.StructScalar:
+    """Read one row as a Struct, preserving field order, types and duplicate names.
+
+    Args:
+        table: Loaded Arrow data for the result or source page.
+        row: Zero-based offset within this table.
+    """
+    return cast(pa.StructScalar, table.slice(row, 1).to_struct_array()[0])
 
 
 @dataclass(frozen=True)
@@ -40,15 +51,29 @@ class PageCache:
         self.cache_bytes = 0
         self._pages: OrderedDict[int, DataPage] = OrderedDict()
 
-    def peek(self, row: int, column: int) -> pa.Scalar | None:
-        """Return cached data only, preserving the difference between null and miss."""
-        if not (0 <= row < self.row_count and 0 <= column < len(self.schema)):
+    def peek(self, row: int, column: int | None) -> pa.Scalar | None:
+        """Return a resident cell or row without performing I/O.
+
+        Args:
+            row: Absolute row in the source.
+            column: Positional column index, or None for the entire row.
+
+        Returns:
+            An Arrow scalar (possibly null), or None for a missing page.
+        """
+        if not (
+            0 <= row < self.row_count
+            and (column is None or 0 <= column < len(self.schema))
+        ):
             raise IndexError((row, column))
         for key in reversed(self._pages):
             page = self._pages[key]
             if page.start <= row < page.stop:
                 self._pages.move_to_end(key)
-                return page.table.column(column)[row - page.start]
+                offset = row - page.start
+                if column is None:
+                    return row_value(page.table, offset)
+                return page.table.column(column)[offset]
         return None
 
     def add_page(self, page: DataPage) -> None:

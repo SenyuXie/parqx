@@ -4,8 +4,6 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 
-from parqx.tui.values.node import RowValue
-
 
 @dataclass(frozen=True, eq=False)
 class BrowseRoot:
@@ -15,7 +13,7 @@ class BrowseRoot:
     row: int
     column: int | None
     name: str
-    value: pa.Scalar | RowValue | None
+    value: pa.Scalar | None
 
     @property
     def label(self) -> str:

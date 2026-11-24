@@ -1,7 +1,7 @@
 import pyarrow as pa
 import pytest
 
-from parqx.data.view import DataPage, PageCache
+from parqx.data.view import DataPage, PageCache, row_value
 
 
 def test_cache_distinguishes_null_and_miss_and_evicts_least_recently_used() -> None:
@@ -43,3 +43,27 @@ def test_cache_rejects_out_of_bounds_coordinates() -> None:
     cache = PageCache(pa.schema([("n", pa.int64())]), 2, cache_bytes=8)
     with pytest.raises(IndexError):
         cache.peek(2, 0)
+
+
+def test_row_selection_keeps_duplicate_names_across_different_chunk_boundaries() -> (
+    None
+):
+    table = pa.table(
+        [
+            pa.chunked_array([[1, 2], [3]]),
+            pa.chunked_array([[["first"]], [["second"], None]]),
+        ],
+        names=["x", "x"],
+    )
+    cache = PageCache(table.schema, 10, cache_bytes=1024)
+    assert cache.peek(6, None) is None
+    cache.add_page(DataPage(5, table))
+
+    for row in (row_value(table, 1), cache.peek(6, None)):
+        assert isinstance(row, pa.StructScalar)
+        assert row.type.field(0).name == row.type.field(1).name == "x"
+        assert row[0].as_py() == 2
+        assert row[1].as_py() == ["second"]
+    cached = cache.peek(7, None)
+    assert isinstance(cached, pa.StructScalar)
+    assert not cached[1].is_valid
