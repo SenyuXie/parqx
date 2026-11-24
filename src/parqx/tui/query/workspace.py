@@ -9,7 +9,7 @@ from textual.message import Message
 from textual.reactive import var
 from textual.widgets import Button, Link, TabPane, TextArea
 
-from parqx.query.engine import QueryResult
+from parqx.query import QueryResult
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.table.view import TableView
 

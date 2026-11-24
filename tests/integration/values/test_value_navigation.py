@@ -5,7 +5,7 @@ from pathlib import Path
 import pyarrow as pa
 from textual.widgets import Button, Static, TabbedContent
 
-from parqx.query.engine import QueryResult
+from parqx.query import QueryResult
 from parqx.tui.app import Parqx
 from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.children import ValueChildren

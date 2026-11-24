@@ -247,7 +247,7 @@ async def test_large_list_last_child_and_long_unicode_are_readable(
 async def test_large_map_and_struct_keep_positional_identity(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from parqx.query.engine import QueryResult
+    from parqx.query import QueryResult
     from tests.helpers import open_query
 
     count = 10_000

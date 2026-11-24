@@ -7,7 +7,7 @@ import pytest
 
 from parqx.catalog import SourceCatalog, SourceSpec
 from parqx.config import ParqxConfig
-from parqx.query.engine import execute_query
+from parqx.query import execute_query
 
 
 @pytest.fixture

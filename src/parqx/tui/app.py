@@ -25,7 +25,7 @@ from textual.worker import Worker, WorkerState
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query.engine import QueryExecutionError, QueryResult, execute_query
+from parqx.query import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.query.confirm_close import ConfirmClose
 from parqx.tui.query.workspace import QueryWorkspace
 from parqx.tui.sources.pane import SourcePane

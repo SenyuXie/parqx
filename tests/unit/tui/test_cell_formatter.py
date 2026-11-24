@@ -5,7 +5,7 @@ import pytest
 from rich.cells import cell_len
 
 from parqx.config import ParqxConfig
-from parqx.query.engine import execute_query
+from parqx.query import execute_query
 from parqx.tui.cell_formatter import CellFormatter
 
 
