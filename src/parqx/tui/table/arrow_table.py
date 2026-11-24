@@ -850,13 +850,16 @@ class ArrowTable(ScrollView, can_focus=True):
         """Update the missing rows and allow retries after vertical navigation."""
         if round(old_value) != round(new_value):
             self._retry_window()
-            if self._missing_rows:
-                # Returning to cached rows can remove demand without a render miss.
-                visible = self._missing_rows.intersection(self._visible_rows())
-                if visible != self._missing_rows:
-                    self._missing_rows = visible
-                    self._schedule_window_report()
+            self._trim_missing_rows()
         super().watch_scroll_y(old_value, new_value)
+
+    def _trim_missing_rows(self) -> None:
+        """Withdraw demand that left the viewport, even when its new rows are cached."""
+        if self._missing_rows:
+            visible = self._missing_rows.intersection(self._visible_rows())
+            if visible != self._missing_rows:
+                self._missing_rows = visible
+                self._schedule_window_report()
 
     def replace_data(self, data: pa.Table | PageCache) -> None:
         """Replace the data view and discard old windows, requests, and rendering."""
@@ -902,6 +905,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self.refresh()
 
     def _on_resize(self, _: events.Resize) -> None:
+        self._trim_missing_rows()
         self._update_count += 1
         logger.debug(
             "App or widget has been resized. ArrowTable._update_count: %d",
@@ -925,6 +929,7 @@ class ArrowTable(ScrollView, can_focus=True):
     def watch_show_header(self, show: bool) -> None:
         """Update table dimensions and rendering when header visibility changes."""
         width, height = self.virtual_size
+        self._trim_missing_rows()
         height_change = 1 if show else -1
         self.virtual_size = Size(width, height + height_change)
         self._scroll_cursor_into_view()
@@ -1385,7 +1390,9 @@ class ArrowTable(ScrollView, can_focus=True):
             options,
         )[0]
 
-        self._cell_render_cache[cache_key] = segments
+        # Revisiting a placeholder must look up its value and report the miss again.
+        if Coordinate(row_index, column_index) in self._cell_renderable_cache:
+            self._cell_render_cache[cache_key] = segments
         return segments
 
     def _get_styles_to_render_cell(
@@ -1543,7 +1550,8 @@ class ArrowTable(ScrollView, can_focus=True):
             scrollable_row.extend(cell_segments)
 
         row_pair = (fixed_row, scrollable_row)
-        self._row_render_cache[cache_key] = row_pair
+        if row_index not in self._missing_rows:
+            self._row_render_cache[cache_key] = row_pair
         return row_pair
 
     def _render_line(self, y: int, x1: int, x2: int, base_style: Style) -> Strip:
@@ -1611,7 +1619,8 @@ class ArrowTable(ScrollView, can_focus=True):
         )
         strip = Strip(segments).adjust_cell_length(width, base_style).simplify()
 
-        self._line_cache[cache_key] = strip
+        if row_index not in self._missing_rows:
+            self._line_cache[cache_key] = strip
         return strip
 
     def render_lines(self, crop: Region) -> list[Strip]:

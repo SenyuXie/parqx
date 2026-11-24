@@ -329,36 +329,75 @@ async def test_cursor_jump_during_source_read(
                 release.set()
 
 
-async def test_return_to_a_cached_viewport_retires_its_pending_read(
+async def test_returning_to_placeholders_loads_the_revisited_rows(
     tmp_path: Path,
+) -> None:
+    path = tmp_path / "revisit.parquet"
+    pq.write_table(pa.table({"value": range(5000, 5500)}), path)
+    started, release = Event(), Event()
+    original_read = ParquetSource.read_window
+
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
+        if not started.is_set():
+            started.set()
+            assert release.wait(timeout=10)
+        return original_read(source, start, stop)
+
+    app = Parqx([path], config=ParqxConfig(page_rows=32, page_debounce_seconds=0))
+    with patch.object(ParquetSource, "read_window", delayed_read):
+        async with app.run_test(size=(60, 12)) as pilot:
+            try:
+                await wait_for(started.is_set, pilot)
+                table = app.query_one(ArrowTable)
+                cache = table.data
+                assert isinstance(cache, PageCache)
+                for top in (200, 0, 200):
+                    table.scroll_to(y=top, animate=False, immediate=True, force=True)
+                    await pilot.pause()
+                release.set()
+                await wait_for(lambda: cache.peek(200, 0) is not None, pilot)
+                assert "5200" in table.render_line(1).text
+            finally:
+                release.set()
+
+
+@pytest.mark.parametrize("resize", [False, True], ids=["scroll", "resize"])
+async def test_return_to_a_cached_viewport_retires_its_pending_read(
+    tmp_path: Path, resize: bool
 ) -> None:
     path = tmp_path / "cached.parquet"
     pq.write_table(pa.table({"value": range(1000)}), path)
     started, release = Event(), Event()
     original_read = ParquetSource.read_window
 
-    def fail_after_scroll(source: ParquetSource, start: int, stop: int) -> DataPage:
-        if start <= 500 < stop:
+    failing_row = 20 if resize else 500
+
+    def fail_after_navigation(source: ParquetSource, start: int, stop: int) -> DataPage:
+        if start <= failing_row < stop:
             started.set()
             assert release.wait(timeout=10)
             raise OSError("obsolete window")
         return original_read(source, start, stop)
 
-    app = Parqx([path], config=ParqxConfig(page_rows=32, page_debounce_seconds=0))
+    app = Parqx([path], config=ParqxConfig(page_rows=20, page_debounce_seconds=0))
     with (
-        patch.object(ParquetSource, "read_window", fail_after_scroll),
+        patch.object(ParquetSource, "read_window", fail_after_navigation),
         patch.object(app, "notify") as notify,
     ):
-        async with app.run_test(size=(60, 15)) as pilot:
+        async with app.run_test(size=(60, 30 if resize else 15)) as pilot:
             try:
                 await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
                 table = app.query_one(ArrowTable)
                 cache = table.data
                 assert isinstance(cache, PageCache)
                 await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
-                table.move_cursor(row=500, animate=False)
+                if not resize:
+                    table.move_cursor(row=failing_row, animate=False)
                 await wait_for(started.is_set, pilot)
-                table.move_cursor(row=0, animate=False)
+                if resize:
+                    await pilot.resize_terminal(60, 10)
+                else:
+                    table.move_cursor(row=0, animate=False)
                 await pilot.pause()
                 release.set()
                 await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
