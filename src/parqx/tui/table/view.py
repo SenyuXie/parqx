@@ -45,12 +45,16 @@ class TableView(Horizontal):
             self.root = root
             super().__init__()
 
-    def __init__(self, table: ArrowTable) -> None:
-        """Own a table's explicit selection for its lifetime."""
+    def __init__(self, data: pa.Table | PageCache) -> None:
+        """Create the table and its value browser.
+
+        Args:
+            data: Loaded query result or source page cache to display.
+        """
         super().__init__()
-        self.table = table
+        self.table = ArrowTable(data)
         self.browser = ValueBrowser()
-        self.browser.clear(empty=table.row_count == 0)
+        self.browser.clear(empty=self.table.row_count == 0)
         self._pending_root: BrowseRoot | None = None
 
     @property
@@ -178,6 +182,5 @@ class TableView(Horizontal):
             )
 
     def on_unmount(self) -> None:
-        """Release retained scalar buffers even if the view remains referenced."""
-        self._pending_root = None
-        self.browser.clear(empty=True)
+        """Release table and selection buffers even if the widgets are retained."""
+        self.replace_data(pa.table({}))
