@@ -9,7 +9,7 @@ from textual.widgets import Button
 
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.values.browser import ValueBrowser
-from parqx.tui.values.selection import BrowseRoot
+from parqx.tui.values.node import BrowseRoot
 from tests.helpers import wait_for
 
 

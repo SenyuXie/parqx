@@ -13,7 +13,7 @@ from textual.widget import Widget
 from parqx.data.view import DataPage, PageCache, row_value
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.values.browser import ValueBrowser
-from parqx.tui.values.selection import BrowseRoot
+from parqx.tui.values.node import BrowseRoot
 
 
 class TableView(Horizontal):
@@ -43,30 +43,28 @@ class TableView(Horizontal):
             self.root = root
             super().__init__()
 
-    def __init__(self, table: ArrowTable) -> None:
-        """Own a table's explicit selection for its lifetime."""
+    def __init__(self, data: pa.Table | PageCache) -> None:
+        """Create the table and its value browser.
+
+        Args:
+            data: Loaded query result or source page cache to display.
+        """
         super().__init__()
-        self.table = table
+        self.table = ArrowTable(data)
         self.browser = ValueBrowser()
-        self.browser.clear(empty=table.row_count == 0)
-        self._pending_root: BrowseRoot | None = None
+        self.browser.clear(empty=self.table.row_count == 0)
 
     @property
     def pending_root(self) -> BrowseRoot | None:
         """The current loading selection, independent of the viewport window."""
-        root = self._pending_root
-        if (
-            root is not None
-            and root is self.browser.root
-            and root.generation == self.table.generation
-        ):
+        root = self.browser.pending_root
+        if root is not None and root.generation == self.table.generation:
             return root
         return None
 
     def _select(self, root: BrowseRoot) -> None:
-        self._pending_root = root if root.value is None else None
         self.browser.select(root)
-        if self._pending_root is not None:
+        if self.pending_root is not None:
             self.post_message(self.ValueRequested(self, root))
 
     def resolve_selection(self, root: BrowseRoot, page: DataPage) -> None:
@@ -84,13 +82,11 @@ class TableView(Horizontal):
             if root.column is None
             else page.table.column(root.column)[row]
         )
-        self._pending_root = None
         self.browser.resolve(root, value)
 
     def fail_selection(self, root: BrowseRoot, message: str) -> None:
         """Apply a read error only to the current selection and data generation."""
         if self.pending_root is root:
-            self._pending_root = None
             self.browser.fail(root, message)
 
     def compose(self) -> ComposeResult:
@@ -106,7 +102,7 @@ class TableView(Horizontal):
         self, previous: Widget | None, current: Widget | None
     ) -> None:
         if current is self or previous is self:
-            self.browser.viewport.set_maximized(current is self)
+            self.browser.set_maximized(current is self)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Apply reader keys only within this table's own focus region."""
@@ -148,7 +144,6 @@ class TableView(Horizontal):
     def replace_data(self, data: pa.Table | PageCache) -> None:
         """Invalidate the selected root without changing visibility or focus."""
         self.table.replace_data(data)
-        self._pending_root = None
         self.browser.clear(empty=self.table.row_count == 0)
 
     @on(ArrowTable.RowSelected)
@@ -166,6 +161,5 @@ class TableView(Horizontal):
             )
 
     def on_unmount(self) -> None:
-        """Release retained scalar buffers even if the view remains referenced."""
-        self._pending_root = None
-        self.browser.clear(empty=True)
+        """Release table and selection buffers even if the widgets are retained."""
+        self.replace_data(pa.table({}))

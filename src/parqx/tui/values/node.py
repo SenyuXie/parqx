@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Literal
 
 import pyarrow as pa
@@ -281,3 +282,20 @@ class ValueNode:
             )
         )
         return result
+
+
+@dataclass(frozen=True, eq=False)
+class BrowseRoot:
+    """One explicit cell or row selection in a table's data generation."""
+
+    generation: int
+    row: int
+    column: int | None
+    name: str
+    value: pa.Scalar | None
+
+    @property
+    def label(self) -> str:
+        """Identify the selected row and optional cell without needing its data."""
+        label = f"Row {self.row}"
+        return label if self.column is None else f"{label} · {self.name}"

@@ -7,20 +7,17 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 
-from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.table.view import TableView
 
 
 class ValueSnapshotApp(App[None]):
     def compose(self) -> ComposeResult:
         yield TableView(
-            ArrowTable(
-                pa.table(
-                    {
-                        "station": [{"name": "Oslo", "readings": [4, 8, 15]}],
-                        "packet": [bytes(range(32, 96))],
-                    }
-                )
+            pa.table(
+                {
+                    "station": [{"name": "Oslo", "readings": [4, 8, 15]}],
+                    "packet": [bytes(range(32, 96))],
+                }
             )
         )
 

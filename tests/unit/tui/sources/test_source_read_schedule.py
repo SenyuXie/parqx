@@ -9,7 +9,7 @@ import pytest
 from parqx.data.parquet import ParquetSource
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.sources.read_schedule import ReadContext, SourceReadSchedule
-from parqx.tui.values.selection import BrowseRoot
+from parqx.tui.values.node import BrowseRoot
 
 
 @pytest.fixture

@@ -1,6 +1,5 @@
 """Persistent SQL authoring and its latest successful result."""
 
-import pyarrow as pa
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -62,8 +61,12 @@ class QueryWorkspace(TabPane):
             disabled=True,
         )
         self.current_result: QueryResult | None = None
-        self.table: ArrowTable | None = None
         self.view: TableView | None = None
+
+    @property
+    def table(self) -> ArrowTable | None:
+        """The result table after the first successful execution."""
+        return self.view.table if self.view is not None else None
 
     def compose(self) -> ComposeResult:
         """Yield the persistent SQL editor."""
@@ -123,8 +126,7 @@ class QueryWorkspace(TabPane):
     async def show_result(self, result: QueryResult) -> None:
         """Replace data and schema without moving focus or creating another tab."""
         if self.view is None:
-            self.table = ArrowTable(result.table)
-            self.view = TableView(self.table)
+            self.view = TableView(result.table)
             await self.mount(self.view)
         else:
             self.view.replace_data(result.table)
@@ -136,5 +138,3 @@ class QueryWorkspace(TabPane):
     def on_unmount(self) -> None:
         """Release result buffers even if a detached widget is still referenced."""
         self.current_result = None
-        if self.table is not None:
-            self.table.replace_data(pa.table({}))

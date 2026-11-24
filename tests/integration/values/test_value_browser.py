@@ -41,7 +41,7 @@ async def test_enter_reads_complete_cell_without_following_cursor(
             table = query.table
         table.focus()
         assert isinstance(table.parent, Widget)
-        browser = table.parent.query_one(".value-browser")
+        browser = table.parent.query_one(ValueBrowser)
         reader = browser.query_one(".value-reader", ScalarReader)
         assert not browser.display
 
@@ -76,15 +76,18 @@ async def test_visibility_resumes_reading_and_table_focus(scalar_parquet: Path) 
     async with app.run_test(size=(140, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
-        browser = table.parent.query_one(".value-browser")
+        browser = table.parent.query_one(ValueBrowser)
         reader = browser.query_one(".value-reader", ScalarReader)
         table.focus()
         await pilot.press("v")
         assert browser.display
         assert table.has_focus
-        assert reader.text == "Press Enter in the table to select a cell or row."
+        assert (
+            browser.status.content
+            == "Press Enter in the table to select a cell or row."
+        )
         await pilot.press("tab")
-        assert reader.has_focus
+        assert browser.status_view.has_focus
         await pilot.press("backspace")
         assert table.has_focus
 
@@ -126,7 +129,7 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         table = query.table
         assert table is not None
         assert isinstance(table.parent, Widget)
-        browser = table.parent.query_one(".value-browser")
+        browser = table.parent.query_one(ValueBrowser)
         reader = browser.query_one(".value-reader", ScalarReader)
         table.focus()
         await pilot.press("enter", "tab", "pagedown")
@@ -147,19 +150,22 @@ async def test_query_input_and_successful_replacement(scalar_parquet: Path) -> N
         reader.focus()
         await press_run_button(query, pilot)
         await wait_for(lambda: table.column_count == 1 and not query.running, pilot)
-        assert reader.has_focus
+        assert browser.status_view.has_focus
         assert browser.display
-        assert reader.text == "Press Enter in the table to select a cell or row."
+        assert (
+            browser.status.content
+            == "Press Enter in the table to select a cell or row."
+        )
         assert reader.scroll_y == 0
         await pilot.press("escape", "enter")
         assert reader.text == "new result"
         query.editor.load_text("SELECT 'no rows' AS note WHERE false")
         await press_run_button(query, pilot)
         await wait_for(lambda: table.row_count == 0 and not query.running, pilot)
-        assert reader.text == "No rows to inspect."
+        assert browser.status.content == "No rows to inspect."
         assert table.has_focus
         await pilot.press("enter", "v", "v")
-        assert reader.text == "No rows to inspect."
+        assert browser.status.content == "No rows to inspect."
 
 
 async def test_views_keep_independent_selections_and_release_on_close(
@@ -214,7 +220,7 @@ async def test_scalar_states_and_nonvalue_cursors_are_explicit(
     async with app.run_test(size=(140, 40)) as pilot:
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
-        browser = table.parent.query_one(".value-browser")
+        browser = table.parent.query_one(ValueBrowser)
         reader = browser.query_one(".value-reader", ScalarReader)
         info = browser.query_one(".value-info", Static)
         table.focus()
@@ -256,14 +262,13 @@ async def test_initial_empty_result_has_no_value_to_select(small_parquet: Path) 
         table = query.table
         assert table is not None
         assert table.parent is not None
-        browser = table.parent.query_one(".value-browser")
-        reader = browser.query_one(".value-reader", ScalarReader)
+        browser = table.parent.query_one(ValueBrowser)
         table.focus()
         await pilot.press("enter")
         assert not browser.display
         await pilot.press("v", "tab")
-        assert reader.has_focus
-        assert reader.text == "No rows to inspect."
+        assert browser.status_view.has_focus
+        assert browser.status.content == "No rows to inspect."
 
 
 async def test_reading_a_value_preserves_the_sql_editor_viewport(
