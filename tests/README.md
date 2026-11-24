@@ -49,8 +49,8 @@ under `unit/`.
 In the TUI, `table/` owns column geometry, rendering and the table with its
 value sidebar. `values/` owns the selected row or cell, navigation and the
 readers. `sources/` owns source tabs, the source tree and page scheduling.
-`query/` owns the SQL workspace and its close confirmation. `tui/app.py`
-coordinates tabs and background work.
+`query/` owns the SQL workspace, query delivery and close confirmation.
+`tui/app.py` coordinates tabs and background work.
 
 Find mounted tests by the feature under test:
 
@@ -106,10 +106,12 @@ tab waits for metadata.
 `QueryWorkspace` owns its SQL draft and current result. A run request captures
 the submitting workspace and its draft so an edit or tab switch during message
 delivery cannot redirect the query or change the submitted SQL.
-The app owns one Textual thread worker and delivers its result to the submitting
-workspace on the UI thread. That draft stays read-only and cannot close until
-delivery; other workspaces and source views remain usable. Completion never
-changes the active tab or focus.
+The session's `QueryDelivery` owns one Textual thread worker and delivers its
+outcome to the submitting workspace on the UI thread. The worker holds a weak
+reference to the pending submission so shutdown can release an undelivered
+Arrow preview even as the native call finishes. The draft stays read-only and
+its workspace cannot close until delivery. Other workspaces and source views
+remain usable. Completion preserves the active tab and focus.
 Native reads finish naturally after UI exit, with no interrupt or shutdown
 deadline. Cover these ownership and lifecycle boundaries in integration
 tests, using events to coordinate native reads.

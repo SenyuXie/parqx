@@ -17,6 +17,7 @@ from textual.widgets import TabbedContent
 from textual.worker import Worker, WorkerState
 
 from parqx.config import ParqxConfig
+from parqx.data.duckdb import read_preview
 from parqx.data.parquet import ParquetSource
 from parqx.tui.app import Parqx
 from parqx.tui.table.arrow_table import ArrowTable
@@ -308,3 +309,52 @@ async def test_completed_worker_keeps_workspace_locked_until_message_delivery(
                 lambda: bool(query.query(ArrowTable)) and not query.running, pilot
             )
             assert app.query_one(TabbedContent).tab_count == 2
+
+
+async def test_shutdown_releases_preview_before_worker_reports_completion(
+    small_parquet: Path,
+) -> None:
+    native_finished = asyncio.Event()
+    release = asyncio.Event()
+    previews: list[ReferenceType[pa.Table]] = []
+    workers: list[Worker[object]] = []
+    run = Worker[object].run
+
+    def observe_preview(
+        reader: pa.RecordBatchReader, *, row_limit: int, byte_limit: int
+    ) -> tuple[pa.Table, str | None]:
+        table, reason = read_preview(reader, row_limit=row_limit, byte_limit=byte_limit)
+        previews.append(ref(table))
+        return table, reason
+
+    async def delay_completion(worker: Worker[object]) -> object:
+        result = await run(worker)
+        if worker.group == "query":
+            workers.append(worker)
+            native_finished.set()
+            await release.wait()
+        return result
+
+    app = Parqx([small_parquet])
+    with (
+        patch.object(Worker, "run", delay_completion),
+        patch("parqx.query.read_preview", observe_preview),
+    ):
+        try:
+            async with app.run_test() as pilot:
+                await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+                query = await open_query(app, pilot)
+                query.editor.load_text("SELECT * FROM range(128)")
+                await press_run_button(query, pilot)
+                await wait_for(native_finished.is_set, pilot)
+                (preview,) = previews
+                assert preview() is not None
+                assert query.running
+                assert query.current_result is None
+        finally:
+            release.set()
+
+    # Textual can retain the worker even after the app drops the delivery.
+    assert workers
+    gc.collect()
+    assert preview() is None

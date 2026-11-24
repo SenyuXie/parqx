@@ -12,7 +12,7 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import Any, ClassVar
 
-from textual import on, work
+from textual import on
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
@@ -20,13 +20,13 @@ from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Static, TabbedContent, TabPane, Tree
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 
 from parqx.catalog import SourceCatalog, SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
 from parqx.data.parquet import ParquetSource
-from parqx.query import QueryExecutionError, QueryResult, execute_query
 from parqx.tui.query.confirm_close import ConfirmClose
+from parqx.tui.query.delivery import QueryDelivery
 from parqx.tui.query.workspace import QueryWorkspace
 from parqx.tui.sources.pane import SourcePane
 from parqx.tui.sources.tree import SourcesTree
@@ -108,9 +108,7 @@ class Parqx(App[Any]):
         self._tab_lock = asyncio.Lock()
         """Serialize asynchronous mounts and removals."""
         self._query_number = 0
-        self._execution: (
-            tuple[Worker[list[QueryResult | str]], QueryWorkspace] | None
-        ) = None
+        self._query_delivery = QueryDelivery(self, self.config)
         self._source_pool = ThreadPoolExecutor(
             max_workers=self.config.source_workers, thread_name_prefix="parqx-source"
         )
@@ -326,11 +324,7 @@ class Parqx(App[Any]):
         """Stop source work and prevent all late UI updates during shutdown."""
         self._shutting_down = True
         self.catalog.cancel_all_metadata_reads()
-        if self._execution is not None:
-            results = self._execution[0].result
-            if results is not None:
-                results.clear()
-        self._execution = None
+        self._query_delivery.discard()
         self._source_pool.shutdown(wait=False, cancel_futures=True)
 
     @on(Button.Pressed, "#new-query")
@@ -355,76 +349,18 @@ class Parqx(App[Any]):
         pane = event.workspace
         if self.screen.is_modal or self._shutting_down or not pane.is_attached:
             return
-        if self._execution is not None:
-            self.notify("A query is already running", title="Query busy", markup=False)
-            return
         sources = self.catalog.snapshot()
         unavailable = tuple(
             entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
             for entry in self.catalog.entries
             if entry.state != "ready"
         )
-        self._execution = (self._run_query(sources, event.sql, unavailable), pane)
-        pane.running = True
-
-    @work(thread=True, exit_on_error=False, group="query")
-    def _run_query(
-        self,
-        sources: tuple[SourceSpec, ...],
-        sql: str,
-        unavailable: tuple[SourceIssue, ...],
-    ) -> list[QueryResult | str]:
-        """Hand off a query result or its displayable error to the UI thread."""
-        try:
-            outcome: QueryResult | str = execute_query(
-                sources, sql, config=self.config, unavailable=unavailable
-            )
-        except QueryExecutionError as error:
-            # Textual retains the last worker on its executor thread. Returning the
-            # message releases the exception's frames and their partial Arrow batches.
-            outcome = str(error) or type(error).__name__
-            if error.issues:
-                outcome += "\nUnavailable sources:\n" + "\n".join(
-                    map(str, error.issues)
-                )
-        # The UI consumes the result so the worker also releases successful previews.
-        return [] if self._shutting_down else [outcome]
+        if not self._query_delivery.submit(event, sources, unavailable):
+            self.notify("A query is already running", title="Query busy", markup=False)
 
     @on(Worker.StateChanged)
     async def _on_query_state_changed(self, event: Worker.StateChanged) -> None:
-        execution = self._execution
-        if execution is None:
-            return
-        worker, pane = execution
-        if event.worker is not worker:  # pyright: ignore[reportUnknownMemberType]
-            return
-        if event.state not in {WorkerState.SUCCESS, WorkerState.ERROR}:
-            return
-        try:
-            if worker.result:
-                outcome = worker.result.pop()
-            elif (error := worker.error) is not None:
-                outcome = str(error) or type(error).__name__
-            else:
-                return
-            if self._shutting_down or not pane.is_attached:
-                return
-            if isinstance(outcome, QueryResult):
-                await pane.show_result(outcome)
-            else:
-                self.notify(
-                    outcome,
-                    title="SQL error",
-                    severity="error",
-                    timeout=4,
-                    markup=False,
-                )
-        finally:
-            # Keep ownership until data and presentation have both been applied.
-            if self._execution is execution:
-                self._execution = None
-            if pane.is_attached and not self._shutting_down:
-                pane.running = False
+        await self._query_delivery.deliver(event)
 
     async def action_close_tab(self) -> None:
         """Close the active tab, confirming before discarding query work."""
