@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from tempfile import TemporaryDirectory
-from typing import cast
 
 import duckdb
 import pyarrow as pa
+import pyarrow.compute as pc
 
 
 @contextmanager
@@ -19,19 +19,18 @@ def connect(
 
     Close Arrow readers inside this context before releasing the connection.
     """
-    with ExitStack() as resources:
-        temporary = TemporaryDirectory(prefix="parqx-duckdb-")
-        resources.callback(temporary.cleanup)
-        connection = duckdb.connect(
+    with (
+        TemporaryDirectory(prefix="parqx-duckdb-") as directory,
+        duckdb.connect(
             config={
                 "threads": threads,
                 "memory_limit": memory_limit,
-                "temp_directory": temporary.name,
+                "temp_directory": directory,
                 "preserve_insertion_order": True,
                 "python_enable_replacements": False,
             }
-        )
-        resources.callback(connection.close)
+        ) as connection,
+    ):
         yield connection
 
 
@@ -42,16 +41,20 @@ def read_preview(
 
     One oversized row is admitted. Decoder and engine allocations are separate
     from the retained preview budget.
+
+    Args:
+        reader: Open Arrow batch stream, owned by the caller.
+        row_limit: Maximum number of rows in the preview.
+        byte_limit: Maximum logical size of retained Arrow batches in bytes.
+
+    Returns:
+        The preview table and the reason for truncation, if any.
     """
     schema = reader.schema
     batches: list[pa.RecordBatch] = []
     rows = size = 0
     reason: str | None = None
-    while True:
-        try:
-            batch = reader.read_next_batch()
-        except StopIteration:
-            break
+    for batch in reader:
         if not batch.num_rows:
             continue
         available = min(batch.num_rows, row_limit - rows)
@@ -110,10 +113,11 @@ def _bounded_prefix(batch: pa.RecordBatch, budget: int, *, allow_one: bool) -> i
     return max(low, 1 if allow_one and batch.num_rows else 0)
 
 
-def _dictionary_payload_exceeds_budget(
-    array: pa.DictionaryArray, indices: list[int | None], budget: int
-) -> bool:
-    data_type = array.dictionary.type
+def _compact_dictionary_values(
+    dictionary: pa.Array, used: pa.Array, budget: int | None
+) -> pa.Array:
+    """Gather referenced categories in original order within the preview budget."""
+    data_type = dictionary.type
     if not (
         pa.types.is_string(data_type)
         or pa.types.is_large_string(data_type)
@@ -121,52 +125,53 @@ def _dictionary_payload_exceeds_budget(
         or pa.types.is_large_binary(data_type)
         or pa.types.is_fixed_size_binary(data_type)
     ):
-        return False
-    used: set[int] = set()
-    size = 0
-    for index in indices:
-        if index is not None and index not in used and array.dictionary[index].is_valid:
-            used.add(index)
-            # A singleton may include one validity byte. Excluding it gives a
-            # lower bound without copying large strings just to reject a prefix.
-            size += max(0, array.dictionary.slice(index, 1).nbytes - 1)
-            if size > budget:
-                return True
-    return False
+        return _compact_array(dictionary, used, budget=budget)
+    if not len(used):
+        return pa.array([], type=data_type)
+
+    # take may reserve space based on large unselected strings. Gather
+    # zero-copy slices and check their size before copying the payload.
+    first = used[0].as_py()
+    span = dictionary.slice(first, used[-1].as_py() - first + 1)
+    parts: list[pa.Array]
+    if len(span) == len(used) and not span.null_count:
+        parts = [span]
+    else:
+        parts = []
+        for code in used:
+            entry = dictionary.slice(code.as_py(), 1)
+            if entry.null_count and not pa.types.is_fixed_size_binary(data_type):
+                # A null string may still have a nonempty underlying byte range.
+                entry = pa.array([None], type=data_type)
+            parts.append(entry)
+    if budget is not None and sum(part.nbytes - 1 for part in parts) > budget:
+        # Each slice may include a validity byte shared in the compact array.
+        raise _BudgetExceededError
+    return pa.concat_arrays(parts)
 
 
 def _compact_array(
-    array: pa.Array, selection: list[int] | None = None, *, budget: int | None = None
+    array: pa.Array, selection: pa.Array | None = None, *, budget: int | None = None
 ) -> pa.Array:
-    if selection is None:
-        selection = list(range(len(array)))
     if isinstance(array, pa.DictionaryArray):
-        indices = [
-            cast(int | None, array.indices[index].as_py()) for index in selection
-        ]
-        if budget is not None and _dictionary_payload_exceeds_budget(
-            array, indices, budget
-        ):
-            raise _BudgetExceededError
-        # Keep category order even for an ordered dictionary. Gathering only used
-        # codes avoids allocations proportional to the original dictionary.
-        used = sorted({index for index in indices if index is not None})
-        positions = {index: position for position, index in enumerate(used)}
-        values = _compact_array(array.dictionary, used, budget=budget)
+        indices = array.indices
+        if selection is not None:
+            indices = indices.take(selection)
+        # Retain the relative category order of ordered dictionaries.
+        used = indices.unique().drop_null().sort()
+        values = _compact_dictionary_values(array.dictionary, used, budget)
+        positions = pc.index_in(indices, value_set=used)
         return pa.DictionaryArray.from_arrays(
-            pa.array(
-                [positions[index] if index is not None else None for index in indices],
-                type=array.indices.type,
-            ),
-            values,
-            ordered=array.type.ordered,
+            pc.cast(positions, indices.type), values, ordered=array.type.ordered
         )
+    if selection is None:
+        selection = pa.array(range(len(array)), type=pa.int64())
     try:
-        array = array.take(pa.array(selection, type=pa.int64()))
+        array = array.take(selection)
     except pa.ArrowNotImplementedError:
         # View types lack take kernels. Arrow Scalars preserve nested types and
         # nanosecond values when rebuilding, unlike conversion to Python values.
-        array = pa.array([array[index] for index in selection], type=array.type)
+        array = pa.array([array[i.as_py()] for i in selection], type=array.type)
     if not _has_dictionary(array.type):
         return array
     if isinstance(array, pa.StructArray):

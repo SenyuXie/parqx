@@ -349,12 +349,7 @@ class Parqx(App[Any]):
         pane = event.workspace
         if self.screen.is_modal or self._shutting_down or not pane.is_attached:
             return
-        sources = self.catalog.snapshot()
-        unavailable = tuple(
-            entry.issue or SourceIssue(entry.spec, "Still loading; try again shortly.")
-            for entry in self.catalog.entries
-            if entry.state != "ready"
-        )
+        sources, unavailable = self.catalog.query_inputs()
         if not self._query_delivery.submit(event, sources, unavailable):
             self.notify("A query is already running", title="Query busy", markup=False)
 

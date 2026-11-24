@@ -1,6 +1,8 @@
 # Inspect preview internals to enforce Arrow allocation and precision guarantees.
 # pyright: reportPrivateUsage=false
 
+from struct import pack
+
 import pyarrow as pa
 import pytest
 
@@ -133,5 +135,36 @@ def test_dictionary_budget_measurement_has_bounded_allocations(
         pa.set_memory_pool(parent)
     assert keep == (1 if large_values_are_used else 256)
     assert pool.bytes_allocated() == 0
+    assert peak is not None
+    assert peak < 64 * 1024
+
+
+def test_sparse_dictionary_codes_skip_unused_and_null_byte_ranges() -> None:
+    # Category 1 is unused. Category 2 is null but has nonempty backing data.
+    size = 1_000_000
+    values = pa.Array.from_buffers(
+        pa.string(),
+        4,
+        [
+            pa.py_buffer(bytes([0b1011])),
+            pa.py_buffer(pack("<5i", 0, 1, size + 1, 2 * size + 1, 2 * size + 2)),
+            pa.py_buffer(b"a" + b"x" * (2 * size) + b"z"),
+        ],
+        null_count=1,
+    )
+    column = pa.DictionaryArray.from_arrays(pa.array([3, 0, 2], type=pa.int8()), values)
+    batch = pa.RecordBatch.from_arrays([column], names=["category"])
+    parent = pa.default_memory_pool()
+    pool = pa.proxy_memory_pool(parent)
+    try:
+        pa.set_memory_pool(pool)
+        assert _bounded_prefix(batch, 32, allow_one=False) == 3
+        kept = _compact_batch(batch)
+        assert [item.as_py() for item in kept.column(0)] == ["z", "a", None]
+        assert pa.Table.from_batches([kept]).get_total_buffer_size() < 64
+        del kept
+    finally:
+        pa.set_memory_pool(parent)
+    peak = pool.max_memory()
     assert peak is not None
     assert peak < 64 * 1024

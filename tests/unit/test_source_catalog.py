@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from parqx.catalog import SourceCatalog, quote_identifier
+from parqx.catalog import SourceCatalog, SourceIssue, quote_identifier
 
 
 def test_input_order_and_duplicate_paths(
@@ -121,8 +121,9 @@ def test_ready_and_failed_sources_keep_stable_identity(tmp_path: Path) -> None:
     initial = catalog.entries
     first, second = (entry.spec for entry in initial)
     catalog.mark_ready(second.source_id)
-    snapshot = catalog.snapshot()
+    snapshot, warnings = catalog.query_inputs()
     assert snapshot == (second,)
+    assert warnings == (SourceIssue(first, "Still loading; try again shortly."),)
 
     catalog.mark_failed(first.source_id, "Not a Parquet file")
     failed = catalog.get(first.source_id)
@@ -130,12 +131,13 @@ def test_ready_and_failed_sources_keep_stable_identity(tmp_path: Path) -> None:
     assert failed.issue is not None
     assert failed.issue.source is first
     assert str(failed.issue) == f'"same" ({first.path}): Not a Parquet file'
-    assert catalog.snapshot() == (second,)
+    assert catalog.query_inputs() == ((second,), (failed.issue,))
 
     catalog.mark_ready(first.source_id)
     assert catalog.get(first.source_id).issue is None
-    assert catalog.snapshot() == (first, second)
+    assert catalog.query_inputs() == ((first, second), ())
     assert snapshot == (second,)
+    assert warnings[0].message.startswith("Still loading")
     assert [entry.state for entry in initial] == ["loading", "loading"]
     assert [entry.spec.table_name for entry in catalog.entries] == ["same", "same_2"]
 
