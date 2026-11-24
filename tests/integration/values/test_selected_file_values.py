@@ -53,12 +53,12 @@ async def test_uncached_selection_survives_cursor_and_viewport_changes(
                 await wait_for(started.is_set, pilot)
                 assert browser.display
                 assert table.has_focus
-                assert "Loading" in browser.reader.text
+                assert "Loading" in str(browser.status.content)
                 assert browser.root is not None
                 assert browser.root.row == 300
                 await pilot.press("tab", "enter")
-                assert browser.reader.has_focus
-                assert "Loading" in browser.reader.text
+                assert browser.status_view.has_focus
+                assert "Loading" in str(browser.status.content)
                 await pilot.press("escape")
                 table.move_cursor(row=500, column=0, animate=False)
                 table.cursor_type = "column"
@@ -67,7 +67,7 @@ async def test_uncached_selection_survives_cursor_and_viewport_changes(
                     lambda: (
                         browser.options.display
                         if cursor_type == "row"
-                        else "Loading" not in browser.reader.text
+                        else browser.reader.display
                     ),
                     pilot,
                 )
@@ -126,7 +126,7 @@ async def test_new_selection_supersedes_a_submitted_read(
                 table.focus()
                 table.move_cursor(row=300, column=2, animate=False)
                 await pilot.press("enter")
-                assert "Loading" in browser.reader.text
+                assert "Loading" in str(browser.status.content)
                 viewport_release.set()
                 await wait_for(old_started.is_set, pilot)
                 submitted = len(reads)
@@ -139,7 +139,7 @@ async def test_new_selection_supersedes_a_submitted_read(
                 if new_row == 1:
                     assert browser.reader.text == "row 1\n" + "read me\n" * 60
                 else:
-                    assert "Loading" in browser.reader.text
+                    assert "Loading" in str(browser.status.content)
                 old_release.set()
                 await wait_for(
                     lambda: (
@@ -184,14 +184,14 @@ async def test_loading_completion_preserves_visibility_and_focus(
                 table.cursor_type = "row"
                 table.move_cursor(row=300, animate=False)
                 await pilot.press("enter", "tab")
-                assert browser.reader.has_focus
-                assert "Loading" in browser.reader.text
+                assert browser.status_view.has_focus
+                assert "Loading" in str(browser.status.content)
                 await pilot.press("v")
                 assert table.has_focus
                 assert not browser.display
                 await pilot.press("v", "tab", "enter")
-                assert browser.reader.has_focus
-                assert "Loading" in browser.reader.text
+                assert browser.status_view.has_focus
+                assert "Loading" in str(browser.status.content)
                 query = None
                 if completion_target != "sidebar":
                     await pilot.press(
@@ -229,7 +229,7 @@ async def test_current_read_error_replaces_old_content_and_keeps_navigation_usab
         if block.is_set():
             assert release.wait(timeout=10)
         if start == 300 and stop == 301:
-            raise OSError("selected [bold]read[/bold] failed")
+            raise OSError("selected [bold]read[/bold] failed\n" * 60)
         return original_read(source, start, stop)
 
     app = Parqx(
@@ -249,16 +249,22 @@ async def test_current_read_error_replaces_old_content_and_keeps_navigation_usab
                 block.set()
                 table.move_cursor(row=300, column=2, animate=False)
                 await pilot.press("enter", "tab")
-                assert browser.reader.text == "Loading value…"
+                assert browser.status.content == "Loading value…"
+                assert browser.reader.document is None
                 release.set()
                 await wait_for(
-                    lambda: browser.reader.text.startswith("Read error"), pilot
+                    lambda: str(browser.status.content).startswith("Read error"), pilot
                 )
-                assert "selected [bold]read[/bold] failed" in browser.reader.text
+                assert "selected [bold]read[/bold] failed" in str(
+                    browser.status.content
+                )
                 assert browser.root is not None
                 assert browser.root.row == 300
                 assert browser.root.value is None
-                assert browser.reader.has_focus
+                assert browser.pending_root is None
+                assert browser.status_view.has_focus
+                await pilot.press("pagedown")
+                await wait_for(lambda: browser.status_view.scroll_y > 0, pilot)
                 await pilot.press("backspace")
                 assert table.has_focus
                 await pilot.press("v", "v", "tab", "escape")
@@ -361,7 +367,7 @@ async def test_invalidated_selection_cannot_deliver_or_retain_the_old_cache(
                 table.focus()
                 table.move_cursor(row=300, column=2, animate=False)
                 await pilot.press("enter")
-                assert "Loading" in browser.reader.text
+                assert "Loading" in str(browser.status.content)
                 viewport_release.set()
                 await wait_for(selected_started.is_set, pilot)
                 old_cache = weakref.ref(table.data)

@@ -19,19 +19,19 @@ async def test_query_selection_prompt_keeps_its_wrapping_on_focus(
         table = await run_query(app, pilot, "SELECT 1, 2")
         query = app.query_one(QueryWorkspace)
         assert query.view is not None
-        reader = query.view.browser.reader
+        status = query.view.browser.status
         await pilot.press("v")
         query.editor.focus()
         query.editor.load_text("SELECT 4")
         await press_run_button(query, pilot)
         await wait_for(lambda: table.column_count == 1 and not query.running, pilot)
         assert query.editor.has_focus
-        assert reader.text == "Press Enter in the table to select a cell or row."
-        lines = [reader.render_line(y).text for y in range(2)]
+        assert status.content == "Press Enter in the table to select a cell or row."
+        lines = [status.render_line(y).text for y in range(2)]
         assert lines[1].strip()
-        assert await pilot.click(reader)
-        assert reader.has_focus
-        assert [reader.render_line(y).text for y in range(2)] == lines
+        assert await pilot.click(status)
+        assert query.view.browser.status_view.has_focus
+        assert [status.render_line(y).text for y in range(2)] == lines
 
 
 @pytest.mark.parametrize(
@@ -299,7 +299,7 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
             query.editor.focus()
         await pilot.pause()
         expected_focus = (
-            browser.reader if focus in {"container", "reader"} else app.focused
+            browser.status_view if focus in {"container", "reader"} else app.focused
         )
         await press_run_button(query, pilot)
         await wait_for(
@@ -319,13 +319,13 @@ async def test_success_invalidates_nested_state_without_changing_focus_region(
             if empty
             else "Press Enter in the table to select a cell or row."
         )
-        assert browser.reader.text == expected_text
+        assert browser.status.content == expected_text
         if hidden:
             table.focus()
             await pilot.press("v", "tab")
-            assert browser.reader.has_focus
+            assert browser.status_view.has_focus
             assert browser.root is None
-            assert browser.reader.text == expected_text
+            assert browser.status.content == expected_text
         table.focus()
         await pilot.press("enter")
         assert (browser.root is None) is empty
@@ -433,7 +433,7 @@ async def test_background_queries_update_only_their_own_inspection(
         assert second_table.row_count == 0
         assert second_browser.root is None
         assert second_browser.display
-        assert second_browser.reader.text == "No rows to inspect."
+        assert second_browser.status.content == "No rows to inspect."
         await select_tab(tabs, "query-1", pilot)
         first_table.focus()
         await pilot.press("tab")

@@ -125,7 +125,7 @@ compact offsets and the current decoded text page are retained; no formatted
 history or child widgets are allocated for every value. Check complete content,
 Unicode boundaries and allocation bounds here. `ValueChildren` and `ScalarReader`
 use Textual's line rendering API for the visible viewport. Test the highlighted
-child and scroll offset together through `ChildNavigation` as field indexing
+child and scroll offset together through `ValueChildren` as field indexing
 advances or the width changes. The browser retains reading positions for its
 browse path, while cancellable index workers pause when hidden and reject
 results for replaced documents. Exercise those lifecycles

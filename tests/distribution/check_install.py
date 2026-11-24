@@ -58,14 +58,11 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.tui.table.view",
     "parqx.tui.values",
     "parqx.tui.values.browser",
-    "parqx.tui.values.child_navigation",
     "parqx.tui.values.children",
     "parqx.tui.values.document",
     "parqx.tui.values.node",
     "parqx.tui.values.reader",
     "parqx.tui.values.scalar",
-    "parqx.tui.values.selection",
-    "parqx.tui.values.viewport",
 )
 
 

@@ -77,6 +77,15 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         self._update_size()
         self._start_indexing()
 
+    def clear(self) -> None:
+        """Release the selected scalar and any unfinished indexing."""
+        self._cancel_index()
+        self.document = None
+        self._cancel_pending_navigation()
+        self.virtual_size = Size(0, 0)
+        self._place_position(0, x=0)
+        self.refresh()
+
     def reflow(self, width: int) -> None:
         """Rewrap around the same source bytes instead of jumping to the start."""
         document = self.document
@@ -160,8 +169,6 @@ class ScalarReader(IndexedScrollView[ScalarDocument], can_focus=True):
         style = self.rich_style
         if document is None or line >= document.line_count:
             return Strip.blank(width, style)
-        return (
-            Strip([Segment(document.line(line), style)])
-            .adjust_cell_length(width, style)
-            .crop(0, width)
+        return Strip([Segment(document.line(line), style)]).adjust_cell_length(
+            width, style
         )

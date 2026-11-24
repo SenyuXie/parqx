@@ -15,8 +15,8 @@ from parqx.tui.values import document
 from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values.node import BrowseRoot
 from parqx.tui.values.reader import ScalarReader
-from parqx.tui.values.selection import BrowseRoot
 from tests.helpers import run_query, wait_for, wait_for_source_table
 
 
