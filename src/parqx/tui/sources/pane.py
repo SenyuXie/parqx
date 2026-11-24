@@ -127,6 +127,9 @@ class SourcePane(TabPane):
         if context is None:
             return
         self._stop_timer()
+        if event.start_row == event.stop_row:
+            self._schedule.invalidate_window()
+            return
         window_id = self._schedule.request_window(
             event.start_row, event.stop_row, context
         )
@@ -171,7 +174,11 @@ class SourcePane(TabPane):
         except Exception as exc:
             outcome = exc
 
-        delivery = self._schedule.finish(request, self._read_context())
+        delivery = self._schedule.finish(
+            request,
+            self._read_context(),
+            outcome if isinstance(outcome, DataPage) else None,
+        )
         view = self.view
         if delivery != "discard" and view is not None:
             if isinstance(outcome, Exception):

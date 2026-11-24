@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 from weakref import ReferenceType, ref
 
 from parqx.data.parquet import ParquetSource
-from parqx.data.view import PageCache
+from parqx.data.view import DataPage, PageCache
 
 if TYPE_CHECKING:
     from parqx.tui.values.selection import BrowseRoot
@@ -65,7 +65,7 @@ class SourceReadSchedule:
         self._ready = False
 
     def request_window(self, start: int, stop: int, context: ReadContext) -> int:
-        """Replace the pending viewport and allow for page read-ahead.
+        """Record the rows the table is missing in its current viewport.
 
         Args:
             start: First requested row, zero-based.
@@ -77,11 +77,7 @@ class SourceReadSchedule:
         """
         self.invalidate_window()
         self._pending_window = ReadRequest(
-            context.source,
-            ref(context.cache),
-            start,
-            max(stop, start + context.source.page_rows),
-            self._window_id,
+            context.source, ref(context.cache), start, stop, self._window_id
         )
         return self._window_id
 
@@ -115,17 +111,27 @@ class SourceReadSchedule:
             self._ready = False
             if not request.matches(context):
                 return None
+            request = replace(
+                request,
+                stop=min(
+                    request.start + context.source.page_rows, context.cache.row_count
+                ),
+            )
         self._active = request
         return request
 
     def finish(
-        self, request: ReadRequest, context: ReadContext | None
+        self,
+        request: ReadRequest,
+        context: ReadContext | None,
+        page: DataPage | None = None,
     ) -> BrowseRoot | Literal["table", "discard"]:
         """Release the active read's slot and route its success or failure.
 
         Args:
             request: The request returned by `take_next` for the completed read.
             context: Current pane state, or None if the source view is gone.
+            page: Rows actually returned by the read, or None on failure.
 
         Returns:
             The browse root to resolve or fail, "table" for the current viewport,
@@ -140,5 +146,16 @@ class SourceReadSchedule:
         if request.root is not None:
             return request.root if request.root is context.pending_root else "discard"
         if request.window_id == self._window_id:
+            return "table"
+        pending = self._pending_window
+        if (
+            page is not None
+            and pending is not None
+            and pending.matches(context)
+            and max(page.start, pending.start) < min(page.stop, pending.stop)
+        ):
+            # The returned rows can fill part or all of the new viewport.
+            # Its next paint reports any gaps left by the byte limit.
+            self.invalidate_window()
             return "table"
         return "discard"

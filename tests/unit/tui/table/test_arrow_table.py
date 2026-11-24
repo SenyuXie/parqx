@@ -281,7 +281,6 @@ def test_replacing_window_data_discards_cached_cells_and_pending_requests() -> N
     assert widget.columns[0].name == "new"
     assert widget.row_count == 1
     assert not widget._window_failed
-    assert widget._requested_window is None
 
 
 def test_page_widths_match_loaded_data_and_refresh_cached_layout() -> None:

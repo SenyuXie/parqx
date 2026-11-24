@@ -103,7 +103,7 @@ async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -
         assert len(requests) == 1
         assert requests[0].control is table
         assert requests[0].data is data
-        assert (requests[0].start_row, requests[0].stop_row) == (0, 256)
+        assert (requests[0].start_row, requests[0].stop_row) == (0, 11)
         await pilot.press("enter")
         assert len(selected) == 1
         assert selected[0].value is None
@@ -127,7 +127,7 @@ async def test_window_requests_are_coalesced_and_partial_pages_fill_the_view() -
         await pilot.pause()
         request = requests[-1]
         assert request.start_row > 8_900
-        assert request.stop_row - request.start_row <= 256
+        assert request.stop_row - request.start_row <= table.size.height
         table.accept_page(
             DataPage(
                 request.start_row,
@@ -151,6 +151,8 @@ async def test_small_cache_does_not_reload_visible_rows_forever() -> None:
         def on_arrow_table_window_requested(
             self, event: ArrowTable.WindowRequested
         ) -> None:
+            if event.start_row == event.stop_row:
+                return
             requests.append(event.start_row)
             assert len(requests) < 50, "Evicted rows must not cause a repaint/read loop"
             table.accept_page(
@@ -262,6 +264,112 @@ async def test_read_ahead_serves_consecutive_windows_from_cache(tmp_path: Path) 
             assert reads == [(0, 4_096), (4_096, 8_192)]
             assert table.get_cell_at(Coordinate(4_096, 0)).as_py() == 4_096
             assert cache.cache_bytes <= cache.cache_budget
+
+
+@pytest.mark.parametrize(
+    ("page_rows", "page_bytes", "target", "fail_first", "expected_reads"),
+    [
+        (4096, 65536, 1000, False, 1),
+        (16, 65536, 150, True, 2),
+        (4096, 128, 1000, False, 2),
+    ],
+    ids=["reuse-read-ahead", "ignore-obsolete-failure", "byte-limited-read-ahead"],
+)
+async def test_cursor_jump_during_source_read(
+    tmp_path: Path,
+    page_rows: int,
+    page_bytes: int,
+    target: int,
+    fail_first: bool,
+    expected_reads: int,
+) -> None:
+    path = tmp_path / "jump.parquet"
+    pq.write_table(pa.table({"value": range(6000)}), path)
+    started, release = Event(), Event()
+    original_read = ParquetSource.read_window
+    reads: list[int] = []
+
+    def delayed_read(source: ParquetSource, start: int, stop: int) -> DataPage:
+        reads.append(start)
+        if len(reads) == 1:
+            started.set()
+            assert release.wait(timeout=10)
+            if fail_first:
+                raise OSError("obsolete window")
+        return original_read(source, start, stop)
+
+    app = Parqx(
+        [path],
+        config=ParqxConfig(
+            page_rows=page_rows, page_bytes=page_bytes, page_debounce_seconds=0
+        ),
+    )
+    with (
+        patch.object(ParquetSource, "read_window", delayed_read),
+        patch.object(app, "notify") as notify,
+    ):
+        async with app.run_test(size=(60, 15)) as pilot:
+            try:
+                await wait_for(started.is_set, pilot)
+                table = app.query_one(ArrowTable)
+                cache = table.data
+                assert isinstance(cache, PageCache)
+                table.move_cursor(row=target, animate=False)
+                await pilot.pause()
+                release.set()
+
+                await wait_for(
+                    lambda: cache.peek(target, 0) is not None or notify.called, pilot
+                )
+                notify.assert_not_called()
+                assert table.get_cell_at(Coordinate(target, 0)).as_py() == target
+                assert len(reads) == expected_reads
+                assert reads[0] == 0
+            finally:
+                release.set()
+
+
+async def test_return_to_a_cached_viewport_retires_its_pending_read(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "cached.parquet"
+    pq.write_table(pa.table({"value": range(1000)}), path)
+    started, release = Event(), Event()
+    original_read = ParquetSource.read_window
+
+    def fail_after_scroll(source: ParquetSource, start: int, stop: int) -> DataPage:
+        if start <= 500 < stop:
+            started.set()
+            assert release.wait(timeout=10)
+            raise OSError("obsolete window")
+        return original_read(source, start, stop)
+
+    app = Parqx([path], config=ParqxConfig(page_rows=32, page_debounce_seconds=0))
+    with (
+        patch.object(ParquetSource, "read_window", fail_after_scroll),
+        patch.object(app, "notify") as notify,
+    ):
+        async with app.run_test(size=(60, 15)) as pilot:
+            try:
+                await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+                table = app.query_one(ArrowTable)
+                cache = table.data
+                assert isinstance(cache, PageCache)
+                await wait_for(lambda: cache.peek(0, 0) is not None, pilot)
+                table.move_cursor(row=500, animate=False)
+                await wait_for(started.is_set, pilot)
+                table.move_cursor(row=0, animate=False)
+                await pilot.pause()
+                release.set()
+                await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
+                table.move_cursor(row=900, animate=False)
+                await wait_for(
+                    lambda: cache.peek(900, 0) is not None or notify.called, pilot
+                )
+                notify.assert_not_called()
+                assert table.get_cell_at(Coordinate(900, 0)).as_py() == 900
+            finally:
+                release.set()
 
 
 async def test_pending_source_window_keeps_query_editor_focus(

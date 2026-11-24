@@ -149,12 +149,20 @@ class ArrowTable(ScrollView, can_focus=True):
     """Arrow-backed data table widget."""
 
     class WindowRequested(Message):
-        """Request background data after coalescing render-time cache misses."""
+        """Report missing rows, or an empty window when the viewport leaves them."""
 
         def __init__(
             self, table: ArrowTable, data: PageCache, start: int, stop: int
         ) -> None:
-            """Identify the table and data so replaced views can reject old reads."""
+            """Capture the extent of the rows missing from this table.
+
+            Args:
+                table: The table reporting the cache misses.
+                data: Its cache when the misses were observed.
+                start: First missing row, zero-based.
+                stop: Exclusive end of the missing rows. Equal bounds withdraw
+                    the previous window.
+            """
             self.arrow_table = table
             self.data = data
             self.start_row = start
@@ -629,7 +637,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self.data = table
         """Native loaded data or cache-only source access, without rendering I/O."""
         self._missing_rows: set[int] = set()
-        self._requested_window: tuple[int, int] | None = None
+        self._window_report_pending = False
         self._window_failed = False
         self._cached_column_layout: ColumnLayout | None = None
         self._cell_formatter = CellFormatter(inline_limit=max_column_content_width)
@@ -781,33 +789,33 @@ class ArrowTable(ScrollView, can_focus=True):
         return value
 
     def _queue_window(self, row: int) -> None:
-        if not self.is_mounted or self._window_failed:
+        if not self.is_mounted or self._window_failed or row in self._missing_rows:
             return
-        if self._requested_window is not None:
-            start, stop = self._requested_window
-            if start <= row < stop:
-                return
-        if not self._missing_rows:
-            self.call_next(self._request_missing_window)
         self._missing_rows.add(row)
+        self._schedule_window_report()
 
-    def _request_missing_window(self) -> None:
-        if (
-            not isinstance(self.data, PageCache)
-            or not self._missing_rows
-            or self._window_failed
-        ):
-            return
-        # A cursor jump can leave misses from the old viewport in the same frame.
-        # Prefer the rows now on screen rather than scanning the gap between them.
+    def _schedule_window_report(self) -> None:
+        if not self._window_report_pending:
+            self._window_report_pending = True
+            self.call_next(self._report_missing_rows)
+
+    def _visible_rows(self) -> range:
+        """Return the data rows in the viewport below the pinned header."""
         top = round(self.scroll_y)
-        visible = [
-            row for row in self._missing_rows if top <= row < top + self.size.height
-        ]
-        start = min(visible or self._missing_rows)
-        stop = min(self.row_count, start + 256)
-        self._missing_rows.clear()
-        self._requested_window = (start, stop)
+        height = self.scrollable_content_region.height - int(self.show_header)
+        return range(top, min(self.row_count, top + height))
+
+    def _report_missing_rows(self) -> None:
+        """Coalesce a paint's misses and report their extent to the source tab."""
+        if not self._window_report_pending or not isinstance(self.data, PageCache):
+            return
+        self._window_report_pending = False
+        start = stop = 0
+        if self._missing_rows:
+            # A cursor jump can leave misses from the old viewport in this frame.
+            visible = self._missing_rows.intersection(self._visible_rows())
+            self._missing_rows = visible or {min(self._missing_rows)}
+            start, stop = min(self._missing_rows), max(self._missing_rows) + 1
         self.post_message(self.WindowRequested(self, self.data, start, stop))
 
     def accept_page(self, page: DataPage) -> None:
@@ -815,7 +823,8 @@ class ArrowTable(ScrollView, can_focus=True):
         if not isinstance(self.data, PageCache):
             return
         self.data.add_page(page)
-        self._requested_window = None
+        self._missing_rows.clear()
+        self._window_report_pending = False
         self._window_failed = False
         widths_changed = self._get_column_layout().measure_page(page.table)
         if widths_changed:
@@ -828,7 +837,7 @@ class ArrowTable(ScrollView, can_focus=True):
 
     def fail_window(self) -> None:
         """End a failed read; navigation may retry without a repaint retry loop."""
-        self._requested_window = None
+        self._window_report_pending = False
         self._missing_rows.clear()
         self._window_failed = True
 
@@ -838,9 +847,15 @@ class ArrowTable(ScrollView, can_focus=True):
             self._clear_render_caches()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Retry failed windows after vertical navigation."""
+        """Update the missing rows and allow retries after vertical navigation."""
         if round(old_value) != round(new_value):
             self._retry_window()
+            if self._missing_rows:
+                # Returning to cached rows can remove demand without a render miss.
+                visible = self._missing_rows.intersection(self._visible_rows())
+                if visible != self._missing_rows:
+                    self._missing_rows = visible
+                    self._schedule_window_report()
         super().watch_scroll_y(old_value, new_value)
 
     def replace_data(self, data: pa.Table | PageCache) -> None:
@@ -848,7 +863,7 @@ class ArrowTable(ScrollView, can_focus=True):
         self.generation += 1
         self.data = data
         self._missing_rows.clear()
-        self._requested_window = None
+        self._window_report_pending = False
         self._window_failed = False
         self._cached_column_layout = None
         self._update_count += 1
