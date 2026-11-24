@@ -9,11 +9,12 @@ from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.content import Content
-from textual.geometry import Region, Size
+from textual.geometry import Size
 from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
 
+from parqx.tui.values.child_navigation import ChildNavigation
 from parqx.tui.values.document import ContainerDocument, ReadingPosition
 from parqx.tui.values.node import ValueNode
 from parqx.tui.widgets._indexed_scroll_view import IndexedScrollView
@@ -61,29 +62,42 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     def __init__(self, *, classes: str) -> None:
         """Start with no retained node or child widgets."""
         super().__init__(classes=classes)
-        self._pending_page_delta = 0
-        self._pending_selection = False
-        self._restore_y: float | None = None
+        self._navigation = ChildNavigation(0)
 
     def show(
         self, node: ValueNode, *, width: int, selected: int, styles: dict[str, Style]
     ) -> None:
-        """Index the container at this width, retaining a page request across reflow."""
-        self._cancel_index()
+        """Show direct children, retaining navigation when rewrapping the same selection."""
         if (
             self.document is None
             or self.document.node is not node
             or self.highlighted != selected
         ):
-            self._pending_page_delta = 0
+            self._navigation = ChildNavigation(node.child_count, selected)
+            self.set_reactive(ValueChildren.highlighted, self._navigation.highlighted)
+        self.preview_styles = styles
+        self._index_at_width(node, width)
+
+    def reflow(
+        self,
+        width: int,
+        *,
+        styles: dict[str, Style],
+        position: ReadingPosition | None = None,
+    ) -> bool:
+        """Update preview styles and return whether the width required a new index."""
+        self.preview_styles = styles
+        document = self.document
+        if document is not None and document.width != width:
+            self._navigation.restore(position or self.capture_position())
+            self._index_at_width(document.node, width)
+            return True
+        return False
+
+    def _index_at_width(self, node: ValueNode, width: int) -> None:
+        self._cancel_index()
         self.document = ContainerDocument(node, width=width)
         self.document.advance()
-        self.set_reactive(
-            ValueChildren.highlighted, selected if node.child_count else None
-        )
-        self.preview_styles = styles
-        self._pending_selection = False
-        self._restore_y = None
         self._hovered = None
         self.tooltip = None
         self._update_size()
@@ -93,9 +107,8 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         """Release this view's document and cancel its index builder."""
         self._cancel_index()
         self.document = None
-        self._pending_page_delta = 0
+        self._navigation = ChildNavigation(0)
         self.highlighted = None
-        self._restore_y = None
         self.virtual_size = Size(0, 0)
         self.refresh()
 
@@ -103,63 +116,33 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         document = self.document
         if document is not None:
             self.virtual_size = Size(document.width, document.line_count)
-            if self._restore_y is not None:
-                self.scroll_to(
-                    y=self._restore_y, animate=False, force=True, immediate=True
-                )
-                if document.complete or self.max_scroll_y >= self._restore_y:
-                    self._restore_y = None
-            self._apply_pending_page()
-            if self._pending_selection:
-                self._reveal_selection()
+            scroll = self._navigation.scroll_position(
+                document,
+                scroll=self.scroll_y,
+                height=self.scrollable_content_region.height,
+                max_scroll=self.max_scroll_y,
+            )
+            self.highlighted = self._navigation.highlighted
+            if scroll != self.scroll_y:
+                self.scroll_to(y=scroll, animate=False, force=True, immediate=True)
         self.refresh()
 
     def capture_position(self) -> ReadingPosition:
-        """Retain the viewport or a pending request to reveal the highlighted child."""
-        scroll = self.scroll_y if self._restore_y is None else self._restore_y
-        return ReadingPosition(
-            scroll=scroll,
-            reveal_selection=self._pending_selection or bool(self._pending_page_delta),
-        )
+        """Capture the intended viewport, including pending navigation."""
+        return self._navigation.capture(self.scroll_y)
 
     def restore_position(self, position: ReadingPosition) -> None:
-        """Restore immediately, or as soon as its indexed children become available."""
-        self._restore_y = None if position.reveal_selection else position.scroll
-        self._pending_selection = position.reveal_selection
+        """Resume a saved viewport as its indexed lines become available."""
+        self._navigation.restore(position)
         self._update_size()
 
-    def _reveal_selection(self, *, allow_partial: bool = False) -> None:
-        document = self.document
-        if document is None or self.highlighted is None:
-            return
-        index = self.highlighted
-        if index >= document.indexed_children:
-            self._pending_selection = True
-            return
-        self._pending_selection = False
-        y = document.child_line(index)
-        height = document.node.child_height(index, document.width)
-        if allow_partial and Region(0, y, 1, height).overlaps(
-            self.scrollable_content_region.at_offset(self.scroll_offset)
-        ):
-            return
-        if index == document.node.child_count - 1:
-            height += 1  # Keep the closing delimiter visible beside the last child.
-        self.scroll_to_region(
-            Region(0, y, 1, height), animate=False, force=True, immediate=True
-        )
-
-    def _highlight(self, index: int, *, allow_partial: bool = False) -> None:
-        self._pending_page_delta = 0
-        document = self.document
-        if document is None or not document.node.child_count:
-            return
-        self.highlighted = max(0, min(index, document.node.child_count - 1))
-        self._restore_y = None
-        self._reveal_selection(allow_partial=allow_partial)
+    def _highlight(self, index: int) -> None:
+        self._navigation.highlight(index)
+        self._update_size()
 
     def watch_highlighted(self, index: int | None) -> None:
-        """Notify the browser when a different child becomes highlighted."""
+        """Keep programmatic highlights in sync and notify the browser."""
+        self._navigation.highlighted = index
         if self.document is not None and index is not None:
             self.post_message(self.Highlighted(self.document, index))
 
@@ -169,8 +152,8 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
 
     def action_first(self) -> None:
         """Select the first child and expose the opening delimiter."""
-        self._highlight(0)
-        self.scroll_to(y=0, animate=False, immediate=True)
+        self._navigation.first()
+        self._update_size()
 
     def action_last(self) -> None:
         """Select the absolute final child, including during field indexing."""
@@ -179,36 +162,14 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
 
     def action_page(self, direction: int) -> None:
         """Move by one viewport of rendered lines with one line of overlap."""
-        self._pending_page_delta = direction * max(
-            1, self.scrollable_content_region.height - 1
-        )
-        self._apply_pending_page()
-
-    def _apply_pending_page(self) -> None:
-        if (
-            self._pending_page_delta
-            and self.document is not None
-            and self.highlighted is not None
-        ):
-            target = self.document.page_target(
-                self.highlighted,
-                self._pending_page_delta,
-                viewport_top=self.scroll_offset.y,
-            )
-            if target is not None:
-                self.scroll_relative(
-                    y=self._pending_page_delta,
-                    animate=False,
-                    force=True,
-                    immediate=True,
-                )
-                self._highlight(target, allow_partial=True)
+        self._navigation.page(direction, height=self.scrollable_content_region.height)
+        self._update_size()
 
     def action_select(self) -> None:
         """Open a child without requiring preceding values to be formatted."""
-        self._pending_page_delta = 0
-        if self.document is not None and self.highlighted is not None:
-            self.post_message(self.Selected(self.document, self.highlighted))
+        index = self._navigation.select()
+        if self.document is not None and index is not None:
+            self.post_message(self.Selected(self.document, index))
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
         """Expose complete identity and a full-width hover background."""
