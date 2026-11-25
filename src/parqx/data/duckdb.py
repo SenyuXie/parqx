@@ -133,20 +133,23 @@ def _compact_dictionary_values(
     # zero-copy slices and check their size before copying the payload.
     first = used[0].as_py()
     span = dictionary.slice(first, used[-1].as_py() - first + 1)
-    parts: list[pa.Array]
     if len(span) == len(used) and not span.null_count:
-        parts = [span]
-    else:
-        parts = []
-        for code in used:
-            entry = dictionary.slice(code.as_py(), 1)
-            if entry.null_count and not pa.types.is_fixed_size_binary(data_type):
-                # A null string may still have a nonempty underlying byte range.
-                entry = pa.array([None], type=data_type)
-            parts.append(entry)
-    if budget is not None and sum(part.nbytes - 1 for part in parts) > budget:
-        # Each slice may include a validity byte shared in the compact array.
-        raise _BudgetExceededError
+        if budget is not None and span.nbytes - 1 > budget:
+            raise _BudgetExceededError
+        return pa.concat_arrays([span])
+
+    parts: list[pa.Array] = []
+    for code in used:
+        entry = dictionary.slice(code.as_py(), 1)
+        if entry.null_count and not pa.types.is_fixed_size_binary(data_type):
+            # A null string may still have a nonempty underlying byte range.
+            entry = pa.array([None], type=data_type)
+        if budget is not None:
+            # Singleton slices may count the same validity byte.
+            budget -= max(0, entry.nbytes - 1)
+            if budget < 0:
+                raise _BudgetExceededError
+        parts.append(entry)
     return pa.concat_arrays(parts)
 
 

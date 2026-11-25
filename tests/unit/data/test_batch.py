@@ -6,7 +6,7 @@ from struct import pack
 import pyarrow as pa
 import pytest
 
-from parqx.data.duckdb import _bounded_prefix, _compact_batch
+from parqx.data.duckdb import _bounded_prefix, _compact_batch, read_preview
 
 
 def test_dictionary_prefix_budget_excludes_later_references() -> None:
@@ -19,6 +19,32 @@ def test_dictionary_prefix_budget_excludes_later_references() -> None:
     assert kept.nbytes == 10
     assert kept.column(0)[0].as_py() == column[0].as_py()
     assert pa.Table.from_batches([kept]).get_total_buffer_size() < 128
+
+
+def test_preview_skips_sparse_categories_after_exceeding_the_budget() -> None:
+    codes = pa.array([0, 2, 4, 6])
+    offsets = pa.array([0, 1, 4])
+    parent = pa.default_memory_pool()
+    allocations: list[int] = []
+    for last_value in ("", None):
+        values = pa.array(["ok", None, "x" * 64, None, "y" * 64, None, last_value])
+        categories = pa.DictionaryArray.from_arrays(codes, values)
+        rows = pa.ListArray.from_arrays(offsets, categories)
+        batch = pa.RecordBatch.from_arrays([rows], names=["categories"])
+        pool = pa.proxy_memory_pool(parent)
+        with pa.RecordBatchReader.from_batches(batch.schema, [batch]) as reader:
+            try:
+                pa.set_memory_pool(pool)
+                table, reason = read_preview(reader, row_limit=2, byte_limit=100)
+                kept = [row.as_py() for row in table.column(0)]
+                del table
+            finally:
+                pa.set_memory_pool(parent)
+        assert (kept, reason) == ([["ok"]], "byte budget")
+        allocations.append(pool.num_allocations())
+    # The two 64-byte strings already exceed the budget together. Gathering
+    # the final null would require buffers that its empty-string counterpart skips.
+    assert allocations[0] == allocations[1]
 
 
 def test_dictionary_compaction_preserves_order_nulls_and_nested_precision() -> None:
