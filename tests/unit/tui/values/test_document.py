@@ -6,14 +6,15 @@ import pyarrow as pa
 import pytest
 from rich.cells import cell_len
 
+from parqx.data.view import row_value
 from parqx.tui.values.document import ContainerDocument, ScalarDocument
-from parqx.tui.values.node import RowValue, ValueNode
+from parqx.tui.values.node import ValueNode
 
 
 @pytest.mark.parametrize("kind", ["list", "map", "struct", "row"])
 def test_container_navigation_does_not_build_all_child_previews(kind: str) -> None:
     count = 100_000
-    value: pa.Scalar | RowValue
+    value: pa.Scalar
     if kind == "list":
         value = pa.scalar(list(range(count)))
     elif kind == "map":
@@ -26,7 +27,8 @@ def test_container_navigation_does_not_build_all_child_previews(kind: str) -> No
             names=[f"field_{i}" for i in range(count)],
         )[0]
     else:
-        value = RowValue(tuple((f"field_{i}", pa.scalar(i)) for i in range(count)))
+        table = pa.table({f"field_{i}": [i] for i in range(count)})
+        value = row_value(table, 0)
     node = ValueNode(value)
     tracemalloc.start()
     document = ContainerDocument(node, width=36)

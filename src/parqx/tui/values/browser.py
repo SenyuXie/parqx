@@ -15,7 +15,7 @@ from textual.widgets import Button, ContentSwitcher, Static
 
 from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ReadingPosition
-from parqx.tui.values.node import BrowseRoot, RowValue, ValueNode
+from parqx.tui.values.node import BrowseRoot, ValueNode
 from parqx.tui.values.reader import ScalarReader
 
 
@@ -176,7 +176,7 @@ class ValueBrowser(Vertical):
         self._frames = [_BrowseFrame(root.label, ValueNode(root.value))]
         self._show_frame(focus=False)
 
-    def resolve(self, root: BrowseRoot, value: pa.Scalar | RowValue) -> None:
+    def resolve(self, root: BrowseRoot, value: pa.Scalar) -> None:
         """Complete the pending root while preserving visibility and focus.
 
         Args:
@@ -301,11 +301,16 @@ class ValueBrowser(Vertical):
     def _show_frame(self, *, focus: bool) -> None:
         frame = self._frames[-1]
         self._show_breadcrumbs()
-        self.metadata.update(frame.node.metadata)
+        metadata = frame.node.metadata
+        if (
+            len(self._frames) == 1
+            and self.root is not None
+            and self.root.column is None
+        ):
+            metadata = f"row · {metadata}"
+        self.metadata.update(metadata)
         self.metadata.tooltip = Content(
-            frame.node.metadata
-            if frame.node.is_container
-            else frame.node.type_description
+            metadata if frame.node.is_container else frame.node.type_description
         )
         self._bodies.current = self._active_reader.id
         if frame.node.is_container:

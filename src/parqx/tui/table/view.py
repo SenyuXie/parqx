@@ -7,14 +7,13 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
-from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.widget import Widget
 
-from parqx.data.view import DataPage, PageCache
-from parqx.tui.table.arrow_table import ArrowTable, CellNotLoadedError
+from parqx.data.view import DataPage, PageCache, row_value
+from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.values.browser import ValueBrowser
-from parqx.tui.values.node import BrowseRoot, RowValue
+from parqx.tui.values.node import BrowseRoot
 
 
 class TableView(Horizontal):
@@ -79,12 +78,7 @@ class TableView(Horizontal):
             return
         row = root.row - page.start
         value = (
-            RowValue(
-                tuple(
-                    (field.name, page.table.column(i)[row])
-                    for i, field in enumerate(page.table.schema)
-                )
-            )
+            row_value(page.table, row)
             if root.column is None
             else page.table.column(root.column)[row]
         )
@@ -156,17 +150,12 @@ class TableView(Horizontal):
     def _select_row(self, event: ArrowTable.RowSelected) -> None:
         event.stop()
         if event.control is self.table and event.generation == self.table.generation:
-            try:
-                fields = tuple(
-                    (
-                        field.name,
-                        self.table.get_cell_at(Coordinate(event.cursor_row, column)),
-                    )
-                    for column, field in enumerate(self.table.data.schema)
-                )
-                value: RowValue | None = RowValue(fields)
-            except CellNotLoadedError:
-                value = None
+            data = self.table.data
+            value = (
+                data.peek(event.cursor_row, None)
+                if isinstance(data, PageCache)
+                else row_value(data, event.cursor_row)
+            )
             self._select(
                 BrowseRoot(event.generation, event.cursor_row, None, "", value)
             )
