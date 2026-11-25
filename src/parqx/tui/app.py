@@ -140,7 +140,6 @@ class Parqx(App[Any]):
             for entry in self.catalog.entries:
                 await self._add_source_pane(entry.spec.source_id)
             self._tabs.active = self.catalog.entries[0].spec.source_id
-            self._refresh_tab_state()
         for entry in self.catalog.entries:
             self._request_source_metadata(entry.spec.source_id)
         self._exit_if_all_failed()
@@ -169,7 +168,6 @@ class Parqx(App[Any]):
                 await self._add_source_pane(source_id)
                 self._request_source_metadata(source_id)
             self._tabs.active = source_id
-            self._refresh_tab_state()
 
     def get_system_commands(self, screen: Screen[Any]) -> Iterable[SystemCommand]:
         """Expose query workspace creation alongside native commands."""
@@ -215,9 +213,11 @@ class Parqx(App[Any]):
             return self._active_pane() is not None
         return super().check_action(action, parameters)
 
+    @on(TabbedContent.TabActivated, "#results")
+    @on(TabbedContent.Cleared, "#results")
     def _refresh_tab_state(self) -> None:
-        # Update the main footer even while another screen is on top of it.
-        # TabActivated can arrive after automatic exit has detached the tabs.
+        """Update the empty workspace and its footer as native tabs change."""
+        # A queued tab event can arrive after automatic exit detaches the tabs.
         if self._tabs.is_attached:
             self._tabs.display = self._tabs.tab_count > 0
             self._empty.display = not self._tabs.display
@@ -250,10 +250,6 @@ class Parqx(App[Any]):
     def _focus_active_table(self) -> None:
         if not self.screen.is_modal and (table := self._active_table()) is not None:
             table.focus()
-
-    @on(TabbedContent.TabActivated, "#results")
-    def _on_tab_activated(self) -> None:
-        self._refresh_tab_state()
 
     def _request_source_metadata(self, source_id: str) -> None:
         """Start the requested read or show a stored failure in the source tab."""
@@ -340,7 +336,6 @@ class Parqx(App[Any]):
             pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
             await self._tabs.add_pane(pane)
             self._tabs.active = pane_id
-            self._refresh_tab_state()
             pane.editor.focus()
 
     @on(QueryWorkspace.RunRequested)
@@ -399,7 +394,6 @@ class Parqx(App[Any]):
         if maximized is not None and pane in maximized.ancestors:
             self.screen.minimize()
         await self._tabs.remove_pane(pane_id)
-        self._refresh_tab_state()
         if self._sources.has_focus:
             return
         if self._tabs.tab_count:

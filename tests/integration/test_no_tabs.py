@@ -26,6 +26,18 @@ from tests.helpers import (
 )
 
 
+async def test_clearing_native_tabs_shows_the_empty_workspace(
+    small_parquet: Path,
+) -> None:
+    app = Parqx([small_parquet])
+    async with app.run_test() as pilot:
+        tabs = app.query_one(TabbedContent)
+        await wait_for(lambda: bool(tabs.query(ArrowTable)), pilot)
+        await tabs.clear_panes()
+        await wait_for(lambda: app.query_one("#no-tabs").display, pilot)
+        assert not tabs.display
+
+
 async def test_last_file_closes_and_query_action_resumes_with_retained_sources(
     small_parquet: Path,
 ) -> None:

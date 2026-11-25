@@ -6,7 +6,6 @@ import asyncio
 import logging
 from concurrent.futures import Executor
 
-import pyarrow as pa
 from textual import on, work
 from textual.app import ComposeResult
 from textual.content import Content
@@ -71,11 +70,15 @@ class SourcePane(TabPane):
         self._source: ParquetSource | None = None
         self._page_timer: Timer | None = None
         self._schedule = SourceReadSchedule()
-        self.table: ArrowTable | None = None
         self.view: TableView | None = None
         self.loading = True
         self._error = Static("", classes="source-error", markup=False)
         self._error.display = False
+
+    @property
+    def table(self) -> ArrowTable | None:
+        """The source table once its metadata is available."""
+        return self.view.table if self.view is not None else None
 
     def compose(self) -> ComposeResult:
         """Yield available data and the source error placeholder."""
@@ -93,8 +96,7 @@ class SourcePane(TabPane):
             source.schema, source.row_count, cache_bytes=self._config.page_cache_bytes
         )
         if self.view is None:
-            self.table = ArrowTable(data)
-            self.view = TableView(self.table)
+            self.view = TableView(data)
             await self.mount(self.view)
         else:
             self.view.replace_data(data)
@@ -205,11 +207,9 @@ class SourcePane(TabPane):
         self._submit_pending()
 
     def on_unmount(self) -> None:
-        """Release Arrow buffers even if Textual briefly retains the closed widget."""
+        """Retire pending page reads when the source tab closes."""
         # Textual cancels this pane's workers when it is removed.
         self._stop_timer()
         self._schedule.invalidate_window()
         self._source = None
-        if self.table is not None:
-            self.table.replace_data(pa.table({}))
-            self.table = None
+        self.view = None
