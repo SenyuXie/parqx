@@ -8,15 +8,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from textual.events import MouseScrollUp
-from textual.message import Message
 
 from parqx.tui.app import Parqx
 from parqx.tui.values import document
 from parqx.tui.values.browser import ValueBrowser
 from parqx.tui.values.children import ValueChildren
 from parqx.tui.values.document import ContainerDocument, ScalarDocument, index_document
+from parqx.tui.values.node import BrowseRoot
 from parqx.tui.values.reader import ScalarReader
-from parqx.tui.values.selection import BrowseRoot
 from tests.helpers import run_query, wait_for, wait_for_source_table
 
 
@@ -116,14 +115,8 @@ async def test_page_from_unindexed_field_respects_later_navigation(
 async def test_tiny_page_waits_for_the_next_wrapped_field(
     small_parquet: Path, monkeypatch: pytest.MonkeyPatch, replace_root: bool
 ) -> None:
-    highlights: set[tuple[ContainerDocument, int]] = set()
-
-    def record_highlight(message: Message) -> None:
-        if isinstance(message, ValueChildren.Highlighted):
-            highlights.add((message.document, message.index))
-
     app = Parqx([small_parquet])
-    async with app.run_test(size=(100, 30), message_hook=record_highlight) as pilot:
+    async with app.run_test(size=(100, 30)) as pilot:
         table = await wait_for_source_table(app, pilot)
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
@@ -143,10 +136,8 @@ async def test_tiny_page_waits_for_the_next_wrapped_field(
             last_indexed = document.indexed_children - 1
             children.action_move(last_indexed)
             await pilot.pause()
-            highlights.clear()
             await pilot.press("pagedown")
             assert children.highlighted == last_indexed
-            assert not highlights
             if replace_root:
                 browser.select(BrowseRoot(0, 1, 0, "replacement", record))
         finally:
@@ -155,7 +146,6 @@ async def test_tiny_page_waits_for_the_next_wrapped_field(
         assert current is not None
         await wait_for(lambda: current.complete, pilot)
         assert children.highlighted == (0 if replace_root else last_indexed + 1)
-        assert highlights == (set() if replace_root else {(document, last_indexed + 1)})
 
 
 async def test_reflow_reveals_a_pending_page_that_now_fits_in_the_index(
@@ -175,17 +165,20 @@ async def test_reflow_reveals_a_pending_page_that_now_fits_in_the_index(
             children.focus()
             await pilot.pause()
             children.action_move(108)
+            page_lines = children.scrollable_content_region.height - 1
             await pilot.press("pagedown")
             assert children.highlighted == 108
             await pilot.resize_terminal(100, 40)
             await pilot.pause()
-            assert children.highlighted == 120
+            # Each field wraps onto two lines at the narrower width.
+            target = 108 + page_lines // 2
+            assert children.highlighted == target
             document = children.document
             assert document is not None
             top = children.scroll_offset.y
             assert (
                 top
-                <= document.child_line(120)
+                <= document.child_line(target)
                 < top + children.scrollable_content_region.height
             )
         finally:

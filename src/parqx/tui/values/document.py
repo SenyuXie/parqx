@@ -139,7 +139,6 @@ class ScalarDocument:
         self.value = value
         leaf, self._metadata = scalar_leaf(value)
         self.role: Literal["string", "number", "boolean", "muted"] = "muted"
-        self.info = "Complete value\nRead only"
         self.bytes_per_line: int | None = None
         self._buffer: pa.Buffer
         self._offset_width = 8
@@ -183,15 +182,11 @@ class ScalarDocument:
                 self.complete = True
             else:
                 self._buffer = pa.py_buffer(b"0x")
-                self.info = "Empty binary\n0 bytes"
         else:
             content = read_scalar(value)
             self._buffer = pa.py_buffer(content.text.encode("utf-8"))
-            self._metadata, self.info, self.role = (
-                content.metadata,
-                content.info,
-                content.role,
-            )
+            self._metadata = content.metadata
+            self.role = content.role
         self._rows = self._text_rows(0)
 
     @property

@@ -87,7 +87,6 @@ def test_binary_families_show_offsets_hex_and_printable_bytes(
     assert document.line(0) == "00000000  00 41 7e ff  |.A~.|"
     assert document.line(1) == "00000004  0a 5a        |.Z  |"
     assert document.metadata == f"{data_type} · 6 bytes"
-    assert document.info.startswith("Complete value")
 
 
 @pytest.mark.parametrize(
@@ -98,12 +97,11 @@ def test_empty_binary_is_distinct_from_null(data_type: pa.DataType) -> None:
     empty.advance()
     assert empty.line(0) == "0x"
     assert empty.metadata == f"{data_type} · 0 bytes"
-    assert empty.info == "Empty binary\n0 bytes"
 
     null = ScalarDocument(pa.scalar(None, type=data_type), width=29)
     null.advance()
     assert null.line(0) == "null"
-    assert null.info == "Null value"
+    assert null.metadata == str(data_type)
 
 
 @pytest.mark.parametrize(("width", "line_count"), [(29, 65), (45, 33), (77, 17)])

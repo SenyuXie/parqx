@@ -129,11 +129,12 @@ async def test_precise_scalars_and_binary_reflow(typed_scalars_parquet: Path) ->
         table.move_cursor(row=1, column=3)
         await pilot.press("enter")
         assert reader.text == "0x"
-        assert "Empty binary" in str(browser.info.content)
+        assert "0 bytes" in str(browser.metadata.content)
         table.move_cursor(row=2, column=3)
         await pilot.press("enter")
         assert reader.text == "null"
-        assert "Null value" in str(browser.info.content)
+        assert "binary" in str(browser.metadata.content)
+        assert reader.has_class("muted")
         table.move_cursor(row=0, column=4)
         await pilot.press("enter", "tab")
         assert reader.text == '  [bold]literal[/bold] 中文 👋\n{"keep": "text"}\t  '
