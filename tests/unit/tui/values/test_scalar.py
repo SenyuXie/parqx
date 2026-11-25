@@ -32,7 +32,6 @@ def test_scalar_digits_and_booleans_are_complete(
     result = read_scalar(pa.scalar(value, type=pa.type_for_alias(type_name)))
     assert result.text == expected
     assert result.metadata == type_name
-    assert result.info.startswith("Complete value")
 
 
 @pytest.mark.parametrize(
@@ -56,7 +55,6 @@ def test_decimal_reading_keeps_precision_and_scale(
     assert result.text == text
     assert result.metadata == str(data_type)
     assert result.role == "number"
-    assert result.info.startswith("Complete value")
 
 
 @pytest.mark.parametrize("type_name", ["float16", "float32", "float64"])
@@ -81,7 +79,6 @@ def test_finite_float_text_round_trips_to_the_supplied_type(
 def test_special_floats_are_explicit(value: float, expected: str) -> None:
     result = read_scalar(pa.scalar(value))
     assert result.text == expected
-    assert result.info.startswith("Complete value")
     assert isnan(float(result.text)) if isnan(value) else float(result.text) == value
 
 
@@ -99,12 +96,13 @@ def test_null_and_empty_text_have_distinct_reading_states(value: pa.Scalar) -> N
     empty = read_scalar(pa.scalar(""))
     literal = read_scalar(pa.scalar("null"))
     assert null.text == "null"
-    assert null.info == "Null value"
+    assert null.metadata == str(value.type)
+    assert null.role == "muted"
     assert empty.text == '""'
-    assert empty.info == "Empty string\n0 characters"
+    assert empty.metadata == "string · 0 characters"
     assert literal.text == "null"
-    assert literal.info.startswith("Complete value")
-    assert "4 characters" in literal.metadata
+    assert literal.metadata == "string · 4 characters"
+    assert literal.role == "string"
 
 
 @pytest.mark.parametrize(
@@ -121,7 +119,6 @@ def test_non_leaf_and_unknown_types_are_explicitly_unsupported(
     result = read_scalar(value)
     assert result.metadata == str(value.type)
     assert "Unsupported" in result.text
-    assert "Complete value" not in result.info
 
 
 @pytest.mark.parametrize(
@@ -158,7 +155,6 @@ def test_temporal_text_keeps_fractions_and_timezone(
     result = read_scalar(pa.scalar(raw, type=data_type))
     assert result.text == expected
     assert result.metadata == str(data_type)
-    assert result.info.startswith("Complete value")
 
 
 @pytest.mark.parametrize(
@@ -200,13 +196,11 @@ def test_string_families_and_json_extensions_remain_literal(
     assert result.text == text
     assert "characters" in result.metadata
     assert result.role == "string"
-    assert result.info.startswith("Complete value")
     empty = read_scalar(pa.scalar("", type=data_type))
     null = read_scalar(pa.scalar(None, type=data_type))
     assert empty.text == '""'
-    assert empty.info.startswith("Empty string")
+    assert "0 characters" in empty.metadata
     assert null.text == "null"
-    assert null.info == "Null value"
 
 
 @pytest.mark.parametrize("null_index", [False, True])
@@ -217,7 +211,6 @@ def test_dictionary_null_members_and_indices_are_typed_nulls(null_index: bool) -
     )[0]
     result = read_scalar(scalar)
     assert result.text == "null"
-    assert result.info == "Null value"
     assert "dictionary" in result.metadata
     assert "large_string" in result.metadata
 
@@ -245,7 +238,6 @@ def test_dictionary_dispatch_preserves_the_actual_leaf(
     assert result.text == expected
     assert result.role == role
     assert "dictionary" in result.metadata
-    assert result.info.startswith("Complete value")
 
 
 @pytest.mark.parametrize(
@@ -265,15 +257,9 @@ def test_union_reading_uses_the_active_leaf(expression: str, expected: str) -> N
     result = read_scalar(scalar)
     assert result.text == expected
     assert "union" in result.metadata
-    assert (
-        result.info == "Null value"
-        if expected == "null"
-        else result.info.startswith("Complete value")
-    )
 
 
 def test_uuid_has_its_complete_readable_form() -> None:
     result = read_scalar(pa.scalar(bytes(range(16)), type=pa.uuid()))
     assert result.text == "00010203-0405-0607-0809-0a0b0c0d0e0f"
     assert "uuid" in result.metadata
-    assert result.info.startswith("Complete value")

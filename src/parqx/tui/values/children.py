@@ -44,19 +44,13 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
     """Foreground styles for visible field names and value previews."""
     _hovered: reactive[int | None] = reactive(None)
 
-    class ChildMessage(Message):
-        """Base message identifying a positional child in its document."""
+    class Selected(Message):
+        """Posted when the user opens a child in the displayed document."""
 
         def __init__(self, document: ContainerDocument, index: int) -> None:
             """Capture a positional child and its owning document."""
             self.document, self.index = document, index
             super().__init__()
-
-    class Highlighted(ChildMessage):
-        """A positional child in a particular document was highlighted."""
-
-    class Selected(ChildMessage):
-        """The highlighted child was explicitly opened."""
 
     def __init__(self, *, classes: str) -> None:
         """Start with no retained node or child widgets."""
@@ -87,15 +81,13 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
         *,
         styles: dict[str, Style],
         position: ReadingPosition | None = None,
-    ) -> bool:
-        """Update preview styles and return whether the width required a new index."""
+    ) -> None:
+        """Update the preview styles and rebuild the index if the width changed."""
         self.preview_styles = styles
         document = self.document
         if document is not None and document.width != width:
             self._set_position(position or self.capture_position())
             self._index_at_width(document.node, width)
-            return True
-        return False
 
     def _index_at_width(self, node: ValueNode, width: int) -> None:
         self._cancel_index()
@@ -197,15 +189,12 @@ class ValueChildren(IndexedScrollView[ContainerDocument], can_focus=True):
             if self.highlighted != index:
                 # Resolving a pending page is part of the original navigation.
                 self.set_reactive(ValueChildren.highlighted, index)
-                self.post_message(self.Highlighted(document, index))
             self._restore_y = None
             self._reveal = True
 
-    def watch_highlighted(self, index: int | None) -> None:
-        """Treat a programmatic highlight as navigation and notify the browser."""
+    def watch_highlighted(self) -> None:
+        """Invalidate a saved viewport when the highlight changes programmatically."""
         self.navigation_revision += 1
-        if self.document is not None and index is not None:
-            self.post_message(self.Highlighted(self.document, index))
 
     def action_move(self, delta: int) -> None:
         """Move by one child, independent of its visual height."""

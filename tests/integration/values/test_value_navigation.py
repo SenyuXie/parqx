@@ -176,10 +176,7 @@ async def test_deep_unicode_breadcrumbs_and_field_tooltips(deep_parquet: Path) -
                 for segment in line
             )
         assert await pilot.hover(options, offset=(8, 2))
-        assert label in str(options.tooltip)
-        info = browser.query_one(".value-info", Static)
-        assert "…\nstruct · 2 fields" in str(info.content)
-        assert label in str(info.tooltip)
+        assert str(options.tooltip) == f"{label}\nstruct · 2 fields"
         for clicked_line in (2, 3):
             assert await pilot.click(options, offset=(8, clicked_line))
             crumbs = list(browser.query(".value-crumb").results(Button))
@@ -250,7 +247,7 @@ async def test_duplicate_positions_and_empty_structs_at_arrow_delivery(
         assert "0 fields" in str(browser.metadata.content)
 
 
-async def test_old_child_messages_cannot_change_the_current_browse_path(
+async def test_stale_child_selection_preserves_the_current_browse_path(
     nested_parquet: Path,
 ) -> None:
     app = Parqx([nested_parquet])
@@ -266,12 +263,10 @@ async def test_old_child_messages_cannot_change_the_current_browse_path(
         assert previous is not None
         await pilot.press("down", "enter")
         assert children.document is not previous
-        children.post_message(ValueChildren.Highlighted(previous, 1))
         children.post_message(ValueChildren.Selected(previous, 1))
         await pilot.pause()
         assert children.has_focus
         assert children.highlighted == 0
         assert len(browser.query(".value-crumb")) == 2
-        assert "name" in str(browser.info.content)
         await pilot.press("enter")
         assert browser.reader.text == "Ada\n[bold]中文[/bold]"

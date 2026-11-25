@@ -15,13 +15,11 @@ class ScalarContent:
     Attributes:
         text: Complete text or an explicit reading-state message.
         metadata: Arrow type and optional size information.
-        info: Reading status, including NULL and empty values.
         role: Color category for the displayed value.
     """
 
     text: str
     metadata: str
-    info: str
     role: Literal["string", "number", "boolean", "muted"]
 
 
@@ -60,11 +58,10 @@ def read_scalar(value: pa.Scalar) -> ScalarContent:
     strings and binary directly. Valid binary and container inputs here return
     an unsupported-type message.
     """
-    complete = "Complete value\nRead only"
     value, metadata = scalar_leaf(value)
     data_type = value.type
     if not value.is_valid:
-        return ScalarContent("null", metadata, "Null value", "muted")
+        return ScalarContent("null", metadata, "muted")
     if (
         pa.types.is_string(data_type)
         or pa.types.is_large_string(data_type)
@@ -72,13 +69,11 @@ def read_scalar(value: pa.Scalar) -> ScalarContent:
     ):
         text: str = value.as_py()
         metadata += f" · {len(text):,} characters"
-        if not text:
-            return ScalarContent('""', metadata, "Empty string\n0 characters", "string")
-        return ScalarContent(text, metadata, complete, "string")
+        return ScalarContent(text or '""', metadata, "string")
     if pa.types.is_integer(data_type):
-        return ScalarContent(str(value.as_py()), metadata, complete, "number")
+        return ScalarContent(str(value.as_py()), metadata, "number")
     if pa.types.is_decimal(data_type):
-        return ScalarContent(format(value.as_py(), "f"), metadata, complete, "number")
+        return ScalarContent(format(value.as_py(), "f"), metadata, "number")
     if pa.types.is_floating(data_type):
         number: float = value.as_py()
         if isnan(number):
@@ -87,30 +82,25 @@ def read_scalar(value: pa.Scalar) -> ScalarContent:
             text = "+Infinity" if number > 0 else "-Infinity"
         else:
             text = repr(number)
-        return ScalarContent(text, metadata, complete, "number")
+        return ScalarContent(text, metadata, "number")
     if pa.types.is_boolean(data_type):
-        return ScalarContent(
-            "true" if value.as_py() else "false", metadata, complete, "boolean"
-        )
+        return ScalarContent("true" if value.as_py() else "false", metadata, "boolean")
     if (
         pa.types.is_date(data_type)
         or pa.types.is_time(data_type)
         or pa.types.is_timestamp(data_type)
     ):
         text = cast(str, pc.cast(value, pa.string()).as_py())
-        return ScalarContent(text, metadata, complete, "number")
+        return ScalarContent(text, metadata, "number")
     if isinstance(value, pa.DurationScalar):
         unit = cast(pa.DurationType, data_type).unit
-        return ScalarContent(f"{value.value} {unit}", metadata, complete, "number")
+        return ScalarContent(f"{value.value} {unit}", metadata, "number")
     if isinstance(value, pa.MonthDayNanoIntervalScalar):
         interval = value.as_py()
         text = f"{interval.months} months, {interval.days} days, {interval.nanoseconds} nanoseconds"
-        return ScalarContent(text, metadata, complete, "number")
+        return ScalarContent(text, metadata, "number")
     if isinstance(value, pa.UuidScalar):
-        return ScalarContent(str(value.as_py()), metadata, complete, "string")
+        return ScalarContent(str(value.as_py()), metadata, "string")
     return ScalarContent(
-        "Unsupported value type.\nThis type cannot be explored yet.",
-        metadata,
-        "Unsupported type",
-        "muted",
+        "Unsupported value type.\nThis type cannot be explored yet.", metadata, "muted"
     )

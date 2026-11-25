@@ -11,23 +11,17 @@ from parqx.tui.values.node import ValueNode
 from tests.helpers import wait_for
 
 
-async def test_highlighting_and_selection_dispatch_independently() -> None:
+async def test_keyboard_and_mouse_select_the_targeted_child() -> None:
     children = ValueChildren(classes="value-children")
-    received: list[tuple[str, ContainerDocument, int]] = []
+    selected: list[tuple[ContainerDocument, int]] = []
 
     class ChildrenApp(App[None]):
         def compose(self) -> ComposeResult:
             yield children
 
-        @on(ValueChildren.Highlighted)
-        def on_highlighted(self, event: ValueChildren.Highlighted) -> None:
-            event.stop()
-            received.append(("highlighted", event.document, event.index))
-
         @on(ValueChildren.Selected)
         def on_selected(self, event: ValueChildren.Selected) -> None:
-            event.stop()
-            received.append(("selected", event.document, event.index))
+            selected.append((event.document, event.index))
 
     async with ChildrenApp().run_test() as pilot:
         children.show(ValueNode(pa.scalar([10, 20])), width=40, selected=0, styles={})
@@ -36,30 +30,19 @@ async def test_highlighting_and_selection_dispatch_independently() -> None:
         assert document is not None
         assert children.highlighted == 0
 
-        await pilot.press("up", "up")
-        assert received == []
-        assert await pilot.click(children, offset=(2, 1))
-        assert received == [("selected", document, 0)]
-        received.clear()
-
         await pilot.press("down")
         assert children.highlighted == 1
-        assert received == [("highlighted", document, 1)]
-        received.clear()
+        assert selected == []
 
         await pilot.press("enter")
-        assert received == [("selected", document, 1)]
-        received.clear()
+        assert selected == [(document, 1)]
 
         # The opening delimiter occupies line zero; the first child is on line one.
         assert await pilot.click(children, offset=(2, 1))
         assert children.highlighted == 0
-        assert received == [("highlighted", document, 0), ("selected", document, 0)]
-
-        received.clear()
-        children.highlighted = 1
-        await pilot.press("enter")
-        assert received == [("highlighted", document, 1), ("selected", document, 1)]
+        assert selected == [(document, 1), (document, 0)]
+        assert await pilot.click(children, offset=(2, 1))
+        assert selected == [(document, 1), (document, 0), (document, 0)]
 
 
 async def test_paging_targets_the_field_on_the_destination_line() -> None:

@@ -93,10 +93,6 @@ class ValueBrowser(Vertical):
             &:focus { border: none; }
             &.error { color: $error; }
         }
-        .value-info {
-            height: 3; border-top: solid $foreground 20%;
-            padding: 0 1; color: $text-muted;
-        }
         .value-children {
             height: 1fr; padding: 0; border: none; background: transparent;
             &:focus { border: none; }
@@ -138,7 +134,6 @@ class ValueBrowser(Vertical):
         )
         self._crumb_depths: dict[Button, int] = {}
         self.metadata = Static("", markup=False, classes="value-type")
-        self.info = Static("", markup=False, classes="value-info")
         self.options = ValueChildren(classes="value-children")
         self.options.id = "value-children"
         self.reader = ScalarReader(classes="value-reader")
@@ -162,7 +157,6 @@ class ValueBrowser(Vertical):
         yield self.crumbs
         yield self.metadata
         yield self._bodies
-        yield self.info
 
     def select(self, root: BrowseRoot) -> None:
         """Start an explicit inspection and discard the previous browse path.
@@ -178,7 +172,6 @@ class ValueBrowser(Vertical):
             self._awaiting_value = True
             self.identity.update(root.label)
             self._show_status("Loading value…")
-            self.info.update("Reading source")
             return
         self._frames = [_BrowseFrame(root.label, ValueNode(root.value))]
         self._show_frame(focus=False)
@@ -205,7 +198,6 @@ class ValueBrowser(Vertical):
         self.status_view.remove_class("muted")
         self.status_view.add_class("error")
         self._show_status(f"Read error\n{message}")
-        self.info.update("Read error")
 
     def toggle_visibility(self) -> None:
         """Resume the saved viewport after native controls handle being shown."""
@@ -318,7 +310,12 @@ class ValueBrowser(Vertical):
         self._bodies.current = self._active_reader.id
         if frame.node.is_container:
             self.reader.clear()
-            self._show_children(frame)
+            self.options.show(
+                frame.node,
+                width=self._body_width(),
+                selected=frame.selected,
+                styles=self._preview_styles(),
+            )
         else:
             self._show_scalar(frame.node.scalar)
         self._reset_bookmarks()
@@ -386,10 +383,6 @@ class ValueBrowser(Vertical):
         self.metadata.update(content.metadata)
         self.reader.remove_class("string", "number", "boolean", "muted")
         self.reader.add_class(content.role)
-        self.info.update(
-            content.info if content.complete else "Preparing text…\nRead only"
-        )
-        self.info.tooltip = None
 
     def _preview_styles(self) -> dict[str, Style]:
         # Only foreground colors belong to the preview. ValueChildren owns the
@@ -424,64 +417,22 @@ class ValueBrowser(Vertical):
             return
         frame = self._frames[-1]
         if frame.node.is_container:
-            rewrapped = self.options.reflow(
+            self.options.reflow(
                 self._body_width(), styles=self._preview_styles(), position=position
             )
-            if rewrapped and self.options.highlighted is not None:
-                self._selection_info(frame, self.options.highlighted)
         else:
             self.reader.reflow(self._scalar_width())
-
-    def _show_children(self, frame: _BrowseFrame) -> None:
-        self.options.show(
-            frame.node,
-            width=self._body_width(),
-            selected=frame.selected,
-            styles=self._preview_styles(),
-        )
-        if frame.node.child_count:
-            self._selection_info(frame, frame.selected)
-        else:
-            self.info.update("Empty container\n0 children")
-            self.info.tooltip = None
-
-    def _selection_info(self, frame: _BrowseFrame, index: int) -> None:
-        name, child = frame.node.child(index)
-        width = max(1, self.content_size.width - 2)
-        label = _label_text(name)
-        label.truncate(width, overflow="ellipsis")
-        metadata = Text(child.metadata)
-        metadata.truncate(width, overflow="ellipsis")
-        self.info.update(label + Text("\n") + metadata)
-        self.info.tooltip = Content(
-            f"{name}\n{child.metadata if child.is_container else child.type_description}\n{child.metadata}"
-        )
-
-    def _frame_for_child(
-        self, event: ValueChildren.ChildMessage
-    ) -> _BrowseFrame | None:
-        """Accept only children from the current rendered container."""
-        if (
-            self._frames
-            and self.options.document is event.document
-            and self._frames[-1].node is event.document.node
-        ):
-            return self._frames[-1]
-        return None
-
-    @on(ValueChildren.Highlighted)
-    def _highlighted(self, event: ValueChildren.Highlighted) -> None:
-        event.stop()
-        frame = self._frame_for_child(event)
-        if frame is not None:
-            self._selection_info(frame, event.index)
 
     @on(ValueChildren.Selected)
     def _open_child(self, event: ValueChildren.Selected) -> None:
         event.stop()
-        frame = self._frame_for_child(event)
-        if frame is None:
+        if (
+            not self._frames
+            or event.document is not self.options.document
+            or event.document.node is not self._frames[-1].node
+        ):
             return
+        frame = self._frames[-1]
         frame.selected = event.index
         self._save_position()
         name, child = frame.node.child(frame.selected)
@@ -521,8 +472,6 @@ class ValueBrowser(Vertical):
             if empty
             else "Press Enter in the table to select a cell or row."
         )
-        self.info.update("")
-        self.info.tooltip = None
         self.options.tooltip = None
         if had_focus and self.is_mounted and self.display:
             self.status_view.focus()

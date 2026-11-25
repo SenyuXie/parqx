@@ -8,7 +8,7 @@ import pyarrow as pa
 import pytest
 from textual.coordinate import Coordinate
 from textual.widget import Widget
-from textual.widgets import Static, TabbedContent, TextArea
+from textual.widgets import TabbedContent, TextArea
 
 from parqx.tui.app import Parqx
 from parqx.tui.table.arrow_table import ArrowTable, CursorType
@@ -222,20 +222,21 @@ async def test_scalar_states_and_nonvalue_cursors_are_explicit(
         assert table.parent is not None
         browser = table.parent.query_one(ValueBrowser)
         reader = browser.query_one(".value-reader", ScalarReader)
-        info = browser.query_one(".value-info", Static)
         table.focus()
         table.move_cursor(row=1, column=0)
         await pilot.press("enter")
         assert reader.text == '""'
-        assert "Empty string" in str(info.content)
+        assert "0 characters" in str(browser.metadata.content)
         table.move_cursor(row=2, column=0)
         await pilot.press("enter")
         assert reader.text == "null"
-        assert "Complete value" in str(info.content)
+        assert "4 characters" in str(browser.metadata.content)
+        assert reader.has_class("string")
         table.move_cursor(row=2, column=1)
         await pilot.press("enter")
         assert reader.text == "null"
-        assert "Null value" in str(info.content)
+        assert "int64" in str(browser.metadata.content)
+        assert reader.has_class("muted")
         table.move_cursor(row=0, column=3)
         await pilot.press("enter")
         assert reader.text == "true"

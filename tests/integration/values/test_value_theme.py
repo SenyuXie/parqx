@@ -195,7 +195,6 @@ async def test_theme_switch_updates_browser_surfaces_and_interaction_states() ->
                     Color.parse(variables["foreground"]).with_alpha(0.2),
                 )
                 assert browser.metadata.styles.border_bottom == separator
-                assert browser.info.styles.border_top == separator
                 options.action_first()
                 for row in range(1, 5):
                     _assert_readable(options.render_line(row))
