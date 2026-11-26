@@ -1,7 +1,9 @@
 """DuckDB file metadata, ordered paging, budgets and cancellation."""
 
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
+from typing import Self
 from unittest.mock import patch
 
 import duckdb
@@ -275,23 +277,30 @@ def test_failed_read_closes_reader_before_connection(small_parquet: Path) -> Non
         threads=2,
     )
     closed: list[str] = []
-    original_close = duckdb.DuckDBPyConnection.close
+    original_exit = duckdb.DuckDBPyConnection.__exit__
 
-    def close_connection(connection: duckdb.DuckDBPyConnection) -> None:
-        original_close(connection)
-        closed.append("connection")
+    def exit_connection(
+        connection: duckdb.DuckDBPyConnection, typ: object, exc: object, tb: object
+    ) -> None:
+        try:
+            original_exit(connection, typ, exc, tb)
+        finally:
+            closed.append("connection")
 
     class Reader:
         schema = source.schema
 
-        def read_next_batch(self) -> pa.RecordBatch:
+        def __enter__(self) -> Self:
+            return self
+
+        def __iter__(self) -> Iterator[pa.RecordBatch]:
             raise RuntimeError("read failed")
 
-        def close(self) -> None:
+        def __exit__(self, typ: object, exc: object, tb: object) -> None:
             closed.append("reader")
 
     with (
-        patch.object(duckdb.DuckDBPyConnection, "close", close_connection),
+        patch.object(duckdb.DuckDBPyConnection, "__exit__", exit_connection),
         patch.object(duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()),
         pytest.raises(RuntimeError, match="read failed"),
     ):

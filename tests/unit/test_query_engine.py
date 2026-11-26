@@ -1,8 +1,10 @@
 """SQL behavior and resource ownership at the execution/native boundary."""
 
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Self
 from unittest.mock import patch
 
 import duckdb
@@ -65,30 +67,33 @@ def test_native_resources_close_in_order_even_after_failures(
 ) -> None:
     closed: list[str] = []
     directories: list[Path] = []
-    original_close = duckdb.DuckDBPyConnection.close
+    original_exit = duckdb.DuckDBPyConnection.__exit__
     batch = pa.RecordBatch.from_arrays([pa.array([42])], names=["answer"])
 
     class Reader:
         schema = batch.schema
-        exhausted = False
 
-        def read_next_batch(self) -> pa.RecordBatch:
+        def __enter__(self) -> Self:
+            return self
+
+        def __iter__(self) -> Iterator[pa.RecordBatch]:
             assert directories[0].exists()
             if failure == "read":
                 raise OSError("read failed")
-            if self.exhausted:
-                raise StopIteration
-            self.exhausted = True
-            return batch
+            yield batch
 
-        def close(self) -> None:
+        def __exit__(self, typ: object, exc: object, tb: object) -> None:
             closed.append("reader")
             if failure == "reader":
                 raise OSError("reader failed")
 
-    def close(connection: duckdb.DuckDBPyConnection) -> None:
-        original_close(connection)
-        closed.append("connection")
+    def exit_connection(
+        connection: duckdb.DuckDBPyConnection, typ: object, exc: object, tb: object
+    ) -> None:
+        try:
+            original_exit(connection, typ, exc, tb)
+        finally:
+            closed.append("connection")
         if failure == "connection":
             raise OSError("connection failed")
 
@@ -98,7 +103,7 @@ def test_native_resources_close_in_order_even_after_failures(
         return directory
 
     monkeypatch.setattr(engine, "TemporaryDirectory", temporary)
-    monkeypatch.setattr(duckdb.DuckDBPyConnection, "close", close)
+    monkeypatch.setattr(duckdb.DuckDBPyConnection, "__exit__", exit_connection)
     with patch.object(
         duckdb.DuckDBPyRelation, "to_arrow_reader", return_value=Reader()
     ):

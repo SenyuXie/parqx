@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 from pathlib import Path
 
 import pyarrow as pa
@@ -60,7 +59,7 @@ class ParquetSource:
             relation = connection.read_parquet(
                 str(self.path), hive_partitioning=False
             ).limit(0)
-            with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
+            with relation.to_arrow_reader(_BATCH_ROWS) as reader:
                 self.schema = reader.schema
         self._check_unchanged()
 
@@ -91,7 +90,7 @@ class ParquetSource:
             relation = connection.read_parquet(
                 str(self.path), hive_partitioning=False
             ).limit(stop - start, offset=start)
-            with closing(relation.to_arrow_reader(_BATCH_ROWS)) as reader:
+            with relation.to_arrow_reader(_BATCH_ROWS) as reader:
                 table, _ = read_preview(
                     reader, row_limit=stop - start, byte_limit=self.page_bytes
                 )

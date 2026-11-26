@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from contextlib import closing
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -70,7 +69,7 @@ def execute_query(
                     continue
                 relation.create_view(source.table_name, replace=False)
             relation = connection.sql(sql)
-            with closing(relation.to_arrow_reader(config.query_batch_rows)) as reader:
+            with relation.to_arrow_reader(config.query_batch_rows) as reader:
                 table, reason = read_preview(
                     reader,
                     row_limit=config.preview_rows,

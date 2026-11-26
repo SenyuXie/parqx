@@ -174,6 +174,24 @@ class SourceCatalog:
 
     def snapshot(self) -> tuple[SourceSpec, ...]:
         """Freeze the sources available to one query in input order."""
-        return tuple(
-            entry.spec for entry in self._entries.values() if entry.state == "ready"
-        )
+        ready, _ = self.query_inputs()
+        return ready
+
+    def query_inputs(self) -> tuple[tuple[SourceSpec, ...], tuple[SourceIssue, ...]]:
+        """Capture source availability at the time a SQL draft is submitted.
+
+        Returns:
+            Ready sources and warnings for unavailable sources. Both tuples
+            follow input order. A ready source remains available during a reread.
+        """
+        ready: list[SourceSpec] = []
+        unavailable: list[SourceIssue] = []
+        for entry in self._entries.values():
+            if entry.state == "ready":
+                ready.append(entry.spec)
+            else:
+                unavailable.append(
+                    entry.issue
+                    or SourceIssue(entry.spec, "Still loading; try again shortly.")
+                )
+        return tuple(ready), tuple(unavailable)

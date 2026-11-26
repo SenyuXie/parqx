@@ -224,7 +224,7 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
     directories: list[Path] = []
     query_thread: list[int] = []
     original_sql = duckdb.DuckDBPyConnection.sql
-    original_close = duckdb.DuckDBPyConnection.close
+    original_exit = duckdb.DuckDBPyConnection.__exit__
 
     def temporary(*, prefix: str) -> TemporaryDirectory[str]:
         directory = TemporaryDirectory(prefix=prefix, dir=tmp_path)
@@ -241,15 +241,19 @@ async def test_quit_leaves_native_work_to_finish_and_cleanup(
             raise OSError("late query error")
         return original_sql(connection, sql)
 
-    def close(connection: duckdb.DuckDBPyConnection) -> None:
-        original_close(connection)
-        if get_ident() in query_thread:
-            closed.set()
+    def exit_connection(
+        connection: duckdb.DuckDBPyConnection, typ: object, exc: object, tb: object
+    ) -> None:
+        try:
+            original_exit(connection, typ, exc, tb)
+        finally:
+            if get_ident() in query_thread:
+                closed.set()
 
     app = Parqx([small_parquet])
     with (
         patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
-        patch.object(duckdb.DuckDBPyConnection, "close", close),
+        patch.object(duckdb.DuckDBPyConnection, "__exit__", exit_connection),
         patch("parqx.data.duckdb.TemporaryDirectory", temporary),
         patch.object(app, "notify", wraps=app.notify) as notify,
     ):
