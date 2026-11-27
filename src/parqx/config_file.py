@@ -36,12 +36,17 @@ def load_config(
     if path is not None:
         config = _apply_file(config, path)
     else:
-        with suppress(FileNotFoundError):
-            config = _apply_file(config, Path.home() / ".parqx" / "config.toml")
+        try:
+            home = Path.home()
+        except RuntimeError:
+            home = None
+        if home is not None:
+            with suppress(FileNotFoundError, NotADirectoryError):
+                config = _apply_file(config, home / ".parqx" / "config.toml")
         for project in (Path("parqx.toml"), Path(".parqx/config.toml")):
             try:
                 config = _apply_file(config, project)
-            except FileNotFoundError:
+            except (FileNotFoundError, NotADirectoryError):
                 continue
             break
     if memory_limit is not None:
@@ -59,7 +64,7 @@ def _apply_file(config: ParqxConfig, path: Path) -> ParqxConfig:
     with path.open("rb") as stream:
         try:
             sections = tomllib.load(stream)
-        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        except ValueError as exc:
             raise ValueError(f"{path}: {exc}") from exc
     for section, values in sections.items():
         if section not in _FILE_KEYS:

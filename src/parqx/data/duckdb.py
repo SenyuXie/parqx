@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import contextmanager
 from tempfile import TemporaryDirectory
+from typing import Literal
 
 import duckdb
 import pyarrow as pa
 import pyarrow.compute as pc
+
+type TruncationReason = Literal["row limit", "byte budget"]
 
 
 @contextmanager
@@ -36,7 +39,7 @@ def connect(
 
 def read_preview(
     reader: pa.RecordBatchReader, *, row_limit: int, byte_limit: int
-) -> tuple[pa.Table, str | None]:
+) -> tuple[pa.Table, TruncationReason | None]:
     """Read bounded Arrow rows, leaving reader cleanup to the caller.
 
     One oversized row is admitted. Decoder and engine allocations are separate
@@ -53,7 +56,7 @@ def read_preview(
     schema = reader.schema
     batches: list[pa.RecordBatch] = []
     rows = size = 0
-    reason: str | None = None
+    reason: TruncationReason | None = None
     for batch in reader:
         if not batch.num_rows:
             continue

@@ -1,7 +1,12 @@
 """Current-result transitions through the mounted query workspace."""
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
+import duckdb
 import pytest
 from textual.coordinate import Coordinate
 from textual.widgets import Static, TabbedContent
@@ -17,6 +22,25 @@ from tests.helpers import (
     wait_for,
     wait_for_query_error,
 )
+
+
+@contextmanager
+def paused_sql() -> Generator[tuple[Event, Event], None, None]:
+    started, release = Event(), Event()
+    original_sql = duckdb.DuckDBPyConnection.sql
+
+    def delayed_sql(
+        connection: duckdb.DuckDBPyConnection, sql: str
+    ) -> duckdb.DuckDBPyRelation:
+        started.set()
+        assert release.wait(timeout=15)
+        return original_sql(connection, sql)
+
+    with patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql):
+        try:
+            yield started, release
+        finally:
+            release.set()
 
 
 @pytest.mark.parametrize(
@@ -77,21 +101,6 @@ async def test_background_preview_notifies_once_when_its_tab_is_viewed(
 async def test_preview_finishing_under_the_command_palette_waits_for_dismissal(
     small_parquet: Path,
 ) -> None:
-    from threading import Event
-    from unittest.mock import patch
-
-    import duckdb
-
-    started, release = Event(), Event()
-    original_sql = duckdb.DuckDBPyConnection.sql
-
-    def delayed_sql(
-        connection: duckdb.DuckDBPyConnection, sql: str
-    ) -> duckdb.DuckDBPyRelation:
-        started.set()
-        assert release.wait(timeout=15)
-        return original_sql(connection, sql)
-
     app = Parqx([small_parquet], config=ParqxConfig(preview_rows=1))
     async with app.run_test(notifications=True) as pilot:
         await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
@@ -101,20 +110,17 @@ async def test_preview_finishing_under_the_command_palette_waits_for_dismissal(
         await wait_for(lambda: query.table is not None and not query.running, pilot)
         query.editor.load_text("SELECT * FROM range(3)")
         with (
-            patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
+            paused_sql() as (started, release),
             patch.object(app, "notify", wraps=app.notify) as notify,
         ):
-            try:
-                await press_run_button(query, pilot)
-                await wait_for(started.is_set, pilot)
-                await pilot.press("ctrl+p")
-                assert app.screen.is_modal
-                release.set()
-                await wait_for(lambda: not query.running, pilot)
-                await pilot.pause()
-                notify.assert_not_called()
-            finally:
-                release.set()
+            await press_run_button(query, pilot)
+            await wait_for(started.is_set, pilot)
+            await pilot.press("ctrl+p")
+            assert app.screen.is_modal
+            release.set()
+            await wait_for(lambda: not query.running, pilot)
+            await pilot.pause()
+            notify.assert_not_called()
         await pilot.press("escape")
         await wait_for(lambda: bool(app.query("Toast.-information")), pilot)
 
@@ -163,10 +169,6 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
 ) -> None:
     import gc
     import weakref
-    from threading import Event
-    from unittest.mock import patch
-
-    import duckdb
 
     started, release = Event(), Event()
     original_sql = duckdb.DuckDBPyConnection.sql
@@ -239,58 +241,36 @@ async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_ro
 
 
 async def test_failure_notifies_and_allows_retry(small_parquet: Path) -> None:
-    from threading import Event
-    from unittest.mock import patch
-
-    import duckdb
-
-    started, release = Event(), Event()
-    original_sql = duckdb.DuckDBPyConnection.sql
-
-    def delayed_sql(
-        connection: duckdb.DuckDBPyConnection, sql: str
-    ) -> duckdb.DuckDBPyRelation:
-        started.set()
-        assert release.wait(timeout=15)
-        return original_sql(connection, sql)
-
     app = Parqx([small_parquet])
-    with (
-        patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
-        patch.object(app, "notify") as notify,
-    ):
-        async with app.run_test(size=(80, 24)) as pilot:
-            try:
-                await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
-                query = await open_query(app, pilot)
-                query.editor.load_text("SELECT * FROM missing_table")
-                await press_run_button(query, pilot)
-                await wait_for(started.is_set, pilot)
-                assert query.run_button.disabled
-                assert not query.query(ArrowTable)
-                release.set()
-                message = await wait_for_query_error(notify, query, pilot)
-                assert "missing_table" in message
-                assert not query.run_button.disabled
-                assert not query.query(ArrowTable)
-                query.editor.load_text("SELECT 42 AS recovered")
-                await pilot.pause()
-                started.clear()
-                release.clear()
-                query.editor.focus()
-                await press_run_button(query, pilot)
-                await wait_for(started.is_set, pilot)
-                assert query.run_button.disabled
-                assert not query.query(ArrowTable)
-                release.set()
-                await wait_for(
-                    lambda: bool(query.query(ArrowTable)) and not query.running, pilot
-                )
-                assert not query.run_button.disabled
-                assert notify.call_count == 1
-                assert (
-                    query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py()
-                    == 42
-                )
-            finally:
-                release.set()
+    async with app.run_test(size=(80, 24)) as pilot:
+        with paused_sql() as (started, release), patch.object(app, "notify") as notify:
+            await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+            query = await open_query(app, pilot)
+            query.editor.load_text("SELECT * FROM missing_table")
+            await press_run_button(query, pilot)
+            await wait_for(started.is_set, pilot)
+            assert query.run_button.disabled
+            assert not query.query(ArrowTable)
+            release.set()
+            message = await wait_for_query_error(notify, query, pilot)
+            assert "missing_table" in message
+            assert not query.run_button.disabled
+            assert not query.query(ArrowTable)
+            query.editor.load_text("SELECT 42 AS recovered")
+            await pilot.pause()
+            started.clear()
+            release.clear()
+            query.editor.focus()
+            await press_run_button(query, pilot)
+            await wait_for(started.is_set, pilot)
+            assert query.run_button.disabled
+            assert not query.query(ArrowTable)
+            release.set()
+            await wait_for(
+                lambda: bool(query.query(ArrowTable)) and not query.running, pilot
+            )
+            assert not query.run_button.disabled
+            assert notify.call_count == 1
+            assert (
+                query.query_one(ArrowTable).get_cell_at(Coordinate(0, 0)).as_py() == 42
+            )
