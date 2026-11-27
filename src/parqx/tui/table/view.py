@@ -10,6 +10,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widget import Widget
 
+from parqx.config import TableDefaults
 from parqx.data.view import DataPage, PageCache, row_value
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.values.browser import ValueBrowser
@@ -43,14 +44,25 @@ class TableView(Horizontal):
             self.root = root
             super().__init__()
 
-    def __init__(self, data: pa.Table | PageCache) -> None:
+    def __init__(
+        self, data: pa.Table | PageCache, *, defaults: TableDefaults | None = None
+    ) -> None:
         """Create the table and its value browser.
 
         Args:
             data: Loaded query result or source page cache to display.
+            defaults: Display preferences to apply to the new table.
         """
         super().__init__()
-        self.table = ArrowTable(data)
+        defaults = defaults or TableDefaults()
+        self.table = ArrowTable(
+            data,
+            max_column_content_width=defaults.max_column_content_width,
+            cursor_type=defaults.cursor_type,
+            zebra_stripes=defaults.zebra_stripes,
+            show_row_index=defaults.show_row_index,
+            show_header=defaults.show_header,
+        )
         self.browser = ValueBrowser()
         self.browser.clear(empty=self.table.row_count == 0)
 

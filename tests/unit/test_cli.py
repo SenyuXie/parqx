@@ -9,14 +9,22 @@ from typer.testing import CliRunner
 
 from parqx.catalog import SourceCatalog, SourceIssue
 from parqx.cli import app
+from parqx.config import ParqxConfig
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "user"))
 
 
 @pytest.mark.parametrize(
     ("option", "output"), [("--version", "parqx"), ("--help", "PATH")]
 )
 def test_information_flags_exit_without_starting_app(option: str, output: str) -> None:
+    Path("parqx.toml").write_text("invalid TOML", encoding="utf-8")
     with patch("parqx.cli.Parqx") as app_class:
         result = runner.invoke(app, [option])
     assert result.exit_code == 0
@@ -31,8 +39,43 @@ def test_paths_are_forwarded_in_order(tmp_path: Path) -> None:
         app_class.return_value.return_code = 0
         result = runner.invoke(app, [str(path) for path in paths])
     assert result.exit_code == 0
-    app_class.assert_called_once_with(paths=paths)
+    app_class.assert_called_once_with(paths=paths, config=ParqxConfig())
     app_class.return_value.run.assert_called_once_with()
+
+
+def test_explicit_budgets_reach_app(tmp_path: Path) -> None:
+    path = tmp_path / "source.parquet"
+    with patch("parqx.cli.Parqx") as app_class, patch("parqx.cli.setup_logging"):
+        app_class.return_value.return_code = 0
+        app_class.return_value.load_errors = ()
+        result = runner.invoke(
+            app,
+            [
+                "--memory-limit",
+                "64MB",
+                "--threads",
+                "1",
+                "--preview-bytes",
+                "200",
+                str(path),
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    app_class.assert_called_once_with(
+        paths=[path],
+        config=ParqxConfig(memory_limit="64MB", threads=1, preview_bytes=200),
+    )
+
+
+def test_bad_config_exits_before_starting_app(tmp_path: Path) -> None:
+    path = tmp_path / "broken.toml"
+    path.write_text("[query]\npreview_rows = false\n", encoding="utf-8")
+    with patch("parqx.cli.Parqx") as app_class:
+        result = runner.invoke(app, ["--config", str(path), "source.parquet"])
+    assert result.exit_code == 2
+    assert str(path) in result.stderr
+    assert "query.preview_rows" in result.stderr
+    app_class.assert_not_called()
 
 
 @pytest.mark.parametrize("return_code", [0, 1, 7])

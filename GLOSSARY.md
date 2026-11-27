@@ -19,6 +19,9 @@ The editable SQL text in a query workspace. It may differ from the SQL that prod
 **Current result**:
 The data from a query workspace's most recent successful execution. Editing the SQL draft or a subsequent execution failure preserves this data; a successful execution returning zero rows replaces it with an empty result.
 
+**Query preview**:
+The rows retained for inspection from a successful SQL query. A preview is truncated when its row or byte budget causes it to omit rows from the query output.
+
 **Row value**:
 A table row treated as a special Struct value whose fields correspond to the row's columns. Row values and cell values share the same value browsing model.
 

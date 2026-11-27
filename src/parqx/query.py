@@ -11,7 +11,7 @@ import pyarrow as pa
 
 from parqx.catalog import SourceIssue, SourceSpec
 from parqx.config import ParqxConfig
-from parqx.data.duckdb import connect, read_preview
+from parqx.data.duckdb import TruncationReason, connect, read_preview
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class QueryResult:
     table: pa.Table
     elapsed: float
     issues: tuple[SourceIssue, ...] = ()
-    truncation_reason: str | None = None
+    truncation_reason: TruncationReason | None = None
 
 
 class QueryExecutionError(Exception):
