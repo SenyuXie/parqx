@@ -41,9 +41,9 @@ Each behavior belongs at the lowest layer that can verify it:
 | `smoke/` | Open a real Parquet file, navigate, run SQL, confirm workspace closure and quit | Every test job |
 | `distribution/` | Installed modules, metadata, console entry point, typing marker and Arrow/DuckDB integration | Isolated wheel and sdist jobs, including releases |
 
-Place unit tests beside tests of the same application package. The `data/` and
-`tui/` directories under `unit/` mirror `src/parqx/`. Tests for top-level
-modules such as the catalog, CLI, configuration and SQL queries live directly
+Place unit tests beside tests of the same application package. The `config/`,
+`data/` and `tui/` directories under `unit/` mirror `src/parqx/`. Tests for
+top-level modules such as the catalog, CLI and SQL queries live directly
 under `unit/`.
 
 In the TUI, `table/` owns column geometry, rendering and the table with its

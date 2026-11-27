@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from parqx.config_file import load_config
+from parqx.config import load_config
 from parqx.logger import setup_logging
 from parqx.tui.app import Parqx
 

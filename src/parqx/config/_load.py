@@ -6,9 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-import duckdb
-
-from parqx.config import ParqxConfig
+from ._model import ParqxConfig
 
 _FILE_KEYS = {
     "query": {"preview_rows", "preview_bytes"},
@@ -89,6 +87,8 @@ def _apply_file(config: ParqxConfig, path: Path) -> ParqxConfig:
 
 
 def _check_memory_limit(value: object, name: str) -> None:
+    import duckdb
+
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a nonempty string")
     try:

@@ -7,8 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from parqx.config import ParqxConfig, TableDefaults
-from parqx.config_file import load_config
+from parqx.config import ParqxConfig, TableDefaults, load_config
 
 
 @pytest.fixture
