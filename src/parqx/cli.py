@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from parqx.config_file import load_config
 from parqx.logger import setup_logging
 from parqx.tui.app import Parqx
 
@@ -25,6 +26,23 @@ def version_callback(value: bool) -> None:
 @app.command()
 def main(
     paths: Annotated[list[Path], typer.Argument(help="Parquet files to inspect.")],
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", help="Use this TOML file for the session."),
+    ] = None,
+    preview_rows: Annotated[
+        int | None, typer.Option(min=1, help="Maximum rows retained per SQL preview.")
+    ] = None,
+    preview_bytes: Annotated[
+        int | None, typer.Option(min=1, help="Retained byte budget per SQL preview.")
+    ] = None,
+    memory_limit: Annotated[
+        str | None,
+        typer.Option(help="DuckDB memory limit per connection (e.g. 256MB)."),
+    ] = None,
+    threads: Annotated[
+        int | None, typer.Option(min=1, help="DuckDB threads per connection.")
+    ] = None,
     verbose: Annotated[
         int,
         typer.Option(
@@ -48,9 +66,20 @@ def main(
     """Parqx: A TUI Parquet inspector."""
     _ = version
 
-    setup_logging(verbose)
+    try:
+        settings = load_config(
+            config,
+            preview_rows=preview_rows,
+            preview_bytes=preview_bytes,
+            memory_limit=memory_limit,
+            threads=threads,
+        )
+    except (ValueError, OSError) as exc:
+        typer.echo(f"parqx: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
-    parqx = Parqx(paths=paths)
+    setup_logging(verbose)
+    parqx = Parqx(paths=paths, config=settings)
     parqx.run()
 
     load_errors = parqx.load_errors

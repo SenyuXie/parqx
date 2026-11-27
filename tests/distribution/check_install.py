@@ -36,6 +36,7 @@ EXPECTED_MODULES: tuple[str, ...] = (
     "parqx.catalog",
     "parqx.cli",
     "parqx.config",
+    "parqx.config_file",
     "parqx.data",
     "parqx.data.duckdb",
     "parqx.data.parquet",
