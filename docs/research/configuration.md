@@ -1,0 +1,11 @@
+# Configuration patterns in Python terminal tools
+
+**Black chooses one file per invocation.** It searches for a project configuration from the common base of the input paths and falls back to a user file. An explicit `--config PATH` selects the file directly. Command-line values override the file, and verbose output identifies the file in use. The one-file rule is useful for Parqx because one invocation can open inputs from unrelated directories. [Black configuration guide](https://black.readthedocs.io/en/stable/usage_and_configuration/the_basics.html#where-black-looks-for-the-file)
+
+**VisiData makes persistence explicit.** Users can edit options in the running TUI. A separate save command appends nondefault options that are absent from their configuration. Its `-N` flag skips the user configuration and plugins at startup. Parqx could adopt the clean-start behavior independently of adding a settings screen. [VisiData customization](https://www.visidata.org/docs/customize/) · [VisiData plugin controls](https://www.visidata.org/docs/plugins/)
+
+**pip explains where values come from.** An explicit command-line option takes precedence over its environment variable, which takes precedence over configuration files. `pip config debug` lists file paths and the values defined in each. If Parqx gains multiple configuration sources, exposing their origin would help explain why a preview stops at a particular row count. [pip configuration](https://pip.pypa.io/en/stable/topics/configuration/) · [pip config](https://pip.pypa.io/en/stable/cli/pip_config/)
+
+**uv has two ways to select configuration files.** Ordinary project discovery combines project, user, and system settings. Passing `--config-file PATH` selects a single file for that invocation. In a local check with uv 0.12.16, `uv cache dir` inherited a user's cache path when the project set only `offline`. With an explicit file that also set only `offline`, the same command reported the default cache path. An explicit `--cache-dir` took precedence in that invocation. [uv configuration guide](https://docs.astral.sh/uv/concepts/configuration-files/)
+
+Parqx's selected paths, override rules, and initial public settings are recorded in [ADR 0002](../adr/0002-resolve-session-configuration.md).
