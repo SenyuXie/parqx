@@ -333,7 +333,9 @@ class Parqx(App[Any]):
                 self.screen.minimize()
             self._query_number += 1
             pane_id = f"query-{self._query_number}"
-            pane = QueryWorkspace(f"Query {self._query_number}", id=pane_id)
+            pane = QueryWorkspace(
+                f"Query {self._query_number}", id=pane_id, config=self.config
+            )
             await self._tabs.add_pane(pane)
             self._tabs.active = pane_id
             pane.editor.focus()

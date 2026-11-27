@@ -2,12 +2,160 @@
 
 from pathlib import Path
 
+import pytest
 from textual.coordinate import Coordinate
-from textual.widgets import TabbedContent
+from textual.widgets import Static, TabbedContent
 
+from parqx.config import ParqxConfig
 from parqx.tui.app import Parqx
 from parqx.tui.table.arrow_table import ArrowTable
-from tests.helpers import open_query, press_run_button, wait_for, wait_for_query_error
+from tests.helpers import (
+    confirm_query_close,
+    open_query,
+    press_run_button,
+    select_tab,
+    wait_for,
+    wait_for_query_error,
+)
+
+
+@pytest.mark.parametrize(
+    ("config", "sql", "message"),
+    [
+        (
+            ParqxConfig(preview_rows=2),
+            "SELECT * FROM range(3)",
+            "Showing 2 rows (2-row preview limit).",
+        ),
+        (
+            ParqxConfig(preview_bytes=1024),
+            "SELECT repeat('x', 1024) FROM range(3)",
+            "Showing 1 row (1 KiB preview limit).",
+        ),
+    ],
+)
+async def test_truncated_preview_shows_the_row_count_and_limit(
+    small_parquet: Path, config: ParqxConfig, sql: str, message: str
+) -> None:
+    app = Parqx([small_parquet], config=config)
+    async with app.run_test(notifications=True) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        query.editor.load_text(sql)
+        await press_run_button(query, pilot)
+        await wait_for(lambda: query.table is not None and not query.running, pilot)
+        await wait_for(lambda: bool(app.query("Toast")), pilot)
+        toast = app.query_one("Toast.-information", Static)
+        assert str(toast.render()) == f"Query 1 · Partial result\n{message}"
+
+
+async def test_background_preview_notifies_once_when_its_tab_is_viewed(
+    small_parquet: Path,
+) -> None:
+    app = Parqx([small_parquet], config=ParqxConfig(preview_rows=2))
+    async with app.run_test(notifications=True) as pilot:
+        tabs = app.query_one(TabbedContent)
+        query = await open_query(app, pilot)
+        query.editor.load_text("SELECT * FROM range(3)")
+        await wait_for(lambda: not query.run_button.disabled, pilot)
+        query.run_button.press()
+        tabs.active = "source-1"
+        await wait_for(lambda: query.current_result is not None, pilot)
+        await pilot.pause()
+        assert not app.query("Toast")
+
+        await select_tab(tabs, "query-1", pilot)
+        await wait_for(lambda: bool(app.query("Toast")), pilot)
+        toast = app.query_one("Toast.-information", Static)
+        assert "Query 1 · Partial result" in str(toast.render())
+        assert await pilot.click(toast)
+        await select_tab(tabs, "source-1", pilot)
+        await select_tab(tabs, "query-1", pilot)
+        assert not app.query("Toast")
+
+
+async def test_preview_finishing_under_the_command_palette_waits_for_dismissal(
+    small_parquet: Path,
+) -> None:
+    from threading import Event
+    from unittest.mock import patch
+
+    import duckdb
+
+    started, release = Event(), Event()
+    original_sql = duckdb.DuckDBPyConnection.sql
+
+    def delayed_sql(
+        connection: duckdb.DuckDBPyConnection, sql: str
+    ) -> duckdb.DuckDBPyRelation:
+        started.set()
+        assert release.wait(timeout=15)
+        return original_sql(connection, sql)
+
+    app = Parqx([small_parquet], config=ParqxConfig(preview_rows=1))
+    async with app.run_test(notifications=True) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        query.editor.load_text("SELECT 1")
+        await press_run_button(query, pilot)
+        await wait_for(lambda: query.table is not None and not query.running, pilot)
+        query.editor.load_text("SELECT * FROM range(3)")
+        with (
+            patch.object(duckdb.DuckDBPyConnection, "sql", delayed_sql),
+            patch.object(app, "notify", wraps=app.notify) as notify,
+        ):
+            try:
+                await press_run_button(query, pilot)
+                await wait_for(started.is_set, pilot)
+                await pilot.press("ctrl+p")
+                assert app.screen.is_modal
+                release.set()
+                await wait_for(lambda: not query.running, pilot)
+                await pilot.pause()
+                notify.assert_not_called()
+            finally:
+                release.set()
+        await pilot.press("escape")
+        await wait_for(lambda: bool(app.query("Toast.-information")), pilot)
+
+
+@pytest.mark.parametrize("action", ["restore", "replace", "close"])
+async def test_only_the_current_preview_notifies_after_restoring_the_table(
+    small_parquet: Path, action: str
+) -> None:
+    app = Parqx([small_parquet], config=ParqxConfig(preview_rows=2))
+    async with app.run_test(notifications=True) as pilot:
+        await wait_for(lambda: bool(app.query(ArrowTable)), pilot)
+        query = await open_query(app, pilot)
+        app.screen.action_maximize()
+        await wait_for(lambda: query.editor.is_maximized, pilot)
+        query.editor.load_text("SELECT * FROM range(3)")
+        await press_run_button(query, pilot)
+        await wait_for(lambda: query.table is not None and not query.running, pilot)
+        assert not app.query("Toast")
+
+        if action == "close":
+            await pilot.press("ctrl+w")
+            await confirm_query_close(app, pilot)
+            await wait_for(lambda: not query.is_attached, pilot)
+        else:
+            if action == "replace":
+                # This complete result exactly matches the row budget.
+                query.editor.load_text("SELECT * FROM range(2)")
+                await press_run_button(query, pilot)
+                await wait_for(
+                    lambda: (
+                        query.current_result is not None
+                        and query.current_result.sql == "SELECT * FROM range(2)"
+                    ),
+                    pilot,
+                )
+            await pilot.press("escape")
+            await wait_for(lambda: app.screen.maximized is None, pilot)
+        if action == "restore":
+            await wait_for(lambda: bool(app.query("Toast.-information")), pilot)
+        else:
+            assert not app.query("Toast")
 
 
 async def test_retry_retains_previous_success_then_replaces_it_even_with_zero_rows(

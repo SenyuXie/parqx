@@ -1,16 +1,30 @@
 """Persistent SQL authoring and its latest successful result."""
 
+from typing import cast
+
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.message import Message
 from textual.reactive import var
+from textual.screen import Screen
+from textual.signal import Signal
 from textual.widgets import Button, Link, TabPane, TextArea
 
+from parqx.config import ParqxConfig
 from parqx.query import QueryResult
 from parqx.tui.table.arrow_table import ArrowTable
 from parqx.tui.table.view import TableView
+
+
+def _format_bytes(size: int) -> str:
+    """Use the largest binary unit that represents the configured limit exactly."""
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size % 1024:
+            return f"{size:,} {unit}"
+        size //= 1024
+    return f"{size:,} TiB"
 
 
 class QueryWorkspace(TabPane):
@@ -46,9 +60,10 @@ class QueryWorkspace(TabPane):
     }
     """
 
-    def __init__(self, title: str, *, id: str) -> None:
+    def __init__(self, title: str, *, id: str, config: ParqxConfig) -> None:
         """Create a blank SQL draft without starting an execution."""
-        super().__init__(Content(title), id=id)
+        super().__init__(Content(title), name=title, id=id)
+        self._config = config
         self.editor = TextArea.code_editor(
             "", language="sql", theme="css", classes="sql-draft"
         )
@@ -61,6 +76,7 @@ class QueryWorkspace(TabPane):
             disabled=True,
         )
         self.current_result: QueryResult | None = None
+        self._pending_notice: str | None = None
         self.view: TableView | None = None
 
     @property
@@ -78,8 +94,18 @@ class QueryWorkspace(TabPane):
             yield self.run_button
 
     def on_mount(self) -> None:
-        """Let native maximization temporarily fill the screen with the editor."""
+        """Track editor layout and visibility of query results."""
         self.watch(self.screen, "maximized", self._apply_editor_layout, init=False)
+        # Textual omits the Screen result type in these two signal declarations.
+        self._visibility_signals = cast(
+            tuple[Signal[Screen[object]], ...],
+            (
+                self.screen.screen_layout_refresh_signal,  # pyright: ignore[reportUnknownMemberType]
+                self.app.screen_change_signal,  # pyright: ignore[reportUnknownMemberType]
+            ),
+        )
+        for signal in self._visibility_signals:
+            signal.subscribe(self, self._notify_if_visible)
 
     def on_resize(self) -> None:
         """Adapt the editor allocation while leaving room for the button and results."""
@@ -126,11 +152,34 @@ class QueryWorkspace(TabPane):
     async def show_result(self, result: QueryResult) -> None:
         """Replace data and schema without moving focus or creating another tab."""
         if self.view is None:
-            self.view = TableView(result.table)
+            self.view = TableView(result.table, defaults=self._config.table)
             await self.mount(self.view)
         else:
             self.view.replace_data(result.table)
         self.current_result = result
+        self._pending_notice = None
+        if result.truncation_reason is not None:
+            rows = result.table.num_rows
+            limit = (
+                f"{self._config.preview_rows:,}-row"
+                if result.truncation_reason == "row limit"
+                else _format_bytes(self._config.preview_bytes)
+            )
+            self._pending_notice = (
+                f"Showing {rows:,} {'row' if rows == 1 else 'rows'} "
+                f"({limit} preview limit)."
+            )
+            self.call_after_refresh(self._notify_if_visible, self.screen)
+
+    def _notify_if_visible(self, screen: Screen[object]) -> None:
+        if (
+            self._pending_notice is not None
+            and self.table is not None
+            and screen.is_active
+            and screen.can_view_partial(self.table)
+        ):
+            self.notify(self._pending_notice, title=f"{self.name} · Partial result")
+            self._pending_notice = None
 
     def _update_run_button(self) -> None:
         self.run_button.disabled = self.running or not self.editor.text.strip()
@@ -138,3 +187,6 @@ class QueryWorkspace(TabPane):
     def on_unmount(self) -> None:
         """Release result buffers even if a detached widget is still referenced."""
         self.current_result = None
+        self._pending_notice = None
+        for signal in self._visibility_signals:
+            signal.unsubscribe(self)

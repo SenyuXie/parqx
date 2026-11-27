@@ -35,13 +35,12 @@ from textual.strip import Strip
 from textual.types import NoActiveAppError
 from textual.widget import PseudoClasses
 
+from parqx.config import CursorType as CursorType
 from parqx.data.view import DataPage, PageCache
 from parqx.tui.cell_formatter import CellFormatter, ContainerPreview
 from parqx.tui.table.column_layout import Column, ColumnLayout
 
 logger = logging.getLogger(__name__)
-
-type CursorType = Literal["cell", "row", "column", "none"]
 
 
 class RowCacheKey(NamedTuple):

@@ -96,7 +96,7 @@ class SourcePane(TabPane):
             source.schema, source.row_count, cache_bytes=self._config.page_cache_bytes
         )
         if self.view is None:
-            self.view = TableView(data)
+            self.view = TableView(data, defaults=self._config.table)
             await self.mount(self.view)
         else:
             self.view.replace_data(data)
