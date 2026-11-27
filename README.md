@@ -31,22 +31,6 @@ parqx users.parquet orders.parquet
 parqx data/*.parquet
 ```
 
-### Configuration
-
-Set defaults for the current directory in `parqx.toml`.
-
-```toml
-[query]
-preview_rows = 500
-
-[table]
-zebra_stripes = true
-```
-
-For a single run, use `parqx --preview-rows 100 data/weather.parquet`.
-Use `parqx --config team.toml data/weather.parquet` to select a specific file.
-See [session configuration](docs/adr/0002-resolve-session-configuration.md) for all settings and file precedence.
-
 ## Keyboard control
 
 ### Navigation
